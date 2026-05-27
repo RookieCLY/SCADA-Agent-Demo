@@ -1,0 +1,28 @@
+name: A_flat_baseline
+description: |
+  Baseline (paper §3.2) — flat tool surface (all atomics exposed), no state
+  machine, no RAG, no workflow. Used as the H1 comparison point for the
+  hierarchical configuration. Phase 1 wires the config; the actual sweep needs
+  a real LLM (Phase 2).
+
+architecture:
+  hierarchical_tools: false
+  tool_rag:
+    enabled: false
+  workflow:
+    enabled: false
+  state_machine:
+    enabled: false
+  resources_separation: false
+
+model:
+  provider: mock
+  name: mock
+  temperature: 0.0
+  max_tokens: 4096
+
+world:
+  backend: memory
+
+repetitions: 1
+seed_base: 42

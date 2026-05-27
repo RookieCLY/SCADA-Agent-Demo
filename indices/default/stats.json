@@ -1,0 +1,7 @@
+{
+  "doc_count": 39,
+  "avg_doc_len": 35.46153846153846,
+  "vocab_size": 488,
+  "dim": 512,
+  "encoder": "HashingTfIdfEncoder"
+}

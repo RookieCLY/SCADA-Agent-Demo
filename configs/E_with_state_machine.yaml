@@ -1,0 +1,31 @@
+name: E_with_state_machine
+description: |
+  §3.2 Config E — D + state machine.
+  Adds the hard whitelist gate; used vs D for H3 (越权调用率断崖式下降 ≥ 80%).
+
+architecture:
+  hierarchical_tools: true
+  tool_rag:
+    enabled: true
+    top_n: 30
+    top_k: 12
+    alpha_dense: 0.6
+    use_reranker: true
+  workflow:
+    enabled: true
+    yaml_path: workflows
+  state_machine:
+    enabled: true
+  resources_separation: false
+
+model:
+  provider: mock
+  name: mock
+  temperature: 0.0
+  max_tokens: 4096
+
+world:
+  backend: memory
+
+repetitions: 5
+seed_base: 42

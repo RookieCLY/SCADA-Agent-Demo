@@ -1,0 +1,28 @@
+name: xiaomi_mimo_smoke
+description: |
+  Smoke-test config for the xiaomi-mimo real LLM. Uses the flat tool surface
+  with the state machine OFF so that the model can directly emit any atomic
+  tool call without state-transition orchestration. Same shape as
+  configs/A_flat_baseline.yaml but with the model provider swapped.
+
+architecture:
+  hierarchical_tools: false
+  tool_rag:
+    enabled: false
+  workflow:
+    enabled: false
+  state_machine:
+    enabled: false
+  resources_separation: false
+
+model:
+  provider: xiaomi-mimo
+  name: mimo-v2.5-pro
+  temperature: 0.0
+  max_tokens: 1024
+
+world:
+  backend: memory
+
+repetitions: 1
+seed_base: 42

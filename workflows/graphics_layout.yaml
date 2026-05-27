@@ -1,0 +1,44 @@
+name: GraphicsLayout
+version: "1.0.0"
+description: |
+  纯图形布局工作流 — 在已有画面上画 / 排 / 组合 / 改样式,不涉及点位 / 报警 / 部署。
+priority: 70
+
+trigger:
+  keywords: ["画一个", "draw", "矩形", "圆形", "线", "排列", "布局", "样式", "颜色", "字体"]
+
+steps:
+  - id: ensure_page
+    type: llm_step
+    state: MANAGE_PAGES
+    description: 如果目标画面不存在则先创建;若已存在直接进入下一步(must_call_tool=false)
+    allowed_tools:
+      - create_page
+      - list_pages
+      - create_widget
+    must_call_tool: false
+
+  - id: place_primitives
+    type: llm_step
+    state: GENERATE_LAYOUT
+    description: 在画面上画图元
+    depends_on: [ensure_page]
+    allowed_tools:
+      - create_rect
+      - create_circle
+      - create_line
+      - create_text
+      - list_pages
+
+  - id: arrange
+    type: llm_step
+    state: GENERATE_LAYOUT
+    depends_on: [place_primitives]
+    description: 排列 + 分组 + 样式
+    allowed_tools:
+      - apply_flow_layout
+      - group_widgets
+      - set_widget_style
+      - delete_widget
+      - list_pages
+    must_call_tool: false

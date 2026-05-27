@@ -1,0 +1,36 @@
+name: ScriptConfig
+version: "1.0.0"
+description: |
+  脚本配置工作流 — 给某个点位 / 报警挂一段触发脚本。
+priority: 60
+
+trigger:
+  keywords: ["脚本", "script", "触发", "trigger when", "周期跑", "on_change"]
+
+steps:
+  - id: pick_binding
+    type: llm_step
+    state: ANALYZE_INTENT
+    description: 看可用的点位 / 报警
+    allowed_tools:
+      - list_points
+      - list_scripts
+    must_call_tool: false
+
+  - id: author_script
+    type: llm_step
+    state: CONFIG_SCRIPT
+    depends_on: [pick_binding]
+    description: 创建脚本主体
+    allowed_tools:
+      - create_script
+      - update_script_body
+      - list_scripts
+      - list_points
+    expected_action: create_script
+
+  - id: validate
+    type: deterministic_step
+    state: VALIDATE
+    depends_on: [author_script]
+    handler: handlers.validate_project

@@ -1,0 +1,28 @@
+name: B_hierarchical_only
+description: |
+  §3.2 Config B — hierarchical Tool surface only.
+  Domain Tools exposed (manage_alarms, …); LLM dispatches via discriminated `action`.
+  No RAG, no workflow, no state machine, no Resources.
+  This is the H1 "分层 vs 扁平" comparator against A_flat_baseline.
+
+architecture:
+  hierarchical_tools: true
+  tool_rag:
+    enabled: false
+  workflow:
+    enabled: false
+  state_machine:
+    enabled: false
+  resources_separation: false
+
+model:
+  provider: mock
+  name: mock
+  temperature: 0.0
+  max_tokens: 4096
+
+world:
+  backend: memory
+
+repetitions: 1
+seed_base: 42

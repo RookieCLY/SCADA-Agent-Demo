@@ -1,0 +1,63 @@
+name: PumpStationScreen
+version: "1.0.0"
+description: |
+  泵站监控画面 — 多台泵 + 流量 + 进出口压力。流程与化工厂相似,但布局以泵为中心。
+priority: 60
+
+trigger:
+  keywords: ["泵站", "pump station", "供水", "排水", "三台泵", "多台泵"]
+
+steps:
+  - id: create_page
+    type: llm_step
+    state: MANAGE_PAGES
+    allowed_tools:
+      - create_page
+      - list_pages
+    expected_action: create_page
+
+  - id: place_pumps
+    type: llm_step
+    state: MANAGE_PAGES
+    depends_on: [create_page]
+    description: 摆放每台泵的图元
+    allowed_tools:
+      - create_widget
+      - list_pages
+
+  - id: layout_pumps
+    type: llm_step
+    state: GENERATE_LAYOUT
+    depends_on: [place_pumps]
+    description: 用横向 flow layout 平铺泵
+    allowed_tools:
+      - apply_flow_layout
+      - create_line
+      - create_text
+      - set_widget_style
+      - list_pages
+
+  - id: bind_runtime_points
+    type: llm_step
+    state: BIND_POINTS
+    depends_on: [layout_pumps]
+    allowed_tools:
+      - bind_point
+      - list_points
+      - list_pages
+
+  - id: configure_alarms
+    type: llm_step
+    state: CONFIG_ALARM
+    depends_on: [bind_runtime_points]
+    description: 给每台泵的故障数字量配报警
+    allowed_tools:
+      - create_digital_alarm
+      - create_analog_alarm
+      - list_points
+
+  - id: validate
+    type: deterministic_step
+    state: VALIDATE
+    depends_on: [configure_alarms]
+    handler: handlers.validate_project

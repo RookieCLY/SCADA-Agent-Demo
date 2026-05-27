@@ -1,0 +1,31 @@
+name: D_minimal
+description: |
+  Phase-1 minimal configuration — hierarchical tools + state machine only, mock
+  LLM, no RAG / Workflow / Resources. Suitable for the §2.3 E2E acceptance
+  check ("create an alarm" task) without any external API key.
+
+architecture:
+  hierarchical_tools: true
+  tool_rag:
+    enabled: false
+  workflow:
+    enabled: false
+  state_machine:
+    enabled: true
+  resources_separation: false
+
+model:
+  provider: mock
+  name: mock
+  temperature: 0.0
+  max_tokens: 4096
+
+dataset:
+  path: null
+  sample_size: null
+
+world:
+  backend: memory
+
+repetitions: 1
+seed_base: 42

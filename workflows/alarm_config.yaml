@@ -1,0 +1,39 @@
+name: AlarmConfig
+version: "1.0.0"
+description: |
+  纯报警配置工作流 — 已经存在的画面/点位上批量加 / 改报警,无新画面。
+priority: 40
+
+trigger:
+  keywords: ["报警", "告警", "alarm", "阈值", "高温", "超限", "threshold"]
+
+steps:
+  - id: discover_points
+    type: llm_step
+    state: ANALYZE_INTENT
+    description: 查询将要配报警的点位
+    allowed_tools:
+      - list_points
+      - list_pages
+    must_call_tool: false
+
+  - id: create_or_update_alarm
+    type: llm_step
+    state: CONFIG_ALARM
+    depends_on: [discover_points]
+    description: 创建报警或调整已有报警阈值
+    allowed_tools:
+      - create_analog_alarm
+      - create_digital_alarm
+      - set_threshold
+      - enable_alarm
+      - disable_alarm
+      - delete_alarm
+      - list_points
+    expected_action: create_analog_alarm
+
+  - id: validate
+    type: deterministic_step
+    state: VALIDATE
+    depends_on: [create_or_update_alarm]
+    handler: handlers.validate_project

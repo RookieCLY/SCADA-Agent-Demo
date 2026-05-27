@@ -1,0 +1,41 @@
+name: HistoryQuery
+version: "1.0.0"
+description: |
+  历史数据查询工作流 — 用户问"最近 X 时间的趋势"时使用。先确认 historian 配置存在,
+  再拉取窗口数据。如果点位没启用 history,工作流先回到配置阶段。
+priority: 50
+
+trigger:
+  keywords: ["历史", "趋势", "trend", "history", "归档", "曲线"]
+
+steps:
+  - id: check_history_config
+    type: llm_step
+    state: ANALYZE_INTENT
+    description: 看看这个点是否已经开启历史
+    allowed_tools:
+      - list_history
+      - list_points
+    must_call_tool: false
+
+  - id: enable_history_if_missing
+    type: llm_step
+    state: CONFIG_HISTORY
+    depends_on: [check_history_config]
+    description: 没启用就先开
+    allowed_tools:
+      - enable_history
+      - set_retention
+      - list_history
+      - list_points
+    must_call_tool: false
+
+  - id: query
+    type: llm_step
+    state: CONFIG_HISTORY
+    depends_on: [enable_history_if_missing]
+    description: 读取窗口数据
+    allowed_tools:
+      - query_history
+      - list_history
+    expected_action: query_history

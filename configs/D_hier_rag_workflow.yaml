@@ -1,0 +1,32 @@
+name: D_hier_rag_workflow
+description: |
+  §3.2 Config D — 分层 + RAG + Workflow,**不含** state_machine,**不含** Resources separation.
+  This config exists to isolate H4 (Workflow lift) — vs C it adds only the
+  Workflow engine; vs E it removes the state machine; vs F it removes Resources.
+
+architecture:
+  hierarchical_tools: true
+  tool_rag:
+    enabled: true
+    top_n: 30
+    top_k: 12
+    alpha_dense: 0.6
+    use_reranker: true
+  workflow:
+    enabled: true
+    yaml_path: workflows
+  state_machine:
+    enabled: false
+  resources_separation: false
+
+model:
+  provider: mock
+  name: mock
+  temperature: 0.0
+  max_tokens: 4096
+
+world:
+  backend: memory
+
+repetitions: 5
+seed_base: 42

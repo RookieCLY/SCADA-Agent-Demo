@@ -1,0 +1,465 @@
+[
+  {
+    "action": "create_analog_alarm",
+    "description": "Create an analog alarm with high/low limits on an existing analog point.",
+    "domain": "manage_alarms",
+    "examples": [
+      "给反应釜温度加个超限报警",
+      "TEMP_101 配置高温报警,阈值 80",
+      "set up over-temperature alarm for the reactor"
+    ],
+    "name": "create_analog_alarm",
+    "text": "create_analog_alarm | create analog alarm | Create an analog alarm with high/low limits on an existing analog point. | 给反应釜温度加个超限报警 | TEMP_101 配置高温报警,阈值 80 | set up over-temperature alarm for the reactor | action | id | tag | high_limit | low_limit | deadband | priority"
+  },
+  {
+    "action": "create_digital_alarm",
+    "description": "Create a digital alarm that fires when a boolean tag becomes true.",
+    "domain": "manage_alarms",
+    "examples": [
+      "pump fault alarm",
+      "digital input goes high — alarm"
+    ],
+    "name": "create_digital_alarm",
+    "text": "create_digital_alarm | create digital alarm | Create a digital alarm that fires when a boolean tag becomes true. | pump fault alarm | digital input goes high — alarm | action | id | tag | priority"
+  },
+  {
+    "action": "set_threshold",
+    "description": "Update the threshold/deadband on an existing analog alarm.",
+    "domain": "manage_alarms",
+    "examples": [
+      "调整温度报警上限到 90",
+      "raise the high limit"
+    ],
+    "name": "set_threshold",
+    "text": "set_threshold | set threshold | Update the threshold/deadband on an existing analog alarm. | 调整温度报警上限到 90 | raise the high limit | action | id | high_limit | low_limit | deadband"
+  },
+  {
+    "action": "enable_alarm",
+    "description": "Enable a previously disabled alarm.",
+    "domain": "manage_alarms",
+    "examples": [
+      "重新打开报警",
+      "enable alarm"
+    ],
+    "name": "enable_alarm",
+    "text": "enable_alarm | enable alarm | Enable a previously disabled alarm. | 重新打开报警 | enable alarm | action | id"
+  },
+  {
+    "action": "disable_alarm",
+    "description": "Temporarily disable an alarm without deleting it.",
+    "domain": "manage_alarms",
+    "examples": [
+      "停用报警",
+      "disable alarm"
+    ],
+    "name": "disable_alarm",
+    "text": "disable_alarm | disable alarm | Temporarily disable an alarm without deleting it. | 停用报警 | disable alarm | action | id"
+  },
+  {
+    "action": "delete_alarm",
+    "description": "Remove an alarm definition entirely.",
+    "domain": "manage_alarms",
+    "examples": [
+      "删除报警",
+      "remove this alarm"
+    ],
+    "name": "delete_alarm",
+    "text": "delete_alarm | delete alarm | Remove an alarm definition entirely. | 删除报警 | remove this alarm | action | id"
+  },
+  {
+    "action": "create_point",
+    "description": "Define a new SCADA point (tag) with type and optional engineering units.",
+    "domain": "manage_points",
+    "examples": [
+      "新建一个温度点位 TEMP_201",
+      "create analog point for pressure",
+      "增加一个数字量输入点位"
+    ],
+    "name": "create_point",
+    "text": "create_point | create point | Define a new SCADA point (tag) with type and optional engineering units. | 新建一个温度点位 TEMP_201 | create analog point for pressure | 增加一个数字量输入点位 | action | tag | type | unit | min | max | description"
+  },
+  {
+    "action": "update_point",
+    "description": "Update engineering metadata (unit, min, max, description) on an existing point.",
+    "domain": "manage_points",
+    "examples": [
+      "把温度点的量程改成 0~200",
+      "set unit to MPa"
+    ],
+    "name": "update_point",
+    "text": "update_point | update point | Update engineering metadata (unit, min, max, description) on an existing point. | 把温度点的量程改成 0~200 | set unit to MPa | action | tag | unit | min | max | description"
+  },
+  {
+    "action": "delete_point",
+    "description": "Delete a SCADA point. Fails if any alarm references it.",
+    "domain": "manage_points",
+    "examples": [
+      "删除点位"
+    ],
+    "name": "delete_point",
+    "text": "delete_point | delete point | Delete a SCADA point. Fails if any alarm references it. | 删除点位 | action | tag"
+  },
+  {
+    "action": "list_points",
+    "description": "Return a summary of all points; optional filter by type.",
+    "domain": "manage_points",
+    "examples": [
+      "列出所有点位",
+      "show me the analog points"
+    ],
+    "name": "list_points",
+    "text": "list_points | list points | Return a summary of all points; optional filter by type. | 列出所有点位 | show me the analog points | action | type_filter"
+  },
+  {
+    "action": "create_page",
+    "description": "Create a new HMI page (screen) with a given resolution and background.",
+    "domain": "manage_pages",
+    "examples": [
+      "新建一个监控画面",
+      "create a 1080p page"
+    ],
+    "name": "create_page",
+    "text": "create_page | create page | Create a new HMI page (screen) with a given resolution and background. | 新建一个监控画面 | create a 1080p page | action | id | name | resolution | background"
+  },
+  {
+    "action": "rename_page",
+    "description": "Change the display name of an existing page.",
+    "domain": "manage_pages",
+    "examples": [
+      "改个名字"
+    ],
+    "name": "rename_page",
+    "text": "rename_page | rename page | Change the display name of an existing page. | 改个名字 | action | id | new_name"
+  },
+  {
+    "action": "delete_page",
+    "description": "Delete a page and all its widgets.",
+    "domain": "manage_pages",
+    "examples": [
+      "删除画面"
+    ],
+    "name": "delete_page",
+    "text": "delete_page | delete page | Delete a page and all its widgets. | 删除画面 | action | id"
+  },
+  {
+    "action": "create_widget",
+    "description": "Place a graphical widget (thermometer, tank, pump, …) on a page.",
+    "domain": "manage_pages",
+    "examples": [
+      "在画面上画一个温度计",
+      "add a tank widget"
+    ],
+    "name": "create_widget",
+    "text": "create_widget | create widget | Place a graphical widget (thermometer, tank, pump, …) on a page. | 在画面上画一个温度计 | add a tank widget | action | page_id | widget_id | type | position | size | style | expected_binding_types"
+  },
+  {
+    "action": "bind_point",
+    "description": "Bind a SCADA point tag to a widget property, e.g. thermometer.value ← TEMP_101.",
+    "domain": "manage_pages",
+    "examples": [
+      "给反应釜温度计绑定 TEMP_101",
+      "bind pressure point to the gauge",
+      "把温度点绑到温度计的 value 属性"
+    ],
+    "name": "bind_point",
+    "text": "bind_point | bind point | Bind a SCADA point tag to a widget property, e.g. thermometer.value ← TEMP_101. | 给反应釜温度计绑定 TEMP_101 | bind pressure point to the gauge | 把温度点绑到温度计的 value 属性 | action | page_id | widget_id | property | tag"
+  },
+  {
+    "action": "list_pages",
+    "description": "Return the list of pages with their IDs and names.",
+    "domain": "manage_pages",
+    "examples": [
+      "列出所有画面"
+    ],
+    "name": "list_pages",
+    "text": "list_pages | list pages | Return the list of pages with their IDs and names. | 列出所有画面 | action"
+  },
+  {
+    "action": "create_rect",
+    "description": "Draw a rectangle primitive on a page.",
+    "domain": "manage_graphics",
+    "examples": [
+      "在画面上画一个矩形",
+      "draw a rectangle on page",
+      "添加一个矩形框",
+      "画一个红色边框框",
+      "create a rect primitive"
+    ],
+    "name": "create_rect",
+    "text": "create_rect | create rect | Draw a rectangle primitive on a page. | 在画面上画一个矩形 | draw a rectangle on page | 添加一个矩形框 | 画一个红色边框框 | create a rect primitive | action | page_id | widget_id | position | size | style"
+  },
+  {
+    "action": "create_circle",
+    "description": "Draw a circle primitive on a page.",
+    "domain": "manage_graphics",
+    "examples": [
+      "画一个圆",
+      "在画面上加一个圆形",
+      "draw a circle",
+      "indicator light 用圆形"
+    ],
+    "name": "create_circle",
+    "text": "create_circle | create circle | Draw a circle primitive on a page. | 画一个圆 | 在画面上加一个圆形 | draw a circle | indicator light 用圆形 | action | page_id | widget_id | center | radius | style"
+  },
+  {
+    "action": "create_line",
+    "description": "Draw a line primitive (e.g. a pipe segment) on a page.",
+    "domain": "manage_graphics",
+    "examples": [
+      "画一根管道",
+      "在画面上画一根连线",
+      "draw a pipe line",
+      "用线段连接两个设备"
+    ],
+    "name": "create_line",
+    "text": "create_line | create line | Draw a line primitive (e.g. a pipe segment) on a page. | 画一根管道 | 在画面上画一根连线 | draw a pipe line | 用线段连接两个设备 | action | page_id | widget_id | start | end | style"
+  },
+  {
+    "action": "create_text",
+    "description": "Place a static text label on a page.",
+    "domain": "manage_graphics",
+    "examples": [
+      "在画面上加一个文字标签",
+      "add a title text",
+      "贴一个说明文本",
+      "在反应釜下面写一个标签"
+    ],
+    "name": "create_text",
+    "text": "create_text | create text | Place a static text label on a page. | 在画面上加一个文字标签 | add a title text | 贴一个说明文本 | 在反应釜下面写一个标签 | action | page_id | widget_id | position | text | font_size | style"
+  },
+  {
+    "action": "apply_flow_layout",
+    "description": "Re-position a group of widgets in a horizontal/vertical flow layout.",
+    "domain": "manage_graphics",
+    "examples": [
+      "把这些图元水平排列",
+      "纵向均匀分布几个图元",
+      "arrange widgets in a row",
+      "三个泵横向排开"
+    ],
+    "name": "apply_flow_layout",
+    "text": "apply_flow_layout | apply flow layout | Re-position a group of widgets in a horizontal/vertical flow layout. | 把这些图元水平排列 | 纵向均匀分布几个图元 | arrange widgets in a row | 三个泵横向排开 | action | page_id | widget_ids | direction | gap | origin"
+  },
+  {
+    "action": "group_widgets",
+    "description": "Group existing widgets into a named cluster (semantic, no layout change).",
+    "domain": "manage_graphics",
+    "examples": [
+      "把这几个图元组合成一组",
+      "group these widgets as 'pump_assembly'",
+      "组合反应釜与温度计"
+    ],
+    "name": "group_widgets",
+    "text": "group_widgets | group widgets | Group existing widgets into a named cluster (semantic, no layout change). | 把这几个图元组合成一组 | group these widgets as 'pump_assembly' | 组合反应釜与温度计 | action | page_id | group_id | widget_ids"
+  },
+  {
+    "action": "set_widget_style",
+    "description": "Merge style keys (color, line_width, font_size, …) onto an existing widget.",
+    "domain": "manage_graphics",
+    "examples": [
+      "把这个矩形改成红色",
+      "调整图元字号",
+      "set widget color to green",
+      "把温度计描边加粗"
+    ],
+    "name": "set_widget_style",
+    "text": "set_widget_style | set widget style | Merge style keys (color, line_width, font_size, …) onto an existing widget. | 把这个矩形改成红色 | 调整图元字号 | set widget color to green | 把温度计描边加粗 | action | page_id | widget_id | style"
+  },
+  {
+    "action": "delete_widget",
+    "description": "Remove a widget from a page.",
+    "domain": "manage_graphics",
+    "examples": [
+      "删掉那个矩形",
+      "remove this widget",
+      "把这个温度计从画面上去掉"
+    ],
+    "name": "delete_widget",
+    "text": "delete_widget | delete widget | Remove a widget from a page. | 删掉那个矩形 | remove this widget | 把这个温度计从画面上去掉 | action | page_id | widget_id"
+  },
+  {
+    "action": "enable_history",
+    "description": "Turn on historian sampling for a tag (creates the config if needed).",
+    "domain": "manage_history",
+    "examples": [
+      "把温度记录到历史库",
+      "enable history for TEMP_101",
+      "把压力点位加入历史归档",
+      "开启数据存档"
+    ],
+    "name": "enable_history",
+    "text": "enable_history | enable history | Turn on historian sampling for a tag (creates the config if needed). | 把温度记录到历史库 | enable history for TEMP_101 | 把压力点位加入历史归档 | 开启数据存档 | action | tag | storage_mode | sample_interval_s | deadband | retention_days"
+  },
+  {
+    "action": "disable_history",
+    "description": "Pause historian sampling for a tag without deleting the configuration.",
+    "domain": "manage_history",
+    "examples": [
+      "暂停历史记录",
+      "stop archiving this tag",
+      "把数据存档关掉"
+    ],
+    "name": "disable_history",
+    "text": "disable_history | disable history | Pause historian sampling for a tag without deleting the configuration. | 暂停历史记录 | stop archiving this tag | 把数据存档关掉 | action | tag"
+  },
+  {
+    "action": "set_retention",
+    "description": "Change the retention window (in days) of a tag's history config.",
+    "domain": "manage_history",
+    "examples": [
+      "把历史保留时间改成 90 天",
+      "set retention to 7 days",
+      "保留半年的数据"
+    ],
+    "name": "set_retention",
+    "text": "set_retention | set retention | Change the retention window (in days) of a tag's history config. | 把历史保留时间改成 90 天 | set retention to 7 days | 保留半年的数据 | action | tag | retention_days"
+  },
+  {
+    "action": "query_history",
+    "description": "Read a synthetic historical window for a tag (deterministic sine-wave demo).",
+    "domain": "manage_history",
+    "examples": [
+      "查最近一分钟的温度趋势",
+      "show the last 60 seconds of pressure samples",
+      "拉取历史曲线",
+      "看一下最近的历史数据"
+    ],
+    "name": "query_history",
+    "text": "query_history | query history | Read a synthetic historical window for a tag (deterministic sine-wave demo). | 查最近一分钟的温度趋势 | show the last 60 seconds of pressure samples | 拉取历史曲线 | 看一下最近的历史数据 | action | tag | window_s | max_samples"
+  },
+  {
+    "action": "list_history",
+    "description": "List the configured historian tags and their parameters.",
+    "domain": "manage_history",
+    "examples": [
+      "列出所有正在归档的点位",
+      "show me historian config",
+      "哪些点位被记录到历史库"
+    ],
+    "name": "list_history",
+    "text": "list_history | list history | List the configured historian tags and their parameters. | 列出所有正在归档的点位 | show me historian config | 哪些点位被记录到历史库 | action | enabled_only"
+  },
+  {
+    "action": "create_script",
+    "description": "Define a user script (on_change / on_alarm / periodic / on_event).",
+    "domain": "manage_scripts",
+    "examples": [
+      "添加一个温度超限的脚本",
+      "新建一个周期 1 秒的脚本",
+      "create an on_change script bound to TEMP_101",
+      "alarm 触发时跑一段脚本",
+      "增加一段事件脚本"
+    ],
+    "name": "create_script",
+    "text": "create_script | create script | Define a user script (on_change / on_alarm / periodic / on_event). | 添加一个温度超限的脚本 | 新建一个周期 1 秒的脚本 | create an on_change script bound to TEMP_101 | alarm 触发时跑一段脚本 | 增加一段事件脚本 | action | id | name | trigger | bound_tag | period_s | body"
+  },
+  {
+    "action": "update_script_body",
+    "description": "Replace the source body of an existing script.",
+    "domain": "manage_scripts",
+    "examples": [
+      "改一下脚本内容",
+      "edit script body",
+      "把那段脚本改写一下"
+    ],
+    "name": "update_script_body",
+    "text": "update_script_body | update script body | Replace the source body of an existing script. | 改一下脚本内容 | edit script body | 把那段脚本改写一下 | action | id | body"
+  },
+  {
+    "action": "enable_script",
+    "description": "Enable a disabled script.",
+    "domain": "manage_scripts",
+    "examples": [
+      "启用脚本",
+      "enable this script"
+    ],
+    "name": "enable_script",
+    "text": "enable_script | enable script | Enable a disabled script. | 启用脚本 | enable this script | action | id"
+  },
+  {
+    "action": "disable_script",
+    "description": "Disable a script without deleting it.",
+    "domain": "manage_scripts",
+    "examples": [
+      "停用脚本",
+      "disable this script",
+      "暂时关掉脚本"
+    ],
+    "name": "disable_script",
+    "text": "disable_script | disable script | Disable a script without deleting it. | 停用脚本 | disable this script | 暂时关掉脚本 | action | id"
+  },
+  {
+    "action": "delete_script",
+    "description": "Remove a script definition entirely.",
+    "domain": "manage_scripts",
+    "examples": [
+      "删除脚本",
+      "remove this script",
+      "把这段脚本去掉"
+    ],
+    "name": "delete_script",
+    "text": "delete_script | delete script | Remove a script definition entirely. | 删除脚本 | remove this script | 把这段脚本去掉 | action | id"
+  },
+  {
+    "action": "list_scripts",
+    "description": "List defined scripts, optionally filtered by trigger.",
+    "domain": "manage_scripts",
+    "examples": [
+      "列出所有脚本",
+      "show all on_change scripts",
+      "查询脚本配置"
+    ],
+    "name": "list_scripts",
+    "text": "list_scripts | list scripts | List defined scripts, optionally filtered by trigger. | 列出所有脚本 | show all on_change scripts | 查询脚本配置 | action | trigger"
+  },
+  {
+    "action": "validate_project",
+    "description": "Run end-to-end consistency checks on the project (references, types).",
+    "domain": "deployment",
+    "examples": [
+      "检查项目能不能下装",
+      "validate the project before deploy",
+      "整体校验一下配置",
+      "跑一遍项目自检"
+    ],
+    "name": "validate_project",
+    "text": "validate_project | validate project | Run end-to-end consistency checks on the project (references, types). | 检查项目能不能下装 | validate the project before deploy | 整体校验一下配置 | 跑一遍项目自检 | action | deployment_id | target"
+  },
+  {
+    "action": "deploy_project",
+    "description": "Mark the project as deployed. Requires a successful prior validation.",
+    "domain": "deployment",
+    "examples": [
+      "把项目下发到目标",
+      "deploy now",
+      "下装项目到 PLC",
+      "正式下装"
+    ],
+    "name": "deploy_project",
+    "text": "deploy_project | deploy project | Mark the project as deployed. Requires a successful prior validation. | 把项目下发到目标 | deploy now | 下装项目到 PLC | 正式下装 | action | deployment_id | force"
+  },
+  {
+    "action": "rollback_deployment",
+    "description": "Roll the deployment back to draft and record a note.",
+    "domain": "deployment",
+    "examples": [
+      "回滚刚才的下装",
+      "rollback the deployment",
+      "撤销最后一次下装"
+    ],
+    "name": "rollback_deployment",
+    "text": "rollback_deployment | rollback deployment | Roll the deployment back to draft and record a note. | 回滚刚才的下装 | rollback the deployment | 撤销最后一次下装 | action | deployment_id | notes"
+  },
+  {
+    "action": "show_deployment_status",
+    "description": "Return the current deployment status and any validation errors.",
+    "domain": "deployment",
+    "examples": [
+      "项目当前状态如何",
+      "show me the deployment status",
+      "下装到哪一步了"
+    ],
+    "name": "show_deployment_status",
+    "text": "show_deployment_status | show deployment status | Return the current deployment status and any validation errors. | 项目当前状态如何 | show me the deployment status | 下装到哪一步了 | action | deployment_id"
+  }
+]

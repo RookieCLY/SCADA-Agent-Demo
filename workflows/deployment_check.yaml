@@ -1,0 +1,47 @@
+name: DeploymentCheck
+version: "1.0.0"
+description: |
+  部署 / 校验工作流 — 项目预检 → 真实下装 → (可选)状态查询。覆盖 "校验项目能不能下装"、
+  "把项目下发"、"回滚刚才的下装" 等 deployment 类 query。
+
+priority: 35
+
+trigger:
+  keywords:
+    - "校验"
+    - "验证"
+    - "validate"
+    - "下装"
+    - "下发"
+    - "deploy"
+    - "部署"
+    - "回滚"
+    - "rollback"
+    - "项目检查"
+
+steps:
+  - id: validate
+    type: llm_step
+    state: VALIDATE
+    description: 校验项目一致性
+    allowed_tools:
+      - validate_project
+      - show_deployment_status
+      - list_points
+      - list_pages
+      - list_history
+      - list_scripts
+    expected_action: validate_project
+    must_call_tool: false
+
+  - id: deploy_or_rollback
+    type: llm_step
+    state: DEPLOY
+    depends_on: [validate]
+    description: 若校验通过则下装,否则回滚已有部署
+    allowed_tools:
+      - deploy_project
+      - rollback_deployment
+      - show_deployment_status
+      - validate_project
+    must_call_tool: false

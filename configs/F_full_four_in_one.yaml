@@ -1,0 +1,39 @@
+name: F_full_four_in_one
+description: |
+  §3.2 Config F — E + Resources separation. **The fully wired four-in-one
+  architecture the paper advocates.** All five Phase-2 levers ON:
+    * hierarchical Tool surface
+    * Tool RAG (hybrid + rerank)
+    * Workflow Engine + YAMLs
+    * State Machine whitelist
+    * Resources / Tools 分离
+
+  H5 measures F vs E to show that read/write split does not hurt success and
+  shrinks the Tool list.
+
+architecture:
+  hierarchical_tools: true
+  tool_rag:
+    enabled: true
+    top_n: 30
+    top_k: 12
+    alpha_dense: 0.6
+    use_reranker: true
+  workflow:
+    enabled: true
+    yaml_path: workflows
+  state_machine:
+    enabled: true
+  resources_separation: true
+
+model:
+  provider: mock
+  name: mock
+  temperature: 0.0
+  max_tokens: 4096
+
+world:
+  backend: memory
+
+repetitions: 5
+seed_base: 42

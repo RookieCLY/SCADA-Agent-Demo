@@ -1,0 +1,39 @@
+name: PointCreation
+version: "1.0.0"
+description: |
+  点位新建 / 更新工作流 — 单步、直接创建点位。覆盖 "新建一个模拟点位"、"添加 TAG"、
+  "创建数字点" 等创建类 query。绑定 / 删除 / 列表交给其它 workflow 或自由编排。
+
+priority: 25
+
+trigger:
+  keywords:
+    - "新建.*点位"
+    - "创建.*点位"
+    - "新增.*点位"
+    - "添加.*点位"
+    - "创建.*点"
+    - "新增.*tag"
+    - "create point"
+    - "add point"
+    - "add tag"
+
+steps:
+  - id: ensure_unique
+    type: llm_step
+    state: ANALYZE_INTENT
+    description: 必要时先列出已有点位,避免重名(must_call_tool=false)
+    allowed_tools:
+      - list_points
+    must_call_tool: false
+
+  - id: create_point
+    type: llm_step
+    state: CONFIG_POINT
+    depends_on: [ensure_unique]
+    description: 实际创建点位
+    allowed_tools:
+      - create_point
+      - update_point
+      - list_points
+    expected_action: create_point

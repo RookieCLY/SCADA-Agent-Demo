@@ -1,0 +1,31 @@
+name: C_hier_rag
+description: |
+  §3.2 Config C — hierarchical Tool surface + Tool RAG (BM25 + dense + rerank).
+  Adds the soft-rank layer on top of B; no workflow / state machine / Resources.
+  Used to measure the marginal lift from RAG alone (H2 中间增量).
+
+architecture:
+  hierarchical_tools: true
+  tool_rag:
+    enabled: true
+    top_n: 30
+    top_k: 12
+    alpha_dense: 0.6
+    use_reranker: true
+  workflow:
+    enabled: false
+  state_machine:
+    enabled: false
+  resources_separation: false
+
+model:
+  provider: mock
+  name: mock
+  temperature: 0.0
+  max_tokens: 4096
+
+world:
+  backend: memory
+
+repetitions: 1
+seed_base: 42

@@ -1,0 +1,36 @@
+name: sweep_tool_count
+description: |
+  §3.2 Sweep_ToolCount placeholder — runs A vs F across simulated tool-count
+  perturbations. Tool count is simulated at experiment-runner level by
+  inflating the registry with duplicated atomic shells before each run; the
+  YAML itself only carries the architecture flags relevant for H1 evaluation.
+
+  This file is intentionally minimal — the sweep dimensions
+  (tool_counts, n_reps, models) live in the runner CLI flags, not here, so
+  the same YAML can be reused across sub-experiments.
+
+architecture:
+  hierarchical_tools: true
+  tool_rag:
+    enabled: true
+    top_n: 30
+    top_k: 12
+    alpha_dense: 0.6
+    use_reranker: true
+  workflow:
+    enabled: false
+  state_machine:
+    enabled: true
+  resources_separation: false
+
+model:
+  provider: mock
+  name: mock
+  temperature: 0.0
+  max_tokens: 4096
+
+world:
+  backend: memory
+
+repetitions: 3
+seed_base: 42

@@ -1,0 +1,312 @@
+{
+  "apply_flow_layout": [
+    "控件自动排版成一行",
+    "vertical align the pumps",
+    "把这几个阀门竖着排",
+    "给按钮做个水平布局",
+    "arrange these widgets vertically",
+    "图标横向均匀分布一下"
+  ],
+  "bind_point": [
+    "TEMP_102 接到温度计的 value",
+    "bind widget to tag TEMP_101",
+    "给那个压力表绑定点位 PT_201",
+    "把液位点绑到水位计显示",
+    "配置压力计的属性绑定压力点"
+  ],
+  "create_analog_alarm": [
+    "给TEMP_101加高温报警，上限80度",
+    "反应釜压力配个高限报警，70bar",
+    "set high alarm for pressure_P01 at 90",
+    "TEMP_202加个低温报警，下限10度",
+    "给液位LT_101配高低限报警"
+  ],
+  "create_circle": [
+    "画个圆，放在页面中央",
+    "add a red circle to page",
+    "给画面配个圆形组件",
+    "画个半径50的圆",
+    "draw circle on main page",
+    "圆形指示灯画一下"
+  ],
+  "create_digital_alarm": [
+    "泵故障时报警一下",
+    "digital input high 触发报警",
+    "给泵状态做个报警",
+    "点位变化时告警",
+    "创建个数字量报警，标签是泵故障",
+    "布尔点位 true 就报警"
+  ],
+  "create_line": [
+    "在A3页画根管道",
+    "连接两阀门画根线",
+    "draw line from P101 to P102",
+    "新建一段管路连接",
+    "给画面加条工艺管线",
+    "用线段link下这两个设备"
+  ],
+  "create_page": [
+    "加个新界面，1920x1080的",
+    "搞个HMI页面，背景用深蓝色",
+    "create screen 1280x720",
+    "新建一个监控大屏，分辨率4K",
+    "弄个操作画面，背景放张厂貌图",
+    "add page with 1080p resolution"
+  ],
+  "create_point": [
+    "添加 tag TANK_LEVEL, 模拟量, 单位 m",
+    "建个新点位, 开关量, 描述: 电机运行",
+    "create a new tag named PUMP_01",
+    "配一个模拟量点位, 工程单位 kPa",
+    "新建点位: 压力变送器, 类型 float, 最大 100",
+    "给报警主机加个数字输入点"
+  ],
+  "create_rect": [
+    "给页面加个矩形控件",
+    "draw a blue rect on page",
+    "画个矩形框在左上角",
+    "add a rectangle with border",
+    "在画布上创建矩形元素",
+    "make a rect widget here"
+  ],
+  "create_script": [
+    "给PV_200加个on_change脚本",
+    "建个定时脚本每5秒刷一次数据",
+    "on_event脚本监控阀门状态变化",
+    "温度高了跑段应急脚本",
+    "绑定TAG_301写个报警联动脚本",
+    "create periodic script, 10s cycle"
+  ],
+  "create_text": [
+    "放个'系统运行中'的文本框",
+    "position(100,200)加个标签",
+    "add static label 'pump status'",
+    "在首页左上角写个标题",
+    "给这个阀门贴个名字",
+    "create text 'emergency stop'"
+  ],
+  "create_widget": [
+    "页面加个泵图标",
+    "添加仪表盘控件",
+    "在1号页面放温度计",
+    "create a valve widget",
+    "放一个搅拌罐图符",
+    "页面添加温度显示"
+  ],
+  "delete_alarm": [
+    "干掉这个报警",
+    "删掉那个高温报警",
+    "remove alarm id 101",
+    "把新创建的报警删了",
+    "清除那个模拟量报警定义",
+    "delete this alarm please"
+  ],
+  "delete_page": [
+    "delete this page",
+    "删掉这个画面",
+    "把当前页面删除",
+    "remove page",
+    "清除该画面及组件",
+    "delete the page with id 5"
+  ],
+  "delete_point": [
+    "删掉温度那个点",
+    "移除tag: Temp_001",
+    "delete point T101",
+    "把PMP102删了",
+    "这个液位点不要了",
+    "删了温度高报警用的那个点"
+  ],
+  "delete_script": [
+    "删掉那个脚本",
+    "remove script by id",
+    "清理一下这个script",
+    "把脚本废了",
+    "delete the script",
+    "这段脚本不要了"
+  ],
+  "delete_widget": [
+    "删除主页面的这个组件",
+    "去掉画面上的这个控件",
+    "remove widget from page",
+    "把这个仪表盘删了",
+    "清除这个图表元素",
+    "移除该页面上的部件"
+  ],
+  "deploy_project": [
+    "部署这个工程",
+    "confirm deployment",
+    "推送到现场",
+    "执行项目下发",
+    "跑一下下装流程",
+    "OK to deploy"
+  ],
+  "disable_alarm": [
+    "暂时关掉那个报警",
+    "alarm 挂起一下",
+    "这个高温报警先禁用",
+    "disable the alarm for now",
+    "先把报警停用",
+    "临时disable报警"
+  ],
+  "disable_history": [
+    "暂停一下这个点的历史采集",
+    "disable historian for pump_speed",
+    "别记这个温度了",
+    "关掉 tag 历史存档",
+    "停止记录液位数据",
+    "pause data logging on flow_sensor"
+  ],
+  "disable_script": [
+    "先把这个脚本禁了",
+    "暂停脚本运行",
+    "script 暂时不要执行",
+    "脚本 disable 掉",
+    "关掉那个脚本",
+    "停用脚本功能"
+  ],
+  "enable_alarm": [
+    "启用该报警",
+    "把那个报警启用了",
+    "alarm enable",
+    "这个报警可以开了",
+    "激活报警ID123",
+    "开报警"
+  ],
+  "enable_history": [
+    "给 TEMP_101 开历史归档",
+    "enable historian for TT-201",
+    "记录阀门开度，存三天",
+    "把 PT-102 打到历史库",
+    "开始采样 flow_rate",
+    "开启历史存储，tag是LT-101"
+  ],
+  "enable_script": [
+    "把这脚本启用了",
+    "开启脚本",
+    "启用ID为5的脚本",
+    "把禁用的脚本打开",
+    "enable script 3",
+    "开这个脚本"
+  ],
+  "group_widgets": [
+    "将这些阀门控件归为泵组",
+    "group widgets into 'heat_exchanger'",
+    "给这些图元打包成设备组",
+    "combine selected widgets as a cluster",
+    "把液位计和泵阀绑定到一组",
+    "group them under 'cooling_unit'"
+  ],
+  "list_history": [
+    "历史归档点位列表",
+    "list configured historian tags",
+    "给我看看历史数据的配置",
+    "哪些tag开了历史记录",
+    "查一下启用的历史采集点",
+    "show me the historian setup"
+  ],
+  "list_pages": [
+    "show all pages",
+    "get page list",
+    "列出所有页面",
+    "查一下有哪些画面",
+    "pages list",
+    "看下页面列表"
+  ],
+  "list_points": [
+    "列出全部点",
+    "digital点有哪些",
+    "只看模拟量tag",
+    "显示所有离散点位",
+    "show all points",
+    "list ai points"
+  ],
+  "list_scripts": [
+    "list scripts",
+    "显示所有周期触发脚本",
+    "查一下有哪些on_change脚本",
+    "给我看定时脚本",
+    "scripts with trigger?",
+    "列出event触发的脚本"
+  ],
+  "query_history": [
+    "查最近5分钟温度趋势",
+    "pull pressure data for last 30s",
+    "看看这个点最近的历史曲线",
+    "show recent tag history",
+    "拉取最近一分钟的数据点",
+    "查询历史窗口数据"
+  ],
+  "rename_page": [
+    "页面改名叫Overview",
+    "修改当前页面显示名",
+    "rename this page to Dashboard",
+    "给这个画面换个标签",
+    "调整页面标题为监控总览",
+    "修改页面名称为Alarm List"
+  ],
+  "rollback_deployment": [
+    "回退这次部署",
+    "回滚部署ID 567",
+    "撤回本次下装并记备注",
+    "rollback deployment 1234",
+    "部署打回草稿状态",
+    "撤销上线，记录原因"
+  ],
+  "set_retention": [
+    "历史数据存 365 天",
+    "retention period 1 year",
+    "标签历史保留改成 180 天",
+    "保留 30 天数据",
+    "set history to 14 days",
+    "数据留存期设为 2 年"
+  ],
+  "set_threshold": [
+    "把高温报警阈值设到85",
+    "set high limit to 100",
+    "调整deadband到5",
+    "报警上限改成95度",
+    "low limit调低点到50",
+    "deadband设为2"
+  ],
+  "set_widget_style": [
+    "把按钮边框改成蓝色",
+    "图元字体加大两号",
+    "设置控件线宽为3",
+    "把这个标签颜色改为红色",
+    "Widget border style: dashed",
+    "调整指示灯为绿色"
+  ],
+  "show_deployment_status": [
+    "检查下装进展",
+    "部署状态有啥问题没",
+    "deployment status check",
+    "看下当前进度到哪了",
+    "验证错误有哪些",
+    "这次下装啥情况"
+  ],
+  "update_point": [
+    "给压力点改下单位是bar",
+    "更新下温度计的描述信息",
+    "把tag1的最小值设为-10",
+    "修改模拟量点最大上限",
+    "set description for flow tag",
+    "压力变送器量程调成0-100"
+  ],
+  "update_script_body": [
+    "更新脚本源代码",
+    "change script source",
+    "给脚本换段新代码",
+    "replace script body",
+    "修改这个脚本的执行内容",
+    "script body update"
+  ],
+  "validate_project": [
+    "项目一致性检查一下",
+    "run end-to-end check on deployment",
+    "下装前校验",
+    "跑个完整性检测",
+    "validate this project",
+    "配置完整性自检"
+  ]
+}
