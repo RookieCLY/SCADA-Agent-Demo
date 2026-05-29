@@ -78,6 +78,7 @@ DEFAULT_SYSTEM_PROMPT = """\
 你是一个工业 SCADA 配置助手。根据用户的自然语言需求,调用以下工具完成 SCADA 项目配置。
 
 【当前阶段】{current_state}
+【可切换的下一阶段】{allowed_transitions}
 【当前可用工具】(仅以下工具可被调用)
 {tool_list}
 {resource_block}{workflow_block}
@@ -86,7 +87,8 @@ DEFAULT_SYSTEM_PROMPT = """\
 2. 调用工具前先思考该工具是否真的匹配用户意图
 3. 工具参数必须符合提供的 JSON Schema
 4. 若信息不足,先调用查询类工具或向用户确认
-5. 完成任务后明确告知用户
+5. 若当前阶段的可用工具不满足需求，你可以在回复的纯文本中包含 "next_state: 阶段名" 来切换到【可切换的下一阶段】中的合适阶段
+6. 完成任务后明确告知用户，并在回复的纯文本中包含 "next_state: DONE" 来结束整个任务
 """
 
 
@@ -468,8 +470,10 @@ class Agent:
                     sm.current, query, wf_state
                 )
                 tool_list_str = self._render_tool_list(visible) or "(no tools allowed)"
+                allowed_trans = ", ".join(sorted(list(STATES[sm.current].next_states))) if sm.current in STATES else ""
                 system_prompt = DEFAULT_SYSTEM_PROMPT.format(
                     current_state=sm.current,
+                    allowed_transitions=allowed_trans,
                     tool_list=tool_list_str,
                     resource_block=self._render_resource_block(),
                     workflow_block=self._render_workflow_block(wf_state),
@@ -490,7 +494,9 @@ class Agent:
                         output_tokens=resp.output_tokens,
                         latency_ms=resp.latency_ms,
                         stop_reason=resp.stop_reason,
-                    )
+                    ),
+                    text=resp.text,
+                    reasoning=resp.reasoning,
                 )
 
                 if not resp.tool_calls:
@@ -500,6 +506,10 @@ class Agent:
                             ctx.exit_state()
                             sm.transit(resp.next_state)
                             ctx.enter_state(sm.current)
+                            history.append({
+                                "role": "user",
+                                "content": f"你已进入 {sm.current} 阶段，请使用当前可用工具继续完成任务。",
+                            })
                             if sm.is_terminal:
                                 break
                             continue
@@ -514,6 +524,10 @@ class Agent:
                                 ctx.exit_state()
                                 sm.transit(next_state)
                                 ctx.enter_state(sm.current)
+                                history.append({
+                                    "role": "user",
+                                    "content": f"你已进入 {sm.current} 阶段，请使用当前可用工具继续完成任务。",
+                                })
                                 continue
                     break
 
@@ -576,6 +590,7 @@ class Agent:
                         else:
                             permitted = call.name in atomic_pool
                         if not permitted:
+                            err_msg = f"tool not in whitelist for state {sm.current}"
                             ctx.log_tool_call(
                                 ToolCallRecord(
                                     turn=turn,
@@ -588,11 +603,21 @@ class Agent:
                                     schema_valid=True,
                                     result_ok=False,
                                     error_code="OUT_OF_SCOPE",
-                                    error_msg=f"tool not in whitelist for state {sm.current}",
+                                    error_msg=err_msg,
                                     result_data={},
                                     world_diff=None,
                                     latency_ms=0.0,
                                 )
+                            )
+                            history.append(
+                                {
+                                    "role": "tool",
+                                    "name": call.name,
+                                    "ok": False,
+                                    "error_code": "OUT_OF_SCOPE",
+                                    "data": {},
+                                    "error_msg": err_msg,
+                                }
                             )
                             continue
 
@@ -670,6 +695,7 @@ class Agent:
                         ctx.exit_state()
                         sm.transit(resp.next_state)
                         ctx.enter_state(sm.current)
+                        just_transitioned = True
                 if wf_engine is not None and wf_state is not None and not wf_state.finished:
                     self._maybe_run_deterministic(wf_engine, wf_state, world, ctx, turn)
                     if not wf_state.finished:
@@ -678,6 +704,10 @@ class Agent:
                             ctx.exit_state()
                             sm.transit(next_state)
                             ctx.enter_state(sm.current)
+                            history.append({
+                                "role": "user",
+                                "content": f"你已进入 {sm.current} 阶段，请使用当前可用工具继续完成任务。",
+                            })
                 if sm.is_terminal:
                     break
             else:
@@ -766,7 +796,7 @@ class Agent:
 
 
 # ============================================================ assembly helper
-def assemble(config_path: str | Path) -> Agent:
+def assemble(config_path: str | Path, model_override: str | None = None, provider_override: str | None = None) -> Agent:
     """Instantiate and assemble an Agent and its components from a YAML configuration.
     
     This function reads the ExperimentConfig, initializes the Tool Registry, constructs the 
@@ -775,11 +805,18 @@ def assemble(config_path: str | Path) -> Agent:
     
     Args:
         config_path: Path to the experiment configuration YAML file.
+        model_override: Optional model name override (e.g. gpt-4o).
+        provider_override: Optional provider override (e.g. openai).
         
     Returns:
         A fully initialized Agent instance ready for `run()`.
     """
     cfg = load_config(config_path)
+    if model_override:
+        cfg.model.name = model_override
+    if provider_override:
+        cfg.model.provider = provider_override
+        
     registry = build_default_registry()
     llm = build_llm(cfg.model, registry=registry, arch=cfg.architecture)
     cfg_hash = hashlib.sha256(Path(config_path).read_bytes()).hexdigest()
@@ -788,6 +825,7 @@ def assemble(config_path: str | Path) -> Agent:
         config_name=cfg.name,
         model_name=cfg.model.name,
         config_hash=f"sha256:{cfg_hash[:16]}",
+        record_llm_io=cfg.trace.record_llm_io,
     )
 
     tool_index: ToolIndex | None = None

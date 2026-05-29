@@ -42,6 +42,8 @@ class LLMResponse:
     raw: dict[str, Any] = field(default_factory=dict)
     # If non-None, the agent should attempt a state transition to this label.
     next_state: str | None = None
+    # Chain-of-thought / reasoning from thinking-mode providers (e.g. xiaomi-mimo).
+    reasoning: str | None = None
 
 
 class LLMProvider(Protocol):
@@ -509,6 +511,8 @@ class OpenAICompatibleLLM:
             ]
             self._first_call = False
         else:
+            if self._messages and self._messages[0].get("role") == "system":
+                self._messages[0]["content"] = system_prompt
             # walk backward through history collecting consecutive tool rows
             buf: list[dict[str, Any]] = []
             i = len(history) - 1
@@ -613,6 +617,11 @@ class OpenAICompatibleLLM:
         usage = getattr(resp, "usage", None)
         in_tok = getattr(usage, "prompt_tokens", 0) or 0
         out_tok = getattr(usage, "completion_tokens", 0) or 0
+        next_state = None
+        if text:
+            m = re.search(r"next_state:\s*([A-Z_]+)", text)
+            if m:
+                next_state = m.group(1)
 
         return LLMResponse(
             text=text,
@@ -622,7 +631,8 @@ class OpenAICompatibleLLM:
             output_tokens=out_tok,
             latency_ms=lat,
             raw={"model": self.model_name, "response_id": getattr(resp, "id", "")},
-            next_state=None,
+            next_state=next_state,
+            reasoning=reasoning,
         )
 
 

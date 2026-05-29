@@ -24,6 +24,9 @@ dataset:
   path: null
   sample_size: null
 
+trace:
+  record_llm_io: true
+
 world:
   backend: memory
 

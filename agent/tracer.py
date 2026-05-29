@@ -60,6 +60,8 @@ class LLMCallRecord:
     output_tokens: int
     latency_ms: float
     stop_reason: str
+    text: str | None = None
+    reasoning: str | None = None
 
 
 @dataclass
@@ -80,8 +82,10 @@ class TraceContext:
         domain: str = "unknown",
         rep_index: int = 0,
         seed: int = 42,
+        record_llm_io: bool = False,
     ) -> None:
         self.tracer = tracer
+        self.record_llm_io = record_llm_io
         self.trace_id = _new_trace_id()
         self.golden_id = golden_id
         self.query_text = query_text
@@ -120,7 +124,15 @@ class TraceContext:
             self.states[-1].exited_at = _utc_iso()
 
     # ---------- llm event
-    def log_llm(self, rec: LLMCallRecord) -> None:
+    def log_llm(
+        self,
+        rec: LLMCallRecord,
+        text: str | None = None,
+        reasoning: str | None = None,
+    ) -> None:
+        if self.record_llm_io:
+            rec.text = text
+            rec.reasoning = reasoning
         self.llm_calls.append(rec)
 
     # ---------- tool event
@@ -203,9 +215,11 @@ class Tracer:
         code_commit: str = "",
         dataset_version: str = "dev",
         run_id: str | None = None,
+        record_llm_io: bool = False,
     ) -> None:
         self.config_name = config_name
         self.model_name = model_name
+        self.record_llm_io = record_llm_io
         self.config_hash = config_hash
         self.code_commit = code_commit
         self.dataset_version = dataset_version
@@ -267,6 +281,7 @@ class Tracer:
             domain=domain,
             rep_index=rep_index,
             seed=seed,
+            record_llm_io=self.record_llm_io,
         )
         try:
             yield ctx

@@ -48,7 +48,14 @@
       "Bash(venv/Scripts/python -m pytest tests/test_phase2_e2e.py -q)",
       "Bash(venv/Scripts/python -m pytest tests/test_e2e.py -q)",
       "Bash(venv/Scripts/python.exe scripts/test_xiaomi_mimo.py)",
-      "Bash(venv/Scripts/python.exe *)"
+      "Bash(venv/Scripts/python.exe *)",
+      "Bash(uv run *)",
+      "Bash(echo '=== __TRACKED_VAR__ ===')",
+      "Bash(python -c 'import json; d=json.load\\(open\\('\\\\''__TRACKED_VAR__'\\\\''\\)\\); print\\(d['\\\\''query'\\\\'']['\\\\''golden_id'\\\\''], d['\\\\''execution'\\\\'']['\\\\''terminal_state'\\\\''], '\\\\''OK'\\\\'' if any\\(c['\\\\''result_ok'\\\\''] and c.get\\('\\\\''action'\\\\'','\\\\'''\\\\''\\) not in \\('\\\\''list_pages'\\\\'','\\\\''list_points'\\\\'','\\\\''list_history'\\\\'','\\\\''list_scripts'\\\\'','\\\\''show_deployment_status'\\\\''\\) else False for c in d.get\\('\\\\''tool_calls'\\\\'',[]\\)\\) else '\\\\''FAIL'\\\\''\\)')",
+      "Bash(python -c 'import json; d=json.load\\(open\\('\\\\''__TRACKED_VAR__'\\\\''\\)\\); print\\(d['\\\\''query'\\\\'']['\\\\''golden_id'\\\\''], d['\\\\''execution'\\\\'']['\\\\''terminal_state'\\\\'']\\)')",
+      "Bash(python -c 'import json; d=json.load\\(open\\('\\\\''__TRACKED_VAR__'\\\\'',encoding='\\\\''utf-8'\\\\''\\)\\); print\\(d['\\\\''query'\\\\'']['\\\\''golden_id'\\\\''], d['\\\\''execution'\\\\'']['\\\\''terminal_state'\\\\'']\\)')",
+      "Bash(python -c ' *)",
+      "Bash(python *)"
     ]
   }
 }

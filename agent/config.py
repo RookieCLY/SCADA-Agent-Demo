@@ -30,6 +30,10 @@ class StateMachineConfig(BaseModel):
     enabled: bool = False
 
 
+class TraceConfig(BaseModel):
+    record_llm_io: bool = False
+
+
 class ArchitectureConfig(BaseModel):
     hierarchical_tools: bool = False
     tool_rag: ToolRAGConfig = Field(default_factory=ToolRAGConfig)
@@ -61,6 +65,7 @@ class ExperimentConfig(BaseModel):
     model: ModelConfig = Field(default_factory=ModelConfig)
     dataset: DatasetConfig = Field(default_factory=DatasetConfig)
     world: WorldConfig = Field(default_factory=WorldConfig)
+    trace: TraceConfig = Field(default_factory=TraceConfig)
     repetitions: int = 1
     seed_base: int = 42
 

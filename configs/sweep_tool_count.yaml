@@ -29,6 +29,9 @@ model:
   temperature: 0.0
   max_tokens: 4096
 
+trace:
+  record_llm_io: true
+
 world:
   backend: memory
 
