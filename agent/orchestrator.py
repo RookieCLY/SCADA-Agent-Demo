@@ -106,6 +106,18 @@ class Agent:
         resource_registry: ResourceRegistry | None = None,
         max_turns: int = 12,
     ) -> None:
+        """Initialize the Agent with all required components for the Phase-2 architecture.
+        
+        Args:
+            config: Experiment configuration dictating the active architecture components.
+            registry: The tool registry containing domain and atomic tools.
+            llm: The LLM provider (Mock or real) to be used for inference.
+            tracer: Telemetry logger for recording interactions and world mutations.
+            tool_index: Optional ToolIndex for RAG-based tool retrieval.
+            workflow_catalogue: Optional catalogue for step-by-step workflow enforcement.
+            resource_registry: Optional registry for read-only resources.
+            max_turns: Maximum number of conversation turns before forceful termination.
+        """
         self.config = config
         self.registry = registry
         self.llm = llm
@@ -121,7 +133,18 @@ class Agent:
         sm_state: str,
         wf_state: WorkflowExecutionState | None,
     ) -> list[str]:
-        """Hard filters: state-machine whitelist ∩ workflow-step whitelist."""
+        """Apply hard filters to determine the permitted atomic tools for the current turn.
+        
+        This calculates the intersection of the tools allowed by the State Machine whitelist 
+        and the tools allowed by the current Workflow step (if a workflow is active).
+        
+        Args:
+            sm_state: The current state of the StateMachine.
+            wf_state: The current execution state of the active Workflow (if any).
+            
+        Returns:
+            A list of atomic tool names permitted to be executed in the current state.
+        """
         arch = self.config.architecture
         all_atomics = [m.name for m in self.registry.all_atomics()]
 
@@ -150,7 +173,18 @@ class Agent:
         return allowed
 
     def _rank_with_rag(self, query: str, allowed_atomics: list[str]) -> list[str]:
-        """Soft rank atomic tools and truncate to top_k. Returns atomic names."""
+        """Perform Retrieval-Augmented Generation (RAG) to soft-rank permitted atomic tools.
+        
+        If Tool RAG is enabled, this scores the `allowed_atomics` against the user's query using 
+        semantic similarity (and an optional re-ranker), returning only the top-K most relevant tools.
+        
+        Args:
+            query: The user's natural language query.
+            allowed_atomics: The list of hard-filtered tools permitted in this state.
+            
+        Returns:
+            A list of the top-K atomic tool names, ordered by relevance.
+        """
         cfg = self.config.architecture.tool_rag
         if not cfg.enabled or self.tool_index is None:
             return allowed_atomics
@@ -171,10 +205,21 @@ class Agent:
         query: str,
         wf_state: WorkflowExecutionState | None,
     ) -> tuple[list[str], list[str]]:
-        """Return (LLM-facing tool names, underlying atomic names).
+        """Determine the final visible tools to present to the LLM and the allowed atomic pool.
+        
+        This orchestrates the hard filtering (`_allowed_atomics`) and soft ranking (`_rank_with_rag`).
+        In hierarchical mode, it projects the ranked atomic tools up to their parent Domain tools 
+        to shrink the prompt size.
 
-        LLM-facing list collapses to Domain Tools in hierarchical mode; the
-        atomic list is what we actually permit at dispatch time.
+        Args:
+            sm_state: The current state of the StateMachine.
+            query: The user's natural language query.
+            wf_state: The current execution state of the active Workflow (if any).
+            
+        Returns:
+            A tuple containing:
+                - List of LLM-facing tool names (Domain names if hierarchical, else atomics).
+                - List of underlying allowed atomic tool names for dispatch validation.
         """
         arch = self.config.architecture
         allowed_atomics = self._allowed_atomics(sm_state, wf_state)
@@ -192,6 +237,14 @@ class Agent:
         return ranked, ranked
 
     def _render_tool_list(self, names: list[str]) -> str:
+        """Format the list of visible tools into a markdown string for the system prompt.
+        
+        Args:
+            names: The list of LLM-facing tool names to render.
+            
+        Returns:
+            A formatted string describing the available tools and their actions.
+        """
         lines: list[str] = []
         if self.config.architecture.hierarchical_tools:
             for name in names:
@@ -210,6 +263,12 @@ class Agent:
         return "\n".join(lines)
 
     def _render_resource_block(self) -> str:
+        """Render the read-only Resources section for the system prompt.
+        
+        Returns:
+            A formatted string listing available resources if the architecture config 
+            enables resource separation, otherwise an empty string.
+        """
         if (
             not self.config.architecture.resources_separation
             or self.resource_registry is None
@@ -225,6 +284,15 @@ class Agent:
         )
 
     def _render_workflow_block(self, wf_state: WorkflowExecutionState | None) -> str:
+        """Render the Workflow context section for the system prompt.
+        
+        Args:
+            wf_state: The current Workflow execution state, if active.
+            
+        Returns:
+            A formatted string describing the current workflow step, or an empty string 
+            if no workflow is active.
+        """
         if wf_state is None:
             return ""
         return (
@@ -239,7 +307,20 @@ class Agent:
         arguments: dict[str, Any],
         world: MockWorld,
     ) -> tuple[Any, Any, float, str | None]:
-        """Return (ToolResult, parsed_args, latency_ms, action_or_None)."""
+        """Route the LLM's tool call to the appropriate domain or atomic handler and execute it.
+        
+        Args:
+            tool_name: The name of the tool requested by the LLM.
+            arguments: The arguments provided for the tool.
+            world: The MockWorld instance to mutate.
+            
+        Returns:
+            A tuple containing:
+                - ToolResult: The execution result (ok, data, error_code, diff).
+                - parsed_args: The strictly validated Pydantic model of the arguments.
+                - latency_ms: Execution latency in milliseconds.
+                - action_or_None: The resolved atomic action name if a domain tool was called.
+        """
         try:
             if any(d.name == tool_name for d in self.registry.all_domains()):
                 return dispatch_domain(self.registry, tool_name, arguments, world)
@@ -257,7 +338,19 @@ class Agent:
     def _handle_resource_read(
         self, arguments: dict[str, Any], world: MockWorld
     ) -> tuple[bool, dict[str, Any], str | None, float]:
-        """Return (found, payload, error_msg, latency_ms)."""
+        """Process a read-only request to the `read_resource` pseudo-tool.
+        
+        Args:
+            arguments: The arguments containing the `uri` to read.
+            world: The MockWorld instance to read from.
+            
+        Returns:
+            A tuple containing:
+                - bool: True if the resource was found, False otherwise.
+                - dict: The fetched payload from the resource.
+                - str | None: An error message if the read failed, or None.
+                - float: Execution latency in milliseconds.
+        """
         if self.resource_registry is None:
             return False, {}, "resources disabled", 0.0
         uri = arguments.get("uri")
@@ -272,6 +365,15 @@ class Agent:
 
     # ------------------------------------------------------------------ workflow
     def _pick_workflow(self, query: str) -> WorkflowEngine | None:
+        """Select the most appropriate Workflow based on the user's query.
+        
+        Args:
+            query: The user's natural language query.
+            
+        Returns:
+            A WorkflowEngine instance for the matched workflow, or None if no match 
+            is found or workflows are disabled.
+        """
         arch = self.config.architecture
         if not arch.workflow.enabled or self.workflow_catalogue is None:
             return None
@@ -289,6 +391,23 @@ class Agent:
         complexity: str = "unknown",
         domain: str = "unknown",
     ) -> dict[str, Any]:
+        """Execute the main agent orchestration loop for a single user query.
+        
+        This loop manages turn-taking with the LLM, orchestrating State Machine transitions,
+        Workflow step advancements, Tool RAG visibility filtering, and Tracing.
+        
+        Args:
+            query: The natural language request from the user.
+            golden_id: An identifier for tracing evaluation sets.
+            initial_world: The starting state of the MockWorld (defaults to empty).
+            rep_index: Repetition index for evaluating non-deterministic LLM variance.
+            seed: Random seed for the RAG ranker / generation.
+            complexity: Metadata describing the query complexity (for evaluation).
+            domain: Metadata describing the query domain (for evaluation).
+            
+        Returns:
+            A dictionary containing the finalized trace summary (trace_id, turns, etc.).
+        """
         world = initial_world or MockWorld()
         _ = deep_copy_world(world)  # preserve initial for potential rollback / inspection
         sm = StateMachine(current=INITIAL_STATE)
@@ -583,6 +702,19 @@ class Agent:
         ctx: Any,
         turn: int,
     ) -> None:
+        """Attempt to execute a deterministic workflow step without LLM intervention.
+        
+        If the current workflow step is marked as deterministic (e.g. system validation),
+        this function invokes the registered python handler and automatically advances 
+        the workflow state.
+        
+        Args:
+            engine: The active WorkflowEngine.
+            wf_state: The current execution state of the workflow.
+            world: The MockWorld instance to pass to the handler.
+            ctx: The tracing context to log the deterministic step execution.
+            turn: The current turn number for the tracer.
+        """
         step = engine.current_step(wf_state)
         if isinstance(step, LLMStep):
             return
@@ -635,6 +767,18 @@ class Agent:
 
 # ============================================================ assembly helper
 def assemble(config_path: str | Path) -> Agent:
+    """Instantiate and assemble an Agent and its components from a YAML configuration.
+    
+    This function reads the ExperimentConfig, initializes the Tool Registry, constructs the 
+    LLM provider, and optionally loads the Tool Index, Workflow Catalogue, and Resource Registry 
+    based on the architecture flags.
+    
+    Args:
+        config_path: Path to the experiment configuration YAML file.
+        
+    Returns:
+        A fully initialized Agent instance ready for `run()`.
+    """
     cfg = load_config(config_path)
     registry = build_default_registry()
     llm = build_llm(cfg.model, registry=registry, arch=cfg.architecture)
@@ -680,6 +824,17 @@ def assemble(config_path: str | Path) -> Agent:
 
 # ============================================================ CLI
 def main(argv: list[str] | None = None) -> int:
+    """CLI entrypoint for running the Orchestrator end-to-end.
+    
+    Parses command-line arguments to assemble the Agent, populate the MockWorld, 
+    and execute a single query, printing the trace summary upon completion.
+    
+    Args:
+        argv: Optional list of command-line arguments.
+        
+    Returns:
+        An integer exit code (0 for success, non-zero for error).
+    """
     parser = argparse.ArgumentParser(description="SCADA Agent — Phase 2 runner")
     parser.add_argument("--config", required=True, help="Path to an experiment YAML")
     parser.add_argument("--query", help="Single user query to execute")

@@ -4,10 +4,10 @@
       "n_queries": 5,
       "expected_tool_success": "5/5",
       "expected_tool_success_rate": 1.0,
-      "total_input_tokens": 125476,
-      "total_output_tokens": 3125,
-      "total_latency_ms": 88897,
-      "avg_latency_ms_per_query": 17779,
+      "total_input_tokens": 104269,
+      "total_output_tokens": 2199,
+      "total_latency_ms": 165919,
+      "avg_latency_ms_per_query": 33183,
       "terminal_state_dist": {
         "ANALYZE_INTENT": 5
       }
@@ -16,10 +16,10 @@
       "n_queries": 5,
       "expected_tool_success": "5/5",
       "expected_tool_success_rate": 1.0,
-      "total_input_tokens": 78904,
-      "total_output_tokens": 1947,
-      "total_latency_ms": 57255,
-      "avg_latency_ms_per_query": 11451,
+      "total_input_tokens": 71530,
+      "total_output_tokens": 1981,
+      "total_latency_ms": 171337,
+      "avg_latency_ms_per_query": 34267,
       "terminal_state_dist": {
         "ANALYZE_INTENT": 5
       }
@@ -28,10 +28,10 @@
       "n_queries": 5,
       "expected_tool_success": "5/5",
       "expected_tool_success_rate": 1.0,
-      "total_input_tokens": 70992,
-      "total_output_tokens": 2129,
-      "total_latency_ms": 73265,
-      "avg_latency_ms_per_query": 14653,
+      "total_input_tokens": 64129,
+      "total_output_tokens": 1873,
+      "total_latency_ms": 144836,
+      "avg_latency_ms_per_query": 28967,
       "terminal_state_dist": {
         "ANALYZE_INTENT": 5
       }
@@ -40,10 +40,10 @@
       "n_queries": 5,
       "expected_tool_success": "3/5",
       "expected_tool_success_rate": 0.6,
-      "total_input_tokens": 35032,
-      "total_output_tokens": 3161,
-      "total_latency_ms": 87703,
-      "avg_latency_ms_per_query": 17540,
+      "total_input_tokens": 34980,
+      "total_output_tokens": 3039,
+      "total_latency_ms": 218325,
+      "avg_latency_ms_per_query": 43665,
       "terminal_state_dist": {
         "CONFIG_ALARM": 1,
         "ANALYZE_INTENT": 1,
@@ -54,12 +54,12 @@
     },
     "E_with_state_machine": {
       "n_queries": 5,
-      "expected_tool_success": "2/5",
-      "expected_tool_success_rate": 0.4,
-      "total_input_tokens": 33345,
-      "total_output_tokens": 3047,
-      "total_latency_ms": 82012,
-      "avg_latency_ms_per_query": 16402,
+      "expected_tool_success": "3/5",
+      "expected_tool_success_rate": 0.6,
+      "total_input_tokens": 55618,
+      "total_output_tokens": 3954,
+      "total_latency_ms": 313413,
+      "avg_latency_ms_per_query": 62682,
       "terminal_state_dist": {
         "CONFIG_ALARM": 1,
         "ANALYZE_INTENT": 1,
@@ -72,10 +72,10 @@
       "n_queries": 5,
       "expected_tool_success": "3/5",
       "expected_tool_success_rate": 0.6,
-      "total_input_tokens": 39700,
-      "total_output_tokens": 2929,
-      "total_latency_ms": 80498,
-      "avg_latency_ms_per_query": 16099,
+      "total_input_tokens": 35687,
+      "total_output_tokens": 2697,
+      "total_latency_ms": 226112,
+      "avg_latency_ms_per_query": 45222,
       "terminal_state_dist": {
         "CONFIG_ALARM": 1,
         "ANALYZE_INTENT": 1,
@@ -95,15 +95,15 @@
       "expected_atomic": "create_analog_alarm",
       "terminal_state": "ANALYZE_INTENT",
       "early_terminated": false,
-      "total_turns": 4,
-      "tool_calls": 3,
+      "total_turns": 2,
+      "tool_calls": 1,
       "resource_reads": 0,
       "world_changed": true,
       "expected_tool_called": true,
       "expected_tool_ok": true,
-      "input_tokens": 39888,
-      "output_tokens": 1251,
-      "e2e_latency_ms": 37641,
+      "input_tokens": 18827,
+      "output_tokens": 290,
+      "e2e_latency_ms": 29523,
       "error": null
     },
     {
@@ -121,9 +121,9 @@
       "world_changed": true,
       "expected_tool_called": true,
       "expected_tool_ok": true,
-      "input_tokens": 18851,
-      "output_tokens": 346,
-      "e2e_latency_ms": 10133,
+      "input_tokens": 18823,
+      "output_tokens": 312,
+      "e2e_latency_ms": 28598,
       "error": null
     },
     {
@@ -141,9 +141,9 @@
       "world_changed": true,
       "expected_tool_called": true,
       "expected_tool_ok": true,
-      "input_tokens": 19167,
-      "output_tokens": 757,
-      "e2e_latency_ms": 15975,
+      "input_tokens": 19455,
+      "output_tokens": 1026,
+      "e2e_latency_ms": 47806,
       "error": null
     },
     {
@@ -161,9 +161,9 @@
       "world_changed": true,
       "expected_tool_called": true,
       "expected_tool_ok": true,
-      "input_tokens": 28874,
-      "output_tokens": 567,
-      "e2e_latency_ms": 16283,
+      "input_tokens": 28488,
+      "output_tokens": 390,
+      "e2e_latency_ms": 43654,
       "error": null
     },
     {
@@ -181,9 +181,9 @@
       "world_changed": true,
       "expected_tool_called": true,
       "expected_tool_ok": true,
-      "input_tokens": 18696,
-      "output_tokens": 204,
-      "e2e_latency_ms": 8865,
+      "input_tokens": 18676,
+      "output_tokens": 181,
+      "e2e_latency_ms": 16338,
       "error": null
     },
     {
@@ -201,9 +201,9 @@
       "world_changed": true,
       "expected_tool_called": true,
       "expected_tool_ok": true,
-      "input_tokens": 14221,
-      "output_tokens": 336,
-      "e2e_latency_ms": 7300,
+      "input_tokens": 14211,
+      "output_tokens": 315,
+      "e2e_latency_ms": 40623,
       "error": null
     },
     {
@@ -221,9 +221,9 @@
       "world_changed": true,
       "expected_tool_called": true,
       "expected_tool_ok": true,
-      "input_tokens": 14224,
-      "output_tokens": 313,
-      "e2e_latency_ms": 10183,
+      "input_tokens": 14241,
+      "output_tokens": 340,
+      "e2e_latency_ms": 19463,
       "error": null
     },
     {
@@ -241,9 +241,9 @@
       "world_changed": true,
       "expected_tool_called": true,
       "expected_tool_ok": true,
-      "input_tokens": 14571,
-      "output_tokens": 664,
-      "e2e_latency_ms": 19632,
+      "input_tokens": 14523,
+      "output_tokens": 637,
+      "e2e_latency_ms": 38711,
       "error": null
     },
     {
@@ -255,15 +255,15 @@
       "expected_atomic": "create_rect",
       "terminal_state": "ANALYZE_INTENT",
       "early_terminated": false,
-      "total_turns": 3,
+      "total_turns": 2,
       "tool_calls": 2,
       "resource_reads": 0,
       "world_changed": true,
       "expected_tool_called": true,
       "expected_tool_ok": true,
-      "input_tokens": 21815,
-      "output_tokens": 489,
-      "e2e_latency_ms": 13620,
+      "input_tokens": 14435,
+      "output_tokens": 473,
+      "e2e_latency_ms": 40139,
       "error": null
     },
     {
@@ -281,9 +281,9 @@
       "world_changed": true,
       "expected_tool_called": true,
       "expected_tool_ok": true,
-      "input_tokens": 14073,
-      "output_tokens": 145,
-      "e2e_latency_ms": 6520,
+      "input_tokens": 14120,
+      "output_tokens": 216,
+      "e2e_latency_ms": 32401,
       "error": null
     },
     {
@@ -301,9 +301,9 @@
       "world_changed": true,
       "expected_tool_called": true,
       "expected_tool_ok": true,
-      "input_tokens": 11589,
-      "output_tokens": 377,
-      "e2e_latency_ms": 11050,
+      "input_tokens": 11542,
+      "output_tokens": 340,
+      "e2e_latency_ms": 29005,
       "error": null
     },
     {
@@ -321,9 +321,9 @@
       "world_changed": true,
       "expected_tool_called": true,
       "expected_tool_ok": true,
-      "input_tokens": 9777,
-      "output_tokens": 247,
-      "e2e_latency_ms": 11684,
+      "input_tokens": 9850,
+      "output_tokens": 335,
+      "e2e_latency_ms": 27278,
       "error": null
     },
     {
@@ -335,15 +335,15 @@
       "expected_atomic": "query_history",
       "terminal_state": "ANALYZE_INTENT",
       "early_terminated": false,
-      "total_turns": 3,
+      "total_turns": 2,
       "tool_calls": 2,
       "resource_reads": 0,
       "world_changed": true,
       "expected_tool_called": true,
       "expected_tool_ok": true,
-      "input_tokens": 19382,
-      "output_tokens": 823,
-      "e2e_latency_ms": 20895,
+      "input_tokens": 12505,
+      "output_tokens": 553,
+      "e2e_latency_ms": 23101,
       "error": null
     },
     {
@@ -361,9 +361,9 @@
       "world_changed": true,
       "expected_tool_called": true,
       "expected_tool_ok": true,
-      "input_tokens": 17677,
-      "output_tokens": 440,
-      "e2e_latency_ms": 20035,
+      "input_tokens": 17660,
+      "output_tokens": 430,
+      "e2e_latency_ms": 33489,
       "error": null
     },
     {
@@ -381,9 +381,9 @@
       "world_changed": true,
       "expected_tool_called": true,
       "expected_tool_ok": true,
-      "input_tokens": 12567,
-      "output_tokens": 242,
-      "e2e_latency_ms": 9601,
+      "input_tokens": 12572,
+      "output_tokens": 215,
+      "e2e_latency_ms": 31963,
       "error": null
     },
     {
@@ -401,9 +401,9 @@
       "world_changed": false,
       "expected_tool_called": false,
       "expected_tool_ok": false,
-      "input_tokens": 4939,
-      "output_tokens": 1181,
-      "e2e_latency_ms": 23901,
+      "input_tokens": 4970,
+      "output_tokens": 1064,
+      "e2e_latency_ms": 45996,
       "error": null
     },
     {
@@ -421,9 +421,9 @@
       "world_changed": true,
       "expected_tool_called": true,
       "expected_tool_ok": true,
-      "input_tokens": 9815,
-      "output_tokens": 291,
-      "e2e_latency_ms": 10263,
+      "input_tokens": 9865,
+      "output_tokens": 382,
+      "e2e_latency_ms": 35142,
       "error": null
     },
     {
@@ -441,9 +441,9 @@
       "world_changed": true,
       "expected_tool_called": true,
       "expected_tool_ok": true,
-      "input_tokens": 6125,
-      "output_tokens": 724,
-      "e2e_latency_ms": 22231,
+      "input_tokens": 5969,
+      "output_tokens": 659,
+      "e2e_latency_ms": 50766,
       "error": null
     },
     {
@@ -461,9 +461,9 @@
       "world_changed": true,
       "expected_tool_called": false,
       "expected_tool_ok": false,
-      "input_tokens": 8691,
-      "output_tokens": 723,
-      "e2e_latency_ms": 21648,
+      "input_tokens": 8672,
+      "output_tokens": 680,
+      "e2e_latency_ms": 49725,
       "error": null
     },
     {
@@ -481,9 +481,9 @@
       "world_changed": true,
       "expected_tool_called": true,
       "expected_tool_ok": true,
-      "input_tokens": 5462,
-      "output_tokens": 242,
-      "e2e_latency_ms": 9660,
+      "input_tokens": 5504,
+      "output_tokens": 254,
+      "e2e_latency_ms": 36696,
       "error": null
     },
     {
@@ -501,9 +501,9 @@
       "world_changed": false,
       "expected_tool_called": false,
       "expected_tool_ok": false,
-      "input_tokens": 4731,
-      "output_tokens": 931,
-      "e2e_latency_ms": 25484,
+      "input_tokens": 5152,
+      "output_tokens": 1363,
+      "e2e_latency_ms": 61579,
       "error": null
     },
     {
@@ -515,15 +515,15 @@
       "expected_atomic": "create_point",
       "terminal_state": "ANALYZE_INTENT",
       "early_terminated": false,
-      "total_turns": 2,
-      "tool_calls": 1,
+      "total_turns": 6,
+      "tool_calls": 5,
       "resource_reads": 0,
       "world_changed": false,
       "expected_tool_called": true,
       "expected_tool_ok": false,
-      "input_tokens": 8974,
-      "output_tokens": 370,
-      "e2e_latency_ms": 11075,
+      "input_tokens": 31476,
+      "output_tokens": 1346,
+      "e2e_latency_ms": 123584,
       "error": null
     },
     {
@@ -541,9 +541,9 @@
       "world_changed": true,
       "expected_tool_called": true,
       "expected_tool_ok": true,
-      "input_tokens": 5889,
-      "output_tokens": 1037,
-      "e2e_latency_ms": 24951,
+      "input_tokens": 5240,
+      "output_tokens": 610,
+      "e2e_latency_ms": 43430,
       "error": null
     },
     {
@@ -559,11 +559,11 @@
       "tool_calls": 2,
       "resource_reads": 0,
       "world_changed": true,
-      "expected_tool_called": false,
-      "expected_tool_ok": false,
-      "input_tokens": 8285,
-      "output_tokens": 472,
-      "e2e_latency_ms": 12083,
+      "expected_tool_called": true,
+      "expected_tool_ok": true,
+      "input_tokens": 8331,
+      "output_tokens": 483,
+      "e2e_latency_ms": 46500,
       "error": null
     },
     {
@@ -581,9 +581,9 @@
       "world_changed": true,
       "expected_tool_called": true,
       "expected_tool_ok": true,
-      "input_tokens": 5466,
-      "output_tokens": 237,
-      "e2e_latency_ms": 8419,
+      "input_tokens": 5419,
+      "output_tokens": 152,
+      "e2e_latency_ms": 38320,
       "error": null
     },
     {
@@ -601,9 +601,9 @@
       "world_changed": false,
       "expected_tool_called": false,
       "expected_tool_ok": false,
-      "input_tokens": 5407,
-      "output_tokens": 919,
-      "e2e_latency_ms": 22470,
+      "input_tokens": 5383,
+      "output_tokens": 1052,
+      "e2e_latency_ms": 58051,
       "error": null
     },
     {
@@ -621,9 +621,9 @@
       "world_changed": false,
       "expected_tool_called": true,
       "expected_tool_ok": false,
-      "input_tokens": 9388,
-      "output_tokens": 336,
-      "e2e_latency_ms": 11137,
+      "input_tokens": 9452,
+      "output_tokens": 386,
+      "e2e_latency_ms": 31358,
       "error": null
     },
     {
@@ -635,15 +635,15 @@
       "expected_atomic": "query_history",
       "terminal_state": "CONFIG_HISTORY",
       "early_terminated": false,
-      "total_turns": 4,
-      "tool_calls": 3,
+      "total_turns": 3,
+      "tool_calls": 2,
       "resource_reads": 0,
       "world_changed": true,
       "expected_tool_called": true,
       "expected_tool_ok": true,
-      "input_tokens": 9995,
-      "output_tokens": 1084,
-      "e2e_latency_ms": 26915,
+      "input_tokens": 5829,
+      "output_tokens": 592,
+      "e2e_latency_ms": 65019,
       "error": null
     },
     {
@@ -661,9 +661,9 @@
       "world_changed": true,
       "expected_tool_called": true,
       "expected_tool_ok": true,
-      "input_tokens": 9003,
-      "output_tokens": 407,
-      "e2e_latency_ms": 13112,
+      "input_tokens": 9011,
+      "output_tokens": 443,
+      "e2e_latency_ms": 43668,
       "error": null
     },
     {
@@ -681,9 +681,9 @@
       "world_changed": true,
       "expected_tool_called": true,
       "expected_tool_ok": true,
-      "input_tokens": 5907,
-      "output_tokens": 183,
-      "e2e_latency_ms": 6864,
+      "input_tokens": 6012,
+      "output_tokens": 224,
+      "e2e_latency_ms": 28016,
       "error": null
     }
   ]
