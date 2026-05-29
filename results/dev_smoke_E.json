@@ -2,17 +2,16 @@
   "summary": {
     "E_with_state_machine": {
       "n_queries": 5,
-      "expected_tool_success": "3/5",
-      "expected_tool_success_rate": 0.6,
-      "total_input_tokens": 48016,
-      "total_output_tokens": 3877,
-      "total_latency_ms": 151824,
-      "avg_latency_ms_per_query": 30364,
+      "expected_tool_success": "5/5",
+      "expected_tool_success_rate": 1.0,
+      "total_input_tokens": 54451,
+      "total_output_tokens": 4917,
+      "total_latency_ms": 199765,
+      "avg_latency_ms_per_query": 39953,
       "terminal_state_dist": {
-        "CONFIG_ALARM": 1,
+        "DONE": 3,
         "CONFIG_POINT": 1,
-        "CONFIG_HISTORY": 1,
-        "DONE": 2
+        "CONFIG_HISTORY": 1
       }
     }
   },
@@ -24,17 +23,17 @@
       "complexity": "simple",
       "query": "给反应釜1的TEMP_101点位加一个高温报警,阈值80度,优先级high,ID用alarm_high_temp_101。",
       "expected_atomic": "create_analog_alarm",
-      "terminal_state": "CONFIG_ALARM",
+      "terminal_state": "DONE",
       "early_terminated": false,
-      "total_turns": 2,
-      "tool_calls": 1,
+      "total_turns": 4,
+      "tool_calls": 4,
       "resource_reads": 0,
-      "world_changed": false,
-      "expected_tool_called": false,
-      "expected_tool_ok": false,
-      "input_tokens": 5104,
-      "output_tokens": 694,
-      "e2e_latency_ms": 24330,
+      "world_changed": true,
+      "expected_tool_called": true,
+      "expected_tool_ok": true,
+      "input_tokens": 11445,
+      "output_tokens": 1075,
+      "e2e_latency_ms": 43658,
       "error": null
     },
     {
@@ -46,15 +45,15 @@
       "expected_atomic": "create_point",
       "terminal_state": "CONFIG_POINT",
       "early_terminated": false,
-      "total_turns": 5,
-      "tool_calls": 2,
+      "total_turns": 4,
+      "tool_calls": 3,
       "resource_reads": 0,
-      "world_changed": false,
+      "world_changed": true,
       "expected_tool_called": true,
-      "expected_tool_ok": false,
-      "input_tokens": 18067,
-      "output_tokens": 636,
-      "e2e_latency_ms": 35127,
+      "expected_tool_ok": true,
+      "input_tokens": 12895,
+      "output_tokens": 700,
+      "e2e_latency_ms": 30487,
       "error": null
     },
     {
@@ -72,9 +71,9 @@
       "world_changed": true,
       "expected_tool_called": true,
       "expected_tool_ok": true,
-      "input_tokens": 5427,
-      "output_tokens": 651,
-      "e2e_latency_ms": 26748,
+      "input_tokens": 5485,
+      "output_tokens": 742,
+      "e2e_latency_ms": 29179,
       "error": null
     },
     {
@@ -92,9 +91,9 @@
       "world_changed": true,
       "expected_tool_called": true,
       "expected_tool_ok": true,
-      "input_tokens": 13766,
-      "output_tokens": 1436,
-      "e2e_latency_ms": 47510,
+      "input_tokens": 13706,
+      "output_tokens": 1563,
+      "e2e_latency_ms": 55225,
       "error": null
     },
     {
@@ -106,15 +105,15 @@
       "expected_atomic": "validate_project",
       "terminal_state": "DONE",
       "early_terminated": false,
-      "total_turns": 2,
-      "tool_calls": 1,
+      "total_turns": 5,
+      "tool_calls": 4,
       "resource_reads": 0,
       "world_changed": true,
       "expected_tool_called": true,
       "expected_tool_ok": true,
-      "input_tokens": 5652,
-      "output_tokens": 460,
-      "e2e_latency_ms": 18109,
+      "input_tokens": 10920,
+      "output_tokens": 837,
+      "e2e_latency_ms": 41216,
       "error": null
     }
   ]

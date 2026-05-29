@@ -513,13 +513,16 @@ class OpenAICompatibleLLM:
         else:
             if self._messages and self._messages[0].get("role") == "system":
                 self._messages[0]["content"] = system_prompt
-            # walk backward through history collecting consecutive tool rows
+            # walk backward through history collecting consecutive tool and user rows
             buf: list[dict[str, Any]] = []
             i = len(history) - 1
-            while i >= 0 and history[i].get("role") == "tool":
+            while i >= 0 and history[i].get("role") in ("tool", "user"):
                 buf.append(history[i])
                 i -= 1
             for h in reversed(buf):
+                if h.get("role") == "user":
+                    self._messages.append({"role": "user", "content": h.get("content") or ""})
+                    continue
                 tname = h.get("name") or ""
                 tid = self._pending_tool_ids.get(tname)
                 if not tid:
