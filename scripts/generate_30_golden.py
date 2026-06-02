@@ -15,7 +15,7 @@ def generate():
         expected_behavior="success",
         expected_final_state_diff=ExpectedFinalStateDiff(
             match_mode="subset",
-            added_or_modified={"pages.main_page.resolution": [1920, 1080], "pages.main_page.background": "#000000"}
+            added_or_modified={"pages.main_page.name": "主监控页面", "pages.main_page.resolution": [1920, 1080], "pages.main_page.background": "#000000"}
         ),
         expected_trajectory=ExpectedTrajectory(min_steps=1, max_steps=2, required_tools=["manage_pages"], required_actions=["create_page"]),
         rubric_hints=["创建page, ID可以由模型自行决定, 确保参数正确"]
@@ -62,7 +62,7 @@ def generate():
         expected_behavior="success",
         expected_final_state_diff=ExpectedFinalStateDiff(
             match_mode="subset",
-            added_or_modified={"pages.main_page.widgets.w_text1.type": "text"}
+            added_or_modified={"pages.main_page.widgets.w_text1.type": "text", "pages.main_page.widgets.w_text1.style.text": "欢迎"}
         ),
         expected_workflow_id="graphics_layout"
     ))
@@ -77,7 +77,7 @@ def generate():
         expected_behavior="success",
         expected_final_state_diff=ExpectedFinalStateDiff(
             match_mode="subset",
-            added_or_modified={"history_configs.PT101.storage_mode": "on_change"}
+            added_or_modified={"history_configs.PT101.storage_mode": "on_change", "history_configs.PT101.enabled": True}
         ),
         expected_workflow_id="history_query"
     ))
@@ -168,7 +168,8 @@ def generate():
         initial_world={},
         expected_behavior="fail_or_clarify",
         expected_final_state_diff=ExpectedFinalStateDiff(match_mode="strict"),
-        expected_error_code="POINT_NOT_FOUND"
+        expected_error_code="POINT_NOT_FOUND",
+        rubric_hints=["用户提到物理位置'冷凝器出口'而非具体tag名, agent可以追问对应哪个点位tag, 因此用fail_or_clarify而非reject"]
     ))
 
     # 13. medium, page, multi-step, colloquial, success, free
@@ -249,7 +250,8 @@ def generate():
             added_or_modified={
                 "pages.chem_screen.widgets.tank1.type": "tank",
                 "pages.chem_screen.widgets.tank1.bindings.level": "TI-201",
-                "pages.chem_screen.widgets.btn1.type": "button"
+                "pages.chem_screen.widgets.btn1.type": "button",
+                "pages.chem_screen.widgets.btn1.bindings.command": "CMD_START"
             }
         ),
         expected_workflow_id="chemical_screen"
@@ -278,7 +280,7 @@ def generate():
         expected_behavior="success",
         expected_final_state_diff=ExpectedFinalStateDiff(
             match_mode="subset",
-            added_or_modified={"scripts.safety_script.trigger": "on_event"}
+            added_or_modified={"scripts.safety_script.trigger": "on_event", "scripts.safety_script.bound_tag": "PI-201", "scripts.safety_script.enabled": True}
         )
     ))
 
@@ -313,7 +315,7 @@ def generate():
         expected_behavior="success",
         expected_final_state_diff=ExpectedFinalStateDiff(
             match_mode="subset",
-            added_or_modified={"pages.backup.name": "备用画面", "pages.backup.resolution": [1920, 1080]}
+            added_or_modified={"pages.backup.name": "备用画面", "pages.backup.resolution": [1920, 1080], "pages.backup.widgets.w1.type": "text", "pages.backup.widgets.w1.position": [0, 0], "pages.backup.widgets.w1.size": [10, 10], "pages.backup.widgets.w1.page_id": "backup"}
         )
     ))
 
@@ -389,6 +391,15 @@ def generate():
                 "points.Press.type": "analog",
                 "points.Level.type": "analog",
                 "pages.chem.widgets.tank.type": "tank",
+                "pages.chem.widgets.tank.bindings.level": "Level",
+                "pages.chem.widgets.tank.bindings.temperature": "Temp",
+                "pages.chem.widgets.tank.bindings.pressure": "Press",
+                "pages.chem.widgets.gauge1.type": "gauge",
+                "pages.chem.widgets.gauge1.bindings.value": "Temp",
+                "pages.chem.widgets.gauge2.type": "gauge",
+                "pages.chem.widgets.gauge2.bindings.value": "Press",
+                "pages.chem.widgets.gauge3.type": "gauge",
+                "pages.chem.widgets.gauge3.bindings.value": "Level",
                 "deployments.default.status": "validated"
             }
         ),
@@ -407,7 +418,12 @@ def generate():
             match_mode="subset",
             added_or_modified={
                 "pages.pump_ctrl.name": "泵站控制台",
-                "points.Pump_Cmd.type": "digital"
+                "pages.pump_ctrl.widgets.btn_start.type": "button",
+                "pages.pump_ctrl.widgets.btn_start.bindings.command": "Pump_Cmd",
+                "pages.pump_ctrl.widgets.btn_stop.type": "button",
+                "pages.pump_ctrl.widgets.btn_stop.bindings.command": "Pump_Cmd",
+                "points.Pump_Cmd.type": "digital",
+                "alarms.pump_alarm.tag": "Pump_Cmd"
             }
         ),
         expected_workflow_id="pump_station_screen"
@@ -424,10 +440,12 @@ def generate():
         expected_final_state_diff=ExpectedFinalStateDiff(
             match_mode="subset",
             added_or_modified={
-                "points.PT-100.type": "analog",
-                "alarms.PT-100_H.priority": "medium",
-                "history_configs.PT-100.sample_interval_s": 1.0,
-                "points.PT-110.type": "analog"
+                **{f"points.PT-{i}.type": "analog" for i in range(100, 111)},
+                **{f"alarms.PT-{i}_H.priority": "medium" for i in range(100, 111)},
+                **{f"alarms.PT-{i}_HH.priority": "high" for i in range(100, 111)},
+                **{f"history_configs.PT-{i}.storage_mode": "periodic" for i in range(100, 111)},
+                **{f"history_configs.PT-{i}.sample_interval_s": 1.0 for i in range(100, 111)},
+                **{f"history_configs.PT-{i}.enabled": True for i in range(100, 111)},
             }
         )
     ))
@@ -476,7 +494,8 @@ def generate():
         expected_behavior="reject",
         expected_final_state_diff=ExpectedFinalStateDiff(match_mode="strict"),
         expected_error_code="POINT_NOT_FOUND",
-        expected_workflow_id="alarm_config"
+        expected_workflow_id="alarm_config",
+        rubric_hints=["query本身明确说'根本不存在的假点位', agent应直接拒绝而非追问"]
     ))
 
     with open("eval/golden_dataset.jsonl", "w", encoding="utf-8") as f:

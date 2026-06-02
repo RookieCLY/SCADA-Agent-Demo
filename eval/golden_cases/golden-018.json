@@ -1,0 +1,30 @@
+{
+  "id": "golden-018",
+  "query": "新建全局脚本，OnEvent触发，写一段逻辑如果PI-201过高则把valve1置位",
+  "domain": "script",
+  "complexity": "medium",
+  "initial_world": {
+    "points": {
+      "PI-201": {
+        "tag": "PI-201",
+        "type": "analog"
+      },
+      "valve1": {
+        "tag": "valve1",
+        "type": "digital"
+      }
+    }
+  },
+  "expected_behavior": "success",
+  "expected_final_state_diff": {
+    "match_mode": "subset",
+    "added_or_modified": {
+      "scripts.safety_script.trigger": "on_event",
+      "scripts.safety_script.bound_tag": "PI-201",
+      "scripts.safety_script.enabled": true
+    },
+    "removed": [],
+    "unchanged_keys_must_remain": []
+  },
+  "rubric_hints": []
+}

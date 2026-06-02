@@ -1,0 +1,16 @@
+{
+  "id": "golden-012",
+  "query": "查一下冷凝器出口的历史trend，拉个表",
+  "domain": "history",
+  "complexity": "simple",
+  "initial_world": {},
+  "expected_behavior": "fail_or_clarify",
+  "expected_final_state_diff": {
+    "match_mode": "strict",
+    "added_or_modified": {},
+    "removed": [],
+    "unchanged_keys_must_remain": []
+  },
+  "expected_error_code": "POINT_NOT_FOUND",
+  "rubric_hints": ["用户提到物理位置'冷凝器出口'而非具体tag名, agent可以追问对应哪个点位tag, 因此用fail_or_clarify而非reject"]
+}

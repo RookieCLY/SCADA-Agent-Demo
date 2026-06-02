@@ -1,0 +1,24 @@
+{
+  "id": "golden-026",
+  "query": "弄个泵站的控制台，带上启停控制，全套搞定，再弄个报警",
+  "domain": "multi",
+  "complexity": "complex",
+  "initial_world": {},
+  "expected_behavior": "success",
+  "expected_final_state_diff": {
+    "match_mode": "subset",
+    "added_or_modified": {
+      "pages.pump_ctrl.name": "泵站控制台",
+      "pages.pump_ctrl.widgets.btn_start.type": "button",
+      "pages.pump_ctrl.widgets.btn_start.bindings.command": "Pump_Cmd",
+      "pages.pump_ctrl.widgets.btn_stop.type": "button",
+      "pages.pump_ctrl.widgets.btn_stop.bindings.command": "Pump_Cmd",
+      "points.Pump_Cmd.type": "digital",
+      "alarms.pump_alarm.tag": "Pump_Cmd"
+    },
+    "removed": [],
+    "unchanged_keys_must_remain": []
+  },
+  "expected_workflow_id": "pump_station_screen",
+  "rubric_hints": []
+}

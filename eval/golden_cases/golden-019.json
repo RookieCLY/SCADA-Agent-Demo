@@ -1,0 +1,33 @@
+{
+  "id": "golden-019",
+  "query": "新建泵站画面，添加2个泵图元，分别绑定PumpA和PumpB点位",
+  "domain": "multi",
+  "complexity": "medium",
+  "initial_world": {
+    "points": {
+      "PumpA": {
+        "tag": "PumpA",
+        "type": "digital"
+      },
+      "PumpB": {
+        "tag": "PumpB",
+        "type": "digital"
+      }
+    }
+  },
+  "expected_behavior": "success",
+  "expected_final_state_diff": {
+    "match_mode": "subset",
+    "added_or_modified": {
+      "pages.pump_station.name": "泵站画面",
+      "pages.pump_station.widgets.pump1.type": "pump",
+      "pages.pump_station.widgets.pump1.bindings.state": "PumpA",
+      "pages.pump_station.widgets.pump2.type": "pump",
+      "pages.pump_station.widgets.pump2.bindings.state": "PumpB"
+    },
+    "removed": [],
+    "unchanged_keys_must_remain": []
+  },
+  "expected_workflow_id": "pump_station_screen",
+  "rubric_hints": []
+}

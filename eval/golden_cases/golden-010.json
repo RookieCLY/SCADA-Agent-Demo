@@ -1,0 +1,16 @@
+{
+  "id": "golden-010",
+  "query": "给那几个温度加上报警",
+  "domain": "alarm",
+  "complexity": "simple",
+  "initial_world": {},
+  "expected_behavior": "ask_for_clarification",
+  "expected_final_state_diff": {
+    "match_mode": "strict",
+    "added_or_modified": {},
+    "removed": [],
+    "unchanged_keys_must_remain": []
+  },
+  "expected_alternative": "追问具体哪些温度点位以及报警阈值",
+  "rubric_hints": []
+}

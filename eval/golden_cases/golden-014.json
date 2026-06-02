@@ -1,0 +1,23 @@
+{
+  "id": "golden-014",
+  "query": "加三个IO点: TI-201, PI-201, FI-201, 全是AI，带历史",
+  "domain": "point",
+  "complexity": "medium",
+  "initial_world": {},
+  "expected_behavior": "success",
+  "expected_final_state_diff": {
+    "match_mode": "subset",
+    "added_or_modified": {
+      "points.TI-201.type": "analog",
+      "points.PI-201.type": "analog",
+      "points.FI-201.type": "analog",
+      "history_configs.TI-201.enabled": true,
+      "history_configs.PI-201.enabled": true,
+      "history_configs.FI-201.enabled": true
+    },
+    "removed": [],
+    "unchanged_keys_must_remain": []
+  },
+  "expected_workflow_id": "point_creation",
+  "rubric_hints": []
+}

@@ -1,0 +1,39 @@
+{
+  "id": "golden-016",
+  "query": "在chemical screen加个tank，绑到TI-201上，另外加个button用于start",
+  "domain": "graphics",
+  "complexity": "medium",
+  "initial_world": {
+    "pages": {
+      "chem_screen": {
+        "id": "chem_screen",
+        "name": "chemical screen",
+        "widgets": {}
+      }
+    },
+    "points": {
+      "TI-201": {
+        "tag": "TI-201",
+        "type": "analog"
+      },
+      "CMD_START": {
+        "tag": "CMD_START",
+        "type": "digital"
+      }
+    }
+  },
+  "expected_behavior": "success",
+  "expected_final_state_diff": {
+    "match_mode": "subset",
+    "added_or_modified": {
+      "pages.chem_screen.widgets.tank1.type": "tank",
+      "pages.chem_screen.widgets.tank1.bindings.level": "TI-201",
+      "pages.chem_screen.widgets.btn1.type": "button",
+      "pages.chem_screen.widgets.btn1.bindings.command": "CMD_START"
+    },
+    "removed": [],
+    "unchanged_keys_must_remain": []
+  },
+  "expected_workflow_id": "chemical_screen",
+  "rubric_hints": []
+}

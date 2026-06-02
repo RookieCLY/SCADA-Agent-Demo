@@ -1,0 +1,16 @@
+{
+  "id": "golden-024",
+  "query": "建一个trend page，加个trend chart绑定历史数据",
+  "domain": "multi",
+  "complexity": "medium",
+  "initial_world": {},
+  "expected_behavior": "ask_for_clarification",
+  "expected_final_state_diff": {
+    "match_mode": "strict",
+    "added_or_modified": {},
+    "removed": [],
+    "unchanged_keys_must_remain": []
+  },
+  "expected_alternative": "应追问需要绑定哪些具体的历史点位",
+  "rubric_hints": []
+}

@@ -1,0 +1,26 @@
+{
+  "id": "golden-007",
+  "query": "把主监控页面的背景色改成白色，然后重新校验项目",
+  "domain": "multi",
+  "complexity": "simple",
+  "initial_world": {
+    "pages": {
+      "main_page": {
+        "id": "main_page",
+        "name": "主页面",
+        "background": "#000000"
+      }
+    }
+  },
+  "expected_behavior": "success",
+  "expected_final_state_diff": {
+    "match_mode": "subset",
+    "added_or_modified": {
+      "pages.main_page.background": "#FFFFFF",
+      "deployments.default.status": "validated"
+    },
+    "removed": [],
+    "unchanged_keys_must_remain": []
+  },
+  "rubric_hints": []
+}

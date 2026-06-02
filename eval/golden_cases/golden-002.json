@@ -1,0 +1,32 @@
+{
+  "id": "golden-002",
+  "query": "新增模拟量点位PT101，单位MPa，量程0-2.5",
+  "domain": "point",
+  "complexity": "simple",
+  "initial_world": {},
+  "expected_behavior": "success",
+  "expected_final_state_diff": {
+    "match_mode": "subset",
+    "added_or_modified": {
+      "points.PT101.type": "analog",
+      "points.PT101.unit": "MPa",
+      "points.PT101.min": 0.0,
+      "points.PT101.max": 2.5
+    },
+    "removed": [],
+    "unchanged_keys_must_remain": []
+  },
+  "expected_trajectory": {
+    "min_steps": 1,
+    "max_steps": 2,
+    "required_tools": [
+      "manage_points"
+    ],
+    "required_actions": [
+      "create_point"
+    ],
+    "forbidden_tools": [],
+    "terminal_state": "DONE"
+  },
+  "rubric_hints": []
+}

@@ -55,7 +55,15 @@
       "Bash(python -c 'import json; d=json.load\\(open\\('\\\\''__TRACKED_VAR__'\\\\''\\)\\); print\\(d['\\\\''query'\\\\'']['\\\\''golden_id'\\\\''], d['\\\\''execution'\\\\'']['\\\\''terminal_state'\\\\'']\\)')",
       "Bash(python -c 'import json; d=json.load\\(open\\('\\\\''__TRACKED_VAR__'\\\\'',encoding='\\\\''utf-8'\\\\''\\)\\); print\\(d['\\\\''query'\\\\'']['\\\\''golden_id'\\\\''], d['\\\\''execution'\\\\'']['\\\\''terminal_state'\\\\'']\\)')",
       "Bash(python -c ' *)",
-      "Bash(python *)"
+      "Bash(python *)",
+      "Bash(.venv/Scripts/python.exe -m pytest tests/test_golden_schema.py -v)",
+      "Bash(.venv/Scripts/python.exe eval/runner.py --config configs/F_full_four_in_one.yaml --golden-ids golden-008)",
+      "Bash(.venv/Scripts/python.exe eval/runner.py --config configs/xiaomi_mimo_smoke.yaml --golden-ids golden-008)",
+      "Bash(.venv/Scripts/python.exe -c ' *)",
+      "Bash(PYTHONPATH=. python *)",
+      "Bash(.venv\\\\Scripts\\\\python.exe *)",
+      "Bash(.venv/Scripts/python.exe *)",
+      "PowerShell(.venv\\\\Scripts\\\\python.exe -m pytest tests/ -v --tb=short)"
     ]
   }
 }

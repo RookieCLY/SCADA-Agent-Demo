@@ -1,0 +1,18 @@
+{
+  "id": "golden-009",
+  "query": "搞个压力点位，名字叫Press_1",
+  "domain": "point",
+  "complexity": "simple",
+  "initial_world": {},
+  "expected_behavior": "success",
+  "expected_final_state_diff": {
+    "match_mode": "subset",
+    "added_or_modified": {
+      "points.Press_1.type": "analog"
+    },
+    "removed": [],
+    "unchanged_keys_must_remain": []
+  },
+  "expected_workflow_id": "point_creation",
+  "rubric_hints": []
+}

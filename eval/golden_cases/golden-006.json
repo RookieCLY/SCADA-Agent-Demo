@@ -1,0 +1,25 @@
+{
+  "id": "golden-006",
+  "query": "写个脚本，当PT101变化时执行更新",
+  "domain": "script",
+  "complexity": "simple",
+  "initial_world": {
+    "points": {
+      "PT101": {
+        "tag": "PT101",
+        "type": "analog"
+      }
+    }
+  },
+  "expected_behavior": "success",
+  "expected_final_state_diff": {
+    "match_mode": "subset",
+    "added_or_modified": {
+      "scripts.script_pt101.trigger": "on_change",
+      "scripts.script_pt101.bound_tag": "PT101"
+    },
+    "removed": [],
+    "unchanged_keys_must_remain": []
+  },
+  "rubric_hints": []
+}

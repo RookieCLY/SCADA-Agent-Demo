@@ -1,0 +1,16 @@
+{
+  "id": "golden-008",
+  "query": "帮忙建个页面",
+  "domain": "page",
+  "complexity": "simple",
+  "initial_world": {},
+  "expected_behavior": "ask_for_clarification",
+  "expected_final_state_diff": {
+    "match_mode": "strict",
+    "added_or_modified": {},
+    "removed": [],
+    "unchanged_keys_must_remain": []
+  },
+  "expected_alternative": "追问页面名称、分辨率等基本信息",
+  "rubric_hints": []
+}

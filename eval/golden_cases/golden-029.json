@@ -1,0 +1,55 @@
+{
+  "id": "golden-029",
+  "query": "复制车间一的页面到车间二，替换其中所有的'WS1'点位标签为'WS2'，然后做下装前校验",
+  "domain": "multi",
+  "complexity": "complex",
+  "initial_world": {
+    "pages": {
+      "ws1": {
+        "id": "ws1",
+        "name": "车间一",
+        "widgets": {
+          "w1": {
+            "id": "w1",
+            "page_id": "ws1",
+            "type": "text",
+            "position": [
+              0,
+              0
+            ],
+            "size": [
+              10,
+              10
+            ],
+            "bindings": {
+              "text": "WS1_Status"
+            }
+          }
+        }
+      }
+    },
+    "points": {
+      "WS1_Status": {
+        "tag": "WS1_Status",
+        "type": "digital"
+      },
+      "WS2_Status": {
+        "tag": "WS2_Status",
+        "type": "digital"
+      }
+    }
+  },
+  "expected_behavior": "success",
+  "expected_final_state_diff": {
+    "match_mode": "subset",
+    "added_or_modified": {
+      "pages.ws2.name": "车间二",
+      "pages.ws2.widgets.w1.bindings.text": "WS2_Status",
+      "deployments.default.status": "validated"
+    },
+    "removed": [],
+    "unchanged_keys_must_remain": []
+  },
+  "expected_workflow_id": "deployment_check",
+  "rubric_hints": []
+}
