@@ -1,0 +1,47 @@
+{
+  "id": "golden-064",
+  "query": "把不存在的NO_BIND_PT绑定到bind_page_fail的指示灯上",
+  "domain": "graphics",
+  "complexity": "complex",
+  "initial_world": {
+    "pages": {
+      "bind_page_fail": {
+        "id": "bind_page_fail",
+        "name": "绑定失败页",
+        "widgets": {
+          "bind_fail": {
+            "id": "bind_fail",
+            "page_id": "bind_page_fail",
+            "type": "indicator",
+            "position": [
+              0,
+              0
+            ],
+            "size": [
+              80,
+              40
+            ],
+            "expected_binding_types": {
+              "value": [
+                "analog"
+              ]
+            }
+          }
+        }
+      }
+    }
+  },
+  "expected_behavior": "fail_or_clarify",
+  "expected_final_state_diff": {
+    "match_mode": "strict",
+    "added_or_modified": {},
+    "removed": [],
+    "unchanged_keys_must_remain": [
+      "pages.bind_page_fail.widgets.bind_fail"
+    ]
+  },
+  "rubric_hints": [],
+  "expected_workflow_id": "point_binding",
+  "expected_error_code": "POINT_NOT_FOUND",
+  "expected_alternative": "应说明点位不存在或追问正确点位"
+}

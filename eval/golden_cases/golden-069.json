@@ -1,0 +1,24 @@
+{
+  "id": "golden-069",
+  "query": "生成泵站A控制台：画面、运行点、启停命令、报警和校验都做完",
+  "domain": "multi",
+  "complexity": "complex",
+  "initial_world": {},
+  "expected_behavior": "success",
+  "expected_final_state_diff": {
+    "match_mode": "subset",
+    "added_or_modified": {
+      "pages.pump_a_console.name": "泵站A控制台",
+      "points.PUMP_A_RUN.type": "digital",
+      "points.PUMP_A_CMD.type": "digital",
+      "pages.pump_a_console.widgets.start_button.bindings.command": "PUMP_A_CMD",
+      "pages.pump_a_console.widgets.stop_button.bindings.command": "PUMP_A_CMD",
+      "alarms.PUMP_A_RUN_LOSS.tag": "PUMP_A_RUN",
+      "deployments.default.status": "validated"
+    },
+    "removed": [],
+    "unchanged_keys_must_remain": []
+  },
+  "rubric_hints": [],
+  "expected_workflow_id": "pump_station_screen"
+}

@@ -1,0 +1,72 @@
+{
+  "id": "golden-094",
+  "query": "把VALVE_CMD数字命令点绑定到valve_panel的open_button和close_button",
+  "domain": "graphics",
+  "complexity": "medium",
+  "initial_world": {
+    "pages": {
+      "valve_panel": {
+        "id": "valve_panel",
+        "name": "阀门面板",
+        "widgets": {
+          "open_button": {
+            "id": "open_button",
+            "page_id": "valve_panel",
+            "type": "button",
+            "position": [
+              0,
+              0
+            ],
+            "size": [
+              80,
+              40
+            ],
+            "expected_binding_types": {
+              "command": [
+                "digital"
+              ]
+            }
+          },
+          "close_button": {
+            "id": "close_button",
+            "page_id": "valve_panel",
+            "type": "button",
+            "position": [
+              0,
+              0
+            ],
+            "size": [
+              80,
+              40
+            ],
+            "expected_binding_types": {
+              "command": [
+                "digital"
+              ]
+            }
+          }
+        }
+      }
+    },
+    "points": {
+      "VALVE_CMD": {
+        "tag": "VALVE_CMD",
+        "type": "digital"
+      }
+    }
+  },
+  "expected_behavior": "success",
+  "expected_final_state_diff": {
+    "match_mode": "subset",
+    "added_or_modified": {
+      "pages.valve_panel.widgets.open_button.bindings.command": "VALVE_CMD",
+      "pages.valve_panel.widgets.close_button.bindings.command": "VALVE_CMD"
+    },
+    "removed": [],
+    "unchanged_keys_must_remain": [
+      "points.VALVE_CMD"
+    ]
+  },
+  "rubric_hints": [],
+  "expected_workflow_id": "point_binding"
+}

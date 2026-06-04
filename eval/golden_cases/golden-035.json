@@ -1,0 +1,16 @@
+{
+  "id": "golden-035",
+  "query": "帮我改一下那个画面，颜色好看点",
+  "domain": "page",
+  "complexity": "simple",
+  "initial_world": {},
+  "expected_behavior": "ask_for_clarification",
+  "expected_final_state_diff": {
+    "match_mode": "strict",
+    "added_or_modified": {},
+    "removed": [],
+    "unchanged_keys_must_remain": []
+  },
+  "rubric_hints": [],
+  "expected_alternative": "应追问具体页面和目标颜色/样式"
+}

@@ -1,0 +1,20 @@
+{
+  "id": "golden-093",
+  "query": "给ENERGY_KWH创建累计量点，单位kWh，只允许历史查询不配置报警",
+  "domain": "point",
+  "complexity": "medium",
+  "initial_world": {},
+  "expected_behavior": "success",
+  "expected_final_state_diff": {
+    "match_mode": "subset",
+    "added_or_modified": {
+      "points.ENERGY_KWH.type": "analog",
+      "points.ENERGY_KWH.unit": "kWh",
+      "histories.ENERGY_KWH.enabled": true
+    },
+    "removed": [],
+    "unchanged_keys_must_remain": []
+  },
+  "rubric_hints": [],
+  "expected_workflow_id": "point_creation"
+}

@@ -1,0 +1,50 @@
+{
+  "id": "golden-047",
+  "query": "在chem_panel画一个罐体，液位、温度、压力分别绑定LT_01、TT_01、PT_01",
+  "domain": "graphics",
+  "complexity": "complex",
+  "initial_world": {
+    "pages": {
+      "chem_panel": {
+        "id": "chem_panel",
+        "name": "化工面板",
+        "widgets": {}
+      }
+    },
+    "points": {
+      "LT_01": {
+        "tag": "LT_01",
+        "type": "analog",
+        "unit": "m"
+      },
+      "TT_01": {
+        "tag": "TT_01",
+        "type": "analog",
+        "unit": "°C"
+      },
+      "PT_01": {
+        "tag": "PT_01",
+        "type": "analog",
+        "unit": "MPa"
+      }
+    }
+  },
+  "expected_behavior": "success",
+  "expected_final_state_diff": {
+    "match_mode": "subset",
+    "added_or_modified": {
+      "pages.chem_panel.widgets.tank_01.type": "tank",
+      "pages.chem_panel.widgets.tank_01.bindings.level": "LT_01",
+      "pages.chem_panel.widgets.tank_01.bindings.temperature": "TT_01",
+      "pages.chem_panel.widgets.tank_01.bindings.pressure": "PT_01"
+    },
+    "removed": [],
+    "unchanged_keys_must_remain": [
+      "points.LT_01",
+      "points.TT_01",
+      "points.PT_01"
+    ]
+  },
+  "rubric_hints": [],
+  "expected_workflow_id": "chemical_screen"
+}

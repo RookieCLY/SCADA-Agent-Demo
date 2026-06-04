@@ -1,0 +1,38 @@
+{
+  "id": "golden-031",
+  "query": "创建一个污水泵站总览画面，黑底1920x1080，放标题和两台泵占位",
+  "domain": "page",
+  "complexity": "medium",
+  "initial_world": {},
+  "expected_behavior": "success",
+  "expected_final_state_diff": {
+    "match_mode": "subset",
+    "added_or_modified": {
+      "pages.ww_pump_overview.name": "污水泵站总览",
+      "pages.ww_pump_overview.resolution": [
+        1920,
+        1080
+      ],
+      "pages.ww_pump_overview.background": "#000000",
+      "pages.ww_pump_overview.widgets.title.type": "text",
+      "pages.ww_pump_overview.widgets.pump_a.type": "pump",
+      "pages.ww_pump_overview.widgets.pump_b.type": "pump"
+    },
+    "removed": [],
+    "unchanged_keys_must_remain": []
+  },
+  "rubric_hints": [],
+  "expected_workflow_id": "pump_station_screen",
+  "expected_trajectory": {
+    "min_steps": 1,
+    "max_steps": 5,
+    "required_tools": [
+      "manage_pages"
+    ],
+    "required_actions": [
+      "create_page"
+    ],
+    "forbidden_tools": [],
+    "terminal_state": "DONE"
+  }
+}

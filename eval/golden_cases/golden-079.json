@@ -1,0 +1,38 @@
+{
+  "id": "golden-079",
+  "query": "把已有脚本pump_a_watchdog禁用，脚本内容不要删除",
+  "domain": "script",
+  "complexity": "medium",
+  "initial_world": {
+    "scripts": {
+      "pump_a_watchdog": {
+        "id": "pump_a_watchdog",
+        "name": "pump_a_watchdog",
+        "trigger": "periodic",
+        "body": "check pump",
+        "enabled": true,
+        "bound_tag": "PUMP_A_RUN",
+        "period_s": 10.0
+      }
+    },
+    "points": {
+      "PUMP_A_RUN": {
+        "tag": "PUMP_A_RUN",
+        "type": "digital"
+      }
+    }
+  },
+  "expected_behavior": "success",
+  "expected_final_state_diff": {
+    "match_mode": "subset",
+    "added_or_modified": {
+      "scripts.pump_a_watchdog.enabled": false
+    },
+    "removed": [],
+    "unchanged_keys_must_remain": [
+      "scripts.pump_a_watchdog.body"
+    ]
+  },
+  "rubric_hints": [],
+  "expected_workflow_id": "script_config"
+}

@@ -1,0 +1,16 @@
+{
+  "id": "golden-090",
+  "query": "给那个生产线做全套监控，点位报警历史画面你都看着办",
+  "domain": "multi",
+  "complexity": "simple",
+  "initial_world": {},
+  "expected_behavior": "ask_for_clarification",
+  "expected_final_state_diff": {
+    "match_mode": "strict",
+    "added_or_modified": {},
+    "removed": [],
+    "unchanged_keys_must_remain": []
+  },
+  "rubric_hints": [],
+  "expected_alternative": "应追问生产线、点位清单、报警阈值、历史策略和画面目标"
+}

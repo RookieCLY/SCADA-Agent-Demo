@@ -1,0 +1,26 @@
+{
+  "id": "golden-066",
+  "query": "校验default部署，发现问题只记录不要下装",
+  "domain": "multi",
+  "complexity": "simple",
+  "initial_world": {
+    "pages": {
+      "deploy_page": {
+        "id": "deploy_page",
+        "name": "部署页",
+        "widgets": {}
+      }
+    }
+  },
+  "expected_behavior": "success",
+  "expected_final_state_diff": {
+    "match_mode": "subset",
+    "added_or_modified": {
+      "deployments.default.status": "validated"
+    },
+    "removed": [],
+    "unchanged_keys_must_remain": []
+  },
+  "rubric_hints": [],
+  "expected_workflow_id": "deployment_check"
+}

@@ -1,0 +1,33 @@
+{
+  "id": "golden-082",
+  "query": "在layout_mix画面放矩形、圆形和文本，分别设置不同位置和颜色",
+  "domain": "graphics",
+  "complexity": "complex",
+  "initial_world": {
+    "pages": {
+      "layout_mix": {
+        "id": "layout_mix",
+        "name": "布局混合",
+        "widgets": {}
+      }
+    }
+  },
+  "expected_behavior": "success",
+  "expected_final_state_diff": {
+    "match_mode": "subset",
+    "added_or_modified": {
+      "pages.layout_mix.widgets.rect_1.type": "rect",
+      "pages.layout_mix.widgets.rect_1.position": [
+        10,
+        20
+      ],
+      "pages.layout_mix.widgets.circle_1.type": "circle",
+      "pages.layout_mix.widgets.circle_1.style.color": "green",
+      "pages.layout_mix.widgets.text_1.type": "text"
+    },
+    "removed": [],
+    "unchanged_keys_must_remain": []
+  },
+  "rubric_hints": [],
+  "expected_workflow_id": "graphics_layout"
+}

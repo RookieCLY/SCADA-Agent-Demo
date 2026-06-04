@@ -1,0 +1,16 @@
+{
+  "id": "golden-060",
+  "query": "帮我写个触发脚本，具体触发条件以后再说",
+  "domain": "script",
+  "complexity": "simple",
+  "initial_world": {},
+  "expected_behavior": "ask_for_clarification",
+  "expected_final_state_diff": {
+    "match_mode": "strict",
+    "added_or_modified": {},
+    "removed": [],
+    "unchanged_keys_must_remain": []
+  },
+  "rubric_hints": [],
+  "expected_alternative": "应追问触发类型、绑定点位和脚本动作"
+}

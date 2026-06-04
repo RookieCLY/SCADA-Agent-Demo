@@ -1,0 +1,21 @@
+{
+  "id": "golden-072",
+  "query": "根据泵站模板自动选择合适工作流，帮我做一个带运行反馈的泵站面板",
+  "domain": "multi",
+  "complexity": "medium",
+  "initial_world": {},
+  "expected_behavior": "success",
+  "expected_final_state_diff": {
+    "match_mode": "subset",
+    "added_or_modified": {
+      "pages.auto_pump_panel.name": "泵站面板",
+      "pages.auto_pump_panel.widgets.pump.type": "pump",
+      "pages.auto_pump_panel.widgets.pump.bindings.status": "AUTO_PUMP_RUN",
+      "points.AUTO_PUMP_RUN.type": "digital"
+    },
+    "removed": [],
+    "unchanged_keys_must_remain": []
+  },
+  "rubric_hints": [],
+  "expected_workflow_id": "pump_station_screen"
+}

@@ -1,0 +1,26 @@
+{
+  "id": "golden-081",
+  "query": "校验default通过后再部署default",
+  "domain": "multi",
+  "complexity": "medium",
+  "initial_world": {
+    "pages": {
+      "deploy_page": {
+        "id": "deploy_page",
+        "name": "部署页",
+        "widgets": {}
+      }
+    }
+  },
+  "expected_behavior": "success",
+  "expected_final_state_diff": {
+    "match_mode": "subset",
+    "added_or_modified": {
+      "deployments.default.status": "deployed"
+    },
+    "removed": [],
+    "unchanged_keys_must_remain": []
+  },
+  "rubric_hints": [],
+  "expected_workflow_id": "deployment_check"
+}

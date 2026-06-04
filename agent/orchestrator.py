@@ -23,12 +23,13 @@ import argparse
 import hashlib
 import sys
 import time
+from contextlib import suppress
 from pathlib import Path
-from typing import Any
+from typing import Any, Protocol
 
 from agent.config import ExperimentConfig, load_config
 from agent.dispatcher import dispatch_atomic, dispatch_domain
-from agent.llm import LLMProvider, LLMResponse, MockLLM, build_llm
+from agent.llm import LLMProvider, LLMResponse, build_llm
 from agent.state_machine import INITIAL_STATE, STATES, StateMachine
 from agent.tool_rag import (
     ScoredTool,
@@ -50,9 +51,42 @@ from resources import ResourceNotFound, ResourceRegistry, build_default_resource
 from world import Device, MockWorld, Point
 from world.memory_backend import deep_copy_world
 
-
 READ_RESOURCE_TOOL = "read_resource"  # synthetic tool name for Resource reads
 
+
+class AgentEventSink(Protocol):
+	"""Optional observer for real-time Agent.run events."""
+
+	def on_run_start(self, query: str, world: MockWorld) -> None: ...
+
+	def on_state_enter(self, state: str) -> None: ...
+
+	def on_llm_response(self, turn: int, state: str, response: LLMResponse) -> None: ...
+
+	def on_resource_read(self, turn: int, record: dict[str, Any]) -> None: ...
+
+	def on_tool_call(
+		self,
+		turn: int,
+		record: ToolCallRecord,
+		world_before: MockWorld,
+		world_after: MockWorld,
+	) -> None: ...
+
+	def on_run_finish(self, trace: dict[str, Any], world: MockWorld) -> None: ...
+
+
+def _emit_event(event_sink: AgentEventSink | None, method: str, *args: Any) -> None:
+	"""Best-effort event dispatch; display callbacks must not break agent runs."""
+	if event_sink is None:
+		return
+	callback = getattr(event_sink, method, None)
+	if not callable(callback):
+		return
+	try:
+		callback(*args)
+	except Exception:
+		return
 
 def build_demo_world() -> MockWorld:
     """A small pre-seeded world for CLI demos (§G.1 of the dev plan)."""
@@ -330,10 +364,8 @@ class Agent:
             pass
         result, parsed, lat = dispatch_atomic(self.registry, tool_name, arguments, world)
         action = None
-        try:
+        with suppress(KeyError):
             _, action = self.registry.lookup(tool_name)
-        except KeyError:
-            pass
         return result, parsed, lat, action
 
     # ------------------------------------------------------------------ resource read
@@ -392,6 +424,7 @@ class Agent:
         seed: int = 42,
         complexity: str = "unknown",
         domain: str = "unknown",
+        event_sink: AgentEventSink | None = None,
     ) -> dict[str, Any]:
         """Execute the main agent orchestration loop for a single user query.
         
@@ -412,6 +445,7 @@ class Agent:
         """
         world = initial_world or MockWorld()
         _ = deep_copy_world(world)  # preserve initial for potential rollback / inspection
+        _emit_event(event_sink, "on_run_start", query, deep_copy_world(world))
         sm = StateMachine(current=INITIAL_STATE)
 
         # Some LLM clients (e.g. OpenAICompatibleLLM) keep cross-turn message
@@ -443,6 +477,7 @@ class Agent:
         ) as ctx:
             ctx.initial_world_hash = world.hash()
             ctx.enter_state(sm.current)
+            _emit_event(event_sink, "on_state_enter", sm.current)
             ctx.rag_summary = {
                 "enabled": self.config.architecture.tool_rag.enabled,
                 "top_n": self.config.architecture.tool_rag.top_n,
@@ -498,21 +533,26 @@ class Agent:
                     text=resp.text,
                     reasoning=resp.reasoning,
                 )
+                _emit_event(event_sink, "on_llm_response", turn, sm.current, resp)
 
                 if not resp.tool_calls:
                     history.append({"role": "assistant", "content": resp.text or ""})
-                    if resp.next_state and resp.next_state != sm.current:
-                        if sm.can_transit(resp.next_state):
-                            ctx.exit_state()
-                            sm.transit(resp.next_state)
-                            ctx.enter_state(sm.current)
-                            history.append({
-                                "role": "user",
-                                "content": f"你已进入 {sm.current} 阶段，请使用当前可用工具继续完成任务。",
-                            })
-                            if sm.is_terminal:
-                                break
-                            continue
+                    if (
+                        resp.next_state
+                        and resp.next_state != sm.current
+                        and sm.can_transit(resp.next_state)
+                    ):
+                        ctx.exit_state()
+                        sm.transit(resp.next_state)
+                        ctx.enter_state(sm.current)
+                        _emit_event(event_sink, "on_state_enter", sm.current)
+                        history.append({
+                            "role": "user",
+                            "content": f"你已进入 {sm.current} 阶段，请使用当前可用工具继续完成任务。",
+                        })
+                        if sm.is_terminal:
+                            break
+                        continue
                     # No tool call & no state change: try to advance workflow forward
                     if wf_engine is not None and wf_state is not None and not wf_state.finished:
                         self._maybe_run_deterministic(
@@ -524,6 +564,7 @@ class Agent:
                                 ctx.exit_state()
                                 sm.transit(next_state)
                                 ctx.enter_state(sm.current)
+                                _emit_event(event_sink, "on_state_enter", sm.current)
                                 history.append({
                                     "role": "user",
                                     "content": f"你已进入 {sm.current} 阶段，请使用当前可用工具继续完成任务。",
@@ -538,16 +579,16 @@ class Agent:
                         found, payload, err, lat = self._handle_resource_read(
                             call.arguments, world
                         )
-                        ctx.resource_reads.append(
-                            {
-                                "turn": turn,
-                                "uri": call.arguments.get("uri"),
-                                "found": found,
-                                "result_size": len(payload) if isinstance(payload, dict) else 0,
-                                "latency_ms": lat,
-                                "error": err,
-                            }
-                        )
+                        resource_record = {
+                            "turn": turn,
+                            "uri": call.arguments.get("uri"),
+                            "found": found,
+                            "result_size": len(payload) if isinstance(payload, dict) else 0,
+                            "latency_ms": lat,
+                            "error": err,
+                        }
+                        ctx.resource_reads.append(resource_record)
+                        _emit_event(event_sink, "on_resource_read", turn, dict(resource_record))
                         history.append(
                             {
                                 "role": "tool",
@@ -582,6 +623,7 @@ class Agent:
                                 ctx.exit_state()
                                 sm.transit(new_state)
                                 ctx.enter_state(sm.current)
+                                _emit_event(event_sink, "on_state_enter", sm.current)
                                 atomic_pool = self._allowed_atomics(sm.current, wf_state)
                         permitted = False
                         if is_domain:
@@ -591,23 +633,30 @@ class Agent:
                             permitted = call.name in atomic_pool
                         if not permitted:
                             err_msg = f"tool not in whitelist for state {sm.current}"
-                            ctx.log_tool_call(
-                                ToolCallRecord(
-                                    turn=turn,
-                                    state=sm.current,
-                                    visible_tools=visible,
-                                    visible_count=len(visible),
-                                    selected=call.name,
-                                    action=call.arguments.get("action"),
-                                    args=call.arguments,
-                                    schema_valid=True,
-                                    result_ok=False,
-                                    error_code="OUT_OF_SCOPE",
-                                    error_msg=err_msg,
-                                    result_data={},
-                                    world_diff=None,
-                                    latency_ms=0.0,
-                                )
+                            rec = ToolCallRecord(
+                                turn=turn,
+                                state=sm.current,
+                                visible_tools=visible,
+                                visible_count=len(visible),
+                                selected=call.name,
+                                action=call.arguments.get("action"),
+                                args=call.arguments,
+                                schema_valid=True,
+                                result_ok=False,
+                                error_code="OUT_OF_SCOPE",
+                                error_msg=err_msg,
+                                result_data={},
+                                world_diff=None,
+                                latency_ms=0.0,
+                            )
+                            ctx.log_tool_call(rec)
+                            _emit_event(
+                                event_sink,
+                                "on_tool_call",
+                                turn,
+                                rec,
+                                deep_copy_world(world),
+                                deep_copy_world(world),
                             )
                             history.append(
                                 {
@@ -621,6 +670,7 @@ class Agent:
                             )
                             continue
 
+                    world_before = deep_copy_world(world)
                     result, parsed, lat, action = self._route_and_dispatch(
                         call.name, call.arguments, world
                     )
@@ -635,25 +685,32 @@ class Agent:
                         intended = atomic_meta.handler.__class__.intended_entities(parsed)
                         referenced = atomic_meta.handler.__class__.referenced_entities(parsed)
 
-                    ctx.log_tool_call(
-                        ToolCallRecord(
-                            turn=turn,
-                            state=sm.current,
-                            visible_tools=visible,
-                            visible_count=len(visible),
-                            selected=call.name,
-                            action=action,
-                            args=call.arguments,
-                            schema_valid=result.error_code != "SCHEMA_ERROR",
-                            result_ok=result.ok,
-                            error_code=result.error_code,
-                            error_msg=result.error_msg,
-                            result_data=result.data,
-                            world_diff=result.world_diff,
-                            latency_ms=lat,
-                            intended_entities=intended,
-                            referenced_entities=referenced,
-                        )
+                    rec = ToolCallRecord(
+                        turn=turn,
+                        state=sm.current,
+                        visible_tools=visible,
+                        visible_count=len(visible),
+                        selected=call.name,
+                        action=action,
+                        args=call.arguments,
+                        schema_valid=result.error_code != "SCHEMA_ERROR",
+                        result_ok=result.ok,
+                        error_code=result.error_code,
+                        error_msg=result.error_msg,
+                        result_data=result.data,
+                        world_diff=result.world_diff,
+                        latency_ms=lat,
+                        intended_entities=intended,
+                        referenced_entities=referenced,
+                    )
+                    ctx.log_tool_call(rec)
+                    _emit_event(
+                        event_sink,
+                        "on_tool_call",
+                        turn,
+                        rec,
+                        world_before,
+                        deep_copy_world(world),
                     )
                     history.append(
                         {
@@ -671,9 +728,13 @@ class Agent:
                     # never actually attempted the step's business logic —
                     # treat it as a no-op so the workflow lets the model retry
                     # within the same step instead of finishing prematurely.
-                    if wf_engine is not None and wf_state is not None and not wf_state.finished:
-                        if result.error_code != "SCHEMA_ERROR":
-                            wf_engine.advance(wf_state, succeeded=result.ok)
+                    if (
+                        wf_engine is not None
+                        and wf_state is not None
+                        and not wf_state.finished
+                        and result.error_code != "SCHEMA_ERROR"
+                    ):
+                        wf_engine.advance(wf_state, succeeded=result.ok)
                     any_tool_dispatched = True
 
                 # If this turn only produced resource reads and the current
@@ -690,12 +751,15 @@ class Agent:
                         wf_engine.advance(wf_state, succeeded=True)
 
                 # State machine advancement after the tool batch
-                if resp.next_state and resp.next_state != sm.current:
-                    if sm.can_transit(resp.next_state):
-                        ctx.exit_state()
-                        sm.transit(resp.next_state)
-                        ctx.enter_state(sm.current)
-                        just_transitioned = True
+                if (
+                    resp.next_state
+                    and resp.next_state != sm.current
+                    and sm.can_transit(resp.next_state)
+                ):
+                    ctx.exit_state()
+                    sm.transit(resp.next_state)
+                    ctx.enter_state(sm.current)
+                    _emit_event(event_sink, "on_state_enter", sm.current)
                 if wf_engine is not None and wf_state is not None and not wf_state.finished:
                     self._maybe_run_deterministic(wf_engine, wf_state, world, ctx, turn)
                     if not wf_state.finished:
@@ -704,6 +768,7 @@ class Agent:
                             ctx.exit_state()
                             sm.transit(next_state)
                             ctx.enter_state(sm.current)
+                            _emit_event(event_sink, "on_state_enter", sm.current)
                             history.append({
                                 "role": "user",
                                 "content": f"你已进入 {sm.current} 阶段，请使用当前可用工具继续完成任务。",
@@ -717,11 +782,13 @@ class Agent:
 
             ctx.final_world_hash = world.hash()
             terminal = sm.current if not early else terminal
-            return ctx.finish(
+            record = ctx.finish(
                 terminal_state=terminal,
                 early_terminated=early,
                 termination_reason=reason,
             )
+            _emit_event(event_sink, "on_run_finish", record, deep_copy_world(world))
+            return record
 
     # ------------------------------------------------------------------ deterministic-step glue
     def _maybe_run_deterministic(
@@ -796,7 +863,17 @@ class Agent:
 
 
 # ============================================================ assembly helper
-def assemble(config_path: str | Path, model_override: str | None = None, provider_override: str | None = None) -> Agent:
+def assemble(
+    config_path: str | Path,
+    model_override: str | None = None,
+    provider_override: str | None = None,
+    *,
+    results_root: str | Path = "results",
+    run_id: str | None = None,
+    dataset_version: str = "dev",
+    code_commit: str = "",
+    config_hash_override: str | None = None,
+) -> Agent:
     """Instantiate and assemble an Agent and its components from a YAML configuration.
     
     This function reads the ExperimentConfig, initializes the Tool Registry, constructs the 
@@ -807,6 +884,11 @@ def assemble(config_path: str | Path, model_override: str | None = None, provide
         config_path: Path to the experiment configuration YAML file.
         model_override: Optional model name override (e.g. gpt-4o).
         provider_override: Optional provider override (e.g. openai).
+        results_root: Root directory where traces are written.
+        run_id: Optional fixed run ID for reproducible experiment directories.
+        dataset_version: Dataset version recorded in trace metadata.
+        code_commit: Git commit recorded in trace metadata.
+        config_hash_override: Optional full config hash recorded in trace metadata.
         
     Returns:
         A fully initialized Agent instance ready for `run()`.
@@ -821,10 +903,13 @@ def assemble(config_path: str | Path, model_override: str | None = None, provide
     llm = build_llm(cfg.model, registry=registry, arch=cfg.architecture)
     cfg_hash = hashlib.sha256(Path(config_path).read_bytes()).hexdigest()
     tracer = Tracer(
-        results_root="results",
+        results_root=results_root,
         config_name=cfg.name,
         model_name=cfg.model.name,
-        config_hash=f"sha256:{cfg_hash[:16]}",
+        config_hash=config_hash_override or f"sha256:{cfg_hash[:16]}",
+        code_commit=code_commit,
+        dataset_version=dataset_version,
+        run_id=run_id,
         record_llm_io=cfg.trace.record_llm_io,
     )
 
@@ -839,10 +924,8 @@ def assemble(config_path: str | Path, model_override: str | None = None, provide
         # (workflows/handlers.py calls register_handler() at import time).
         import importlib
 
-        try:
+        with suppress(ImportError):  # pragma: no cover — should always be importable
             importlib.import_module("workflows")
-        except ImportError:  # pragma: no cover — should always be importable
-            pass
         workflow_catalogue = load_catalogue(wf_dir)
 
     resource_registry: ResourceRegistry | None = None

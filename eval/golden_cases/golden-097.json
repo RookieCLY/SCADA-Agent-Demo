@@ -1,0 +1,30 @@
+{
+  "id": "golden-097",
+  "query": "给REPORT_TEMP配置每小时汇总脚本，触发类型on_event，事件名hourly_report",
+  "domain": "script",
+  "complexity": "complex",
+  "initial_world": {
+    "points": {
+      "REPORT_TEMP": {
+        "tag": "REPORT_TEMP",
+        "type": "analog",
+        "unit": "°C"
+      }
+    }
+  },
+  "expected_behavior": "success",
+  "expected_final_state_diff": {
+    "match_mode": "subset",
+    "added_or_modified": {
+      "scripts.report_temp_hourly.trigger": "on_event",
+      "scripts.report_temp_hourly.bound_tag": "REPORT_TEMP",
+      "scripts.report_temp_hourly.enabled": true
+    },
+    "removed": [],
+    "unchanged_keys_must_remain": [
+      "points.REPORT_TEMP"
+    ]
+  },
+  "rubric_hints": [],
+  "expected_workflow_id": "script_config"
+}

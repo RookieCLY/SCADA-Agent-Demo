@@ -1,0 +1,30 @@
+{
+  "id": "golden-051",
+  "query": "给PT_COMP_01开启变化存储历史，保留180天",
+  "domain": "history",
+  "complexity": "medium",
+  "initial_world": {
+    "points": {
+      "PT_COMP_01": {
+        "tag": "PT_COMP_01",
+        "type": "analog",
+        "unit": "MPa"
+      }
+    }
+  },
+  "expected_behavior": "success",
+  "expected_final_state_diff": {
+    "match_mode": "subset",
+    "added_or_modified": {
+      "histories.PT_COMP_01.enabled": true,
+      "histories.PT_COMP_01.storage_mode": "on_change",
+      "histories.PT_COMP_01.retention_days": 180
+    },
+    "removed": [],
+    "unchanged_keys_must_remain": [
+      "points.PT_COMP_01"
+    ]
+  },
+  "rubric_hints": [],
+  "expected_workflow_id": "history_query"
+}

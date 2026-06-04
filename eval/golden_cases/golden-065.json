@@ -1,0 +1,16 @@
+{
+  "id": "golden-065",
+  "query": "帮我把那个点绑到那个图元上",
+  "domain": "graphics",
+  "complexity": "simple",
+  "initial_world": {},
+  "expected_behavior": "ask_for_clarification",
+  "expected_final_state_diff": {
+    "match_mode": "strict",
+    "added_or_modified": {},
+    "removed": [],
+    "unchanged_keys_must_remain": []
+  },
+  "rubric_hints": [],
+  "expected_alternative": "应追问点位、页面、图元和属性"
+}

@@ -1,0 +1,30 @@
+{
+  "id": "golden-070",
+  "query": "做一个反应釜综合监控：温度TT_R1、压力PT_R1、液位LT_R1、罐体绑定、都加上报警和历史",
+  "domain": "multi",
+  "complexity": "complex",
+  "initial_world": {},
+  "expected_behavior": "success",
+  "expected_final_state_diff": {
+    "match_mode": "subset",
+    "added_or_modified": {
+      "pages.reactor_r1.name": "反应釜综合监控",
+      "points.TT_R1.type": "analog",
+      "points.PT_R1.type": "analog",
+      "points.LT_R1.type": "analog",
+      "pages.reactor_r1.widgets.tank.bindings.temperature": "TT_R1",
+      "pages.reactor_r1.widgets.tank.bindings.pressure": "PT_R1",
+      "pages.reactor_r1.widgets.tank.bindings.level": "LT_R1",
+      "alarms.TT_R1_H.tag": "TT_R1",
+      "alarms.PT_R1_H.tag": "PT_R1",
+      "alarms.LT_R1_H.tag": "LT_R1",
+      "histories.TT_R1.enabled": true,
+      "histories.PT_R1.enabled": true,
+      "histories.LT_R1.enabled": true
+    },
+    "removed": [],
+    "unchanged_keys_must_remain": []
+  },
+  "rubric_hints": [],
+  "expected_workflow_id": "chemical_screen"
+}

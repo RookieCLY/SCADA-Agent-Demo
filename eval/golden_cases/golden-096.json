@@ -1,0 +1,36 @@
+{
+  "id": "golden-096",
+  "query": "查询泵站A相关的所有报警状态，只读返回，不要改配置",
+  "domain": "alarm",
+  "complexity": "simple",
+  "initial_world": {
+    "points": {
+      "PUMP_A_RUN": {
+        "tag": "PUMP_A_RUN",
+        "type": "digital"
+      }
+    },
+    "alarms": {
+      "PUMP_A_RUN_LOSS": {
+        "id": "PUMP_A_RUN_LOSS",
+        "tag": "PUMP_A_RUN",
+        "type": "digital",
+        "priority": "medium",
+        "enabled": true
+      }
+    }
+  },
+  "expected_behavior": "success",
+  "expected_final_state_diff": {
+    "match_mode": "subset",
+    "added_or_modified": {},
+    "removed": [],
+    "unchanged_keys_must_remain": [
+      "alarms.PUMP_A_RUN_LOSS"
+    ]
+  },
+  "rubric_hints": [
+    "报警查询类任务不应修改World"
+  ],
+  "expected_workflow_id": "alarm_config"
+}

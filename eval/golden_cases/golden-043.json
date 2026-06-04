@@ -1,0 +1,38 @@
+{
+  "id": "golden-043",
+  "query": "把TEMP_ZONE_1现有高温报警优先级从medium提升到high",
+  "domain": "alarm",
+  "complexity": "simple",
+  "initial_world": {
+    "points": {
+      "TEMP_ZONE_1": {
+        "tag": "TEMP_ZONE_1",
+        "type": "analog",
+        "unit": "°C"
+      }
+    },
+    "alarms": {
+      "TEMP_ZONE_1_H": {
+        "id": "TEMP_ZONE_1_H",
+        "tag": "TEMP_ZONE_1",
+        "type": "analog",
+        "priority": "medium",
+        "enabled": true,
+        "high_limit": 80.0
+      }
+    }
+  },
+  "expected_behavior": "success",
+  "expected_final_state_diff": {
+    "match_mode": "subset",
+    "added_or_modified": {
+      "alarms.TEMP_ZONE_1_H.priority": "high"
+    },
+    "removed": [],
+    "unchanged_keys_must_remain": [
+      "alarms.TEMP_ZONE_1_H"
+    ]
+  },
+  "rubric_hints": [],
+  "expected_workflow_id": "alarm_config"
+}

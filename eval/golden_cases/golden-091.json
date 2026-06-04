@@ -1,0 +1,16 @@
+{
+  "id": "golden-091",
+  "query": "帮我查一下今天上海天气并加到SCADA画面里",
+  "domain": "other",
+  "complexity": "simple",
+  "initial_world": {},
+  "expected_behavior": "reject",
+  "expected_final_state_diff": {
+    "match_mode": "strict",
+    "added_or_modified": {},
+    "removed": [],
+    "unchanged_keys_must_remain": []
+  },
+  "rubric_hints": [],
+  "expected_alternative": "天气查询超出SCADA工程配置范围，应拒绝或说明无法处理"
+}

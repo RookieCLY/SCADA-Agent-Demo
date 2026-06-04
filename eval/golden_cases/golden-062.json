@@ -1,0 +1,53 @@
+{
+  "id": "golden-062",
+  "query": "把PUMP_A_CMD绑定到pump_panel的start_button命令属性",
+  "domain": "graphics",
+  "complexity": "medium",
+  "initial_world": {
+    "pages": {
+      "pump_panel": {
+        "id": "pump_panel",
+        "name": "泵面板",
+        "widgets": {
+          "start_button": {
+            "id": "start_button",
+            "page_id": "pump_panel",
+            "type": "button",
+            "position": [
+              0,
+              0
+            ],
+            "size": [
+              80,
+              40
+            ],
+            "expected_binding_types": {
+              "command": [
+                "digital"
+              ]
+            }
+          }
+        }
+      }
+    },
+    "points": {
+      "PUMP_A_CMD": {
+        "tag": "PUMP_A_CMD",
+        "type": "digital"
+      }
+    }
+  },
+  "expected_behavior": "success",
+  "expected_final_state_diff": {
+    "match_mode": "subset",
+    "added_or_modified": {
+      "pages.pump_panel.widgets.start_button.bindings.command": "PUMP_A_CMD"
+    },
+    "removed": [],
+    "unchanged_keys_must_remain": [
+      "points.PUMP_A_CMD"
+    ]
+  },
+  "rubric_hints": [],
+  "expected_workflow_id": "point_binding"
+}

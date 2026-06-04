@@ -1,0 +1,31 @@
+{
+  "id": "golden-078",
+  "query": "删除临时测试点TMP_TEST_01，但保留正式点PROD_PT_01",
+  "domain": "point",
+  "complexity": "medium",
+  "initial_world": {
+    "points": {
+      "TMP_TEST_01": {
+        "tag": "TMP_TEST_01",
+        "type": "analog"
+      },
+      "PROD_PT_01": {
+        "tag": "PROD_PT_01",
+        "type": "analog"
+      }
+    }
+  },
+  "expected_behavior": "success",
+  "expected_final_state_diff": {
+    "match_mode": "subset",
+    "added_or_modified": {},
+    "removed": [
+      "points.TMP_TEST_01"
+    ],
+    "unchanged_keys_must_remain": [
+      "points.PROD_PT_01"
+    ]
+  },
+  "rubric_hints": [],
+  "expected_workflow_id": "point_creation"
+}

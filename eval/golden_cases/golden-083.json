@@ -1,0 +1,19 @@
+{
+  "id": "golden-083",
+  "query": "一次创建AI_MIX_01模拟量和DI_MIX_01数字量两个点",
+  "domain": "point",
+  "complexity": "medium",
+  "initial_world": {},
+  "expected_behavior": "success",
+  "expected_final_state_diff": {
+    "match_mode": "subset",
+    "added_or_modified": {
+      "points.AI_MIX_01.type": "analog",
+      "points.DI_MIX_01.type": "digital"
+    },
+    "removed": [],
+    "unchanged_keys_must_remain": []
+  },
+  "rubric_hints": [],
+  "expected_workflow_id": "point_creation"
+}

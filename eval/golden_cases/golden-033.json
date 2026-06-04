@@ -1,0 +1,52 @@
+{
+  "id": "golden-033",
+  "query": "复制反应釜模板画面为reactor_12，标题改成12号反应釜并保留罐体绑定",
+  "domain": "page",
+  "complexity": "complex",
+  "initial_world": {
+    "pages": {
+      "reactor_template": {
+        "id": "reactor_template",
+        "name": "反应釜模板",
+        "widgets": {
+          "tank": {
+            "id": "tank",
+            "page_id": "reactor_template",
+            "type": "tank",
+            "position": [
+              0,
+              0
+            ],
+            "size": [
+              80,
+              40
+            ],
+            "bindings": {
+              "level": "R12_LEVEL"
+            }
+          }
+        }
+      }
+    },
+    "points": {
+      "R12_LEVEL": {
+        "tag": "R12_LEVEL",
+        "type": "analog",
+        "unit": "m"
+      }
+    }
+  },
+  "expected_behavior": "success",
+  "expected_final_state_diff": {
+    "match_mode": "subset",
+    "added_or_modified": {
+      "pages.reactor_12.name": "12号反应釜",
+      "pages.reactor_12.widgets.tank.type": "tank",
+      "pages.reactor_12.widgets.tank.bindings.level": "R12_LEVEL"
+    },
+    "removed": [],
+    "unchanged_keys_must_remain": []
+  },
+  "rubric_hints": [],
+  "expected_workflow_id": "chemical_screen"
+}

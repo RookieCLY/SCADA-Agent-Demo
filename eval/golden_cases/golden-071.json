@@ -1,0 +1,32 @@
+{
+  "id": "golden-071",
+  "query": "批量创建FT-200到FT-204五个流量点，每个都开1秒周期历史并配置高限报警",
+  "domain": "multi",
+  "complexity": "complex",
+  "initial_world": {},
+  "expected_behavior": "success",
+  "expected_final_state_diff": {
+    "match_mode": "subset",
+    "added_or_modified": {
+      "points.FT-200.type": "analog",
+      "points.FT-201.type": "analog",
+      "points.FT-202.type": "analog",
+      "points.FT-203.type": "analog",
+      "points.FT-204.type": "analog",
+      "histories.FT-200.sample_interval_s": 1.0,
+      "histories.FT-201.sample_interval_s": 1.0,
+      "histories.FT-202.sample_interval_s": 1.0,
+      "histories.FT-203.sample_interval_s": 1.0,
+      "histories.FT-204.sample_interval_s": 1.0,
+      "alarms.FT-200_H.tag": "FT-200",
+      "alarms.FT-201_H.tag": "FT-201",
+      "alarms.FT-202_H.tag": "FT-202",
+      "alarms.FT-203_H.tag": "FT-203",
+      "alarms.FT-204_H.tag": "FT-204"
+    },
+    "removed": [],
+    "unchanged_keys_must_remain": []
+  },
+  "rubric_hints": [],
+  "expected_workflow_id": "point_creation"
+}

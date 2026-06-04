@@ -1,0 +1,37 @@
+{
+  "id": "golden-052",
+  "query": "查询LT_TANK_01最近30分钟趋势，最多200个样本",
+  "domain": "history",
+  "complexity": "simple",
+  "initial_world": {
+    "points": {
+      "LT_TANK_01": {
+        "tag": "LT_TANK_01",
+        "type": "analog",
+        "unit": "m"
+      }
+    },
+    "histories": {
+      "LT_TANK_01": {
+        "tag": "LT_TANK_01",
+        "enabled": true,
+        "storage_mode": "periodic",
+        "sample_interval_s": 5.0,
+        "retention_days": 30
+      }
+    }
+  },
+  "expected_behavior": "success",
+  "expected_final_state_diff": {
+    "match_mode": "subset",
+    "added_or_modified": {},
+    "removed": [],
+    "unchanged_keys_must_remain": [
+      "histories.LT_TANK_01"
+    ]
+  },
+  "rubric_hints": [
+    "历史查询不应修改World"
+  ],
+  "expected_workflow_id": "history_query"
+}

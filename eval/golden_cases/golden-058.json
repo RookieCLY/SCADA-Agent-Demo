@@ -1,0 +1,29 @@
+{
+  "id": "golden-058",
+  "query": "写一个每10秒检查PUMP_A_RUN的周期脚本，默认启用",
+  "domain": "script",
+  "complexity": "complex",
+  "initial_world": {
+    "points": {
+      "PUMP_A_RUN": {
+        "tag": "PUMP_A_RUN",
+        "type": "digital"
+      }
+    }
+  },
+  "expected_behavior": "success",
+  "expected_final_state_diff": {
+    "match_mode": "subset",
+    "added_or_modified": {
+      "scripts.pump_a_watchdog.trigger": "periodic",
+      "scripts.pump_a_watchdog.period_s": 10.0,
+      "scripts.pump_a_watchdog.enabled": true
+    },
+    "removed": [],
+    "unchanged_keys_must_remain": [
+      "points.PUMP_A_RUN"
+    ]
+  },
+  "rubric_hints": [],
+  "expected_workflow_id": "script_config"
+}

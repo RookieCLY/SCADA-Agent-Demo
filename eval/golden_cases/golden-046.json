@@ -1,0 +1,42 @@
+{
+  "id": "golden-046",
+  "query": "在pump_panel画面添加泵A图元，运行状态绑定PUMP_A_RUN，频率绑定PUMP_A_HZ",
+  "domain": "graphics",
+  "complexity": "medium",
+  "initial_world": {
+    "pages": {
+      "pump_panel": {
+        "id": "pump_panel",
+        "name": "泵面板",
+        "widgets": {}
+      }
+    },
+    "points": {
+      "PUMP_A_RUN": {
+        "tag": "PUMP_A_RUN",
+        "type": "digital"
+      },
+      "PUMP_A_HZ": {
+        "tag": "PUMP_A_HZ",
+        "type": "analog",
+        "unit": "Hz"
+      }
+    }
+  },
+  "expected_behavior": "success",
+  "expected_final_state_diff": {
+    "match_mode": "subset",
+    "added_or_modified": {
+      "pages.pump_panel.widgets.pump_a.type": "pump",
+      "pages.pump_panel.widgets.pump_a.bindings.status": "PUMP_A_RUN",
+      "pages.pump_panel.widgets.pump_a.bindings.frequency": "PUMP_A_HZ"
+    },
+    "removed": [],
+    "unchanged_keys_must_remain": [
+      "points.PUMP_A_RUN",
+      "points.PUMP_A_HZ"
+    ]
+  },
+  "rubric_hints": [],
+  "expected_workflow_id": "pump_station_screen"
+}

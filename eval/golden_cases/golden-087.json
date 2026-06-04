@@ -1,0 +1,40 @@
+{
+  "id": "golden-087",
+  "query": "在style_page上新增一个报警文本，红色，大小[200,40]，绑定ALM_TEXT",
+  "domain": "graphics",
+  "complexity": "medium",
+  "initial_world": {
+    "pages": {
+      "style_page": {
+        "id": "style_page",
+        "name": "样式页",
+        "widgets": {}
+      }
+    },
+    "points": {
+      "ALM_TEXT": {
+        "tag": "ALM_TEXT",
+        "type": "digital"
+      }
+    }
+  },
+  "expected_behavior": "success",
+  "expected_final_state_diff": {
+    "match_mode": "subset",
+    "added_or_modified": {
+      "pages.style_page.widgets.alarm_text.type": "text",
+      "pages.style_page.widgets.alarm_text.size": [
+        200,
+        40
+      ],
+      "pages.style_page.widgets.alarm_text.style.color": "red",
+      "pages.style_page.widgets.alarm_text.bindings.value": "ALM_TEXT"
+    },
+    "removed": [],
+    "unchanged_keys_must_remain": [
+      "points.ALM_TEXT"
+    ]
+  },
+  "rubric_hints": [],
+  "expected_workflow_id": "graphics_layout"
+}

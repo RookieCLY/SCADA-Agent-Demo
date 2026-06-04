@@ -1,0 +1,31 @@
+{
+  "id": "golden-095",
+  "query": "给ANALYZER_PH配置低限和高限报警，L=6.5，H=8.5",
+  "domain": "alarm",
+  "complexity": "complex",
+  "initial_world": {
+    "points": {
+      "ANALYZER_PH": {
+        "tag": "ANALYZER_PH",
+        "type": "analog",
+        "unit": "pH"
+      }
+    }
+  },
+  "expected_behavior": "success",
+  "expected_final_state_diff": {
+    "match_mode": "subset",
+    "added_or_modified": {
+      "alarms.ANALYZER_PH_L.low_limit": 6.5,
+      "alarms.ANALYZER_PH_H.high_limit": 8.5,
+      "alarms.ANALYZER_PH_L.tag": "ANALYZER_PH",
+      "alarms.ANALYZER_PH_H.tag": "ANALYZER_PH"
+    },
+    "removed": [],
+    "unchanged_keys_must_remain": [
+      "points.ANALYZER_PH"
+    ]
+  },
+  "rubric_hints": [],
+  "expected_workflow_id": "alarm_config"
+}

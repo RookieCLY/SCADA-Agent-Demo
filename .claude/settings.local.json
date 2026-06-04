@@ -63,7 +63,27 @@
       "Bash(PYTHONPATH=. python *)",
       "Bash(.venv\\\\Scripts\\\\python.exe *)",
       "Bash(.venv/Scripts/python.exe *)",
-      "PowerShell(.venv\\\\Scripts\\\\python.exe -m pytest tests/ -v --tb=short)"
+      "PowerShell(.venv\\\\Scripts\\\\python.exe -m pytest tests/ -v --tb=short)",
+      "PowerShell(git ls-tree *)",
+      "PowerShell($lines = git show implement-golden-dataset-schema:eval/golden_dataset.jsonl; $lines.Count; $lines | Select-Object -First 5)",
+      "PowerShell(.venv/Scripts/python.exe scripts/expand_golden_dataset.py)",
+      "PowerShell(.venv/Scripts/python.exe -m pytest tests/test_golden_schema.py -v --tb=short)",
+      "PowerShell(.venv/Scripts/python.exe -c \"from eval.schema import load_golden_dataset; import collections; records=load_golden_dataset\\('eval/golden_dataset.jsonl'\\); print\\('records', len\\(records\\)\\); print\\('domains', dict\\(collections.Counter\\(r.domain for r in records\\)\\)\\); print\\('behaviors', dict\\(collections.Counter\\(r.expected_behavior for r in records\\)\\)\\); print\\('complexities', dict\\(collections.Counter\\(r.complexity for r in records\\)\\)\\)\")",
+      "PowerShell(.venv/Scripts/python.exe -c \"from eval.schema import load_golden_dataset; import collections; records=load_golden_dataset\\('eval/golden_dataset.jsonl'\\); print\\(dict\\(collections.Counter\\(r.expected_workflow_id for r in records\\)\\)\\)\")",
+      "PowerShell(.venv/Scripts/python.exe -c \"from collections import Counter; from eval.schema import load_golden_dataset; rs=load_golden_dataset\\('eval/golden_dataset.jsonl'\\); print\\('records', len\\(rs\\)\\); print\\('ids', rs[0].id, rs[-1].id\\); print\\('complexity', dict\\(Counter\\(r.complexity for r in rs\\)\\)\\); print\\('domain', dict\\(Counter\\(r.domain for r in rs\\)\\)\\); print\\('behavior', dict\\(Counter\\(r.expected_behavior for r in rs\\)\\)\\); print\\('workflow_hits', sum\\(1 for r in rs if r.expected_workflow_id\\), '/', len\\(rs\\)\\); print\\('workflow', dict\\(Counter\\(r.expected_workflow_id for r in rs if r.expected_workflow_id\\)\\)\\)\")",
+      "PowerShell(python -m pytest tests\\\\test_eval_judges.py -q)",
+      "PowerShell(& \".\\\\.venv\\\\Scripts\\\\python.exe\" -m pytest tests\\\\test_eval_judges.py -q)",
+      "PowerShell(& \".\\\\.venv\\\\Scripts\\\\python.exe\" -m pytest tests\\\\test_eval_judges.py tests\\\\test_eval_metrics.py -q)",
+      "PowerShell(& \".\\\\.venv\\\\Scripts\\\\python.exe\" -m eval.judges --help)",
+      "PowerShell(& \".\\\\.venv\\\\Scripts\\\\python.exe\" -m ruff check eval\\\\judges.py tests\\\\test_eval_judges.py)",
+      "PowerShell(& \".\\\\.venv\\\\Scripts\\\\python.exe\" -m eval.judges --dataset eval\\\\golden_dataset.jsonl --traces results\\\\F_full_four_in_one\\\\mock\\\\codex_runner_sample\\\\traces.jsonl --metrics results\\\\F_full_four_in_one\\\\mock\\\\codex_runner_sample\\\\metrics.jsonl --output results\\\\F_full_four_in_one\\\\mock\\\\codex_runner_sample\\\\judges_heuristic_smoke.jsonl --provider heuristic --limit 1)",
+      "PowerShell(.\\\\.venv\\\\Scripts\\\\python.exe -m ruff check agent\\\\orchestrator.py eval\\\\interactive_runner.py)",
+      "PowerShell(.\\\\.venv\\\\Scripts\\\\python.exe -m eval.interactive_runner --provider mock --model mock --command \"world demo\" --command \"inspect world\" --command \"query 给TEMP_101加个高温报警,超过80度告警\")",
+      "PowerShell(.\\\\.venv\\\\Scripts\\\\python.exe -m pytest tests\\\\test_interactive_runner.py -q)",
+      "PowerShell(.\\\\.venv\\\\Scripts\\\\python.exe -m ruff check eval\\\\interactive_runner.py tests\\\\test_interactive_runner.py agent\\\\orchestrator.py)",
+      "PowerShell(.\\\\.venv\\\\Scripts\\\\python.exe -m pytest tests\\\\test_e2e.py tests\\\\test_phase2_e2e.py tests\\\\test_eval_metrics.py tests\\\\test_eval_judges.py tests\\\\test_interactive_runner.py -q)",
+      "PowerShell(uv run *)",
+      "PowerShell($names = @\\('JUDGE_API_KEY','JUDGE_BASE_URL','JUDGE_MODEL','XIAOMI_MIMO_API_KEY','XIAOMI_MIMO_API_URL','XIAOMI_MIMO_MODEL','XIAOMI-MIMO_API_KEY','XIAOMI-MIMO_API_URL','XIAOMI-MIMO_MODEL','OPENAI_API_KEY','OPENAI_BASE_URL','OPENAI_MODEL'\\); foreach \\($name in $names\\) { $value = [Environment]::GetEnvironmentVariable\\($name\\); if \\($value\\) { \"$name=set\" } else { \"$name=missing\" } })"
     ]
   }
 }

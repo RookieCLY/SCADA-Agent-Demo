@@ -1,0 +1,16 @@
+{
+  "id": "golden-040",
+  "query": "给我加几个传感器点，名字类型你决定",
+  "domain": "point",
+  "complexity": "simple",
+  "initial_world": {},
+  "expected_behavior": "ask_for_clarification",
+  "expected_final_state_diff": {
+    "match_mode": "strict",
+    "added_or_modified": {},
+    "removed": [],
+    "unchanged_keys_must_remain": []
+  },
+  "rubric_hints": [],
+  "expected_alternative": "应追问点位名称、类型、单位和量程"
+}

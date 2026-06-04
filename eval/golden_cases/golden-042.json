@@ -1,0 +1,29 @@
+{
+  "id": "golden-042",
+  "query": "给PUMP_A_RUN配置运行反馈消失报警，优先级high",
+  "domain": "alarm",
+  "complexity": "medium",
+  "initial_world": {
+    "points": {
+      "PUMP_A_RUN": {
+        "tag": "PUMP_A_RUN",
+        "type": "digital"
+      }
+    }
+  },
+  "expected_behavior": "success",
+  "expected_final_state_diff": {
+    "match_mode": "subset",
+    "added_or_modified": {
+      "alarms.PUMP_A_RUN_LOSS.tag": "PUMP_A_RUN",
+      "alarms.PUMP_A_RUN_LOSS.type": "digital",
+      "alarms.PUMP_A_RUN_LOSS.priority": "high"
+    },
+    "removed": [],
+    "unchanged_keys_must_remain": [
+      "points.PUMP_A_RUN"
+    ]
+  },
+  "rubric_hints": [],
+  "expected_workflow_id": "alarm_config"
+}

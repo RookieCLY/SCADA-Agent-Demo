@@ -1,0 +1,18 @@
+{
+  "id": "golden-037",
+  "query": "新增数字量命令点PUMP_A_CMD，用于泵A启停控制",
+  "domain": "point",
+  "complexity": "simple",
+  "initial_world": {},
+  "expected_behavior": "success",
+  "expected_final_state_diff": {
+    "match_mode": "subset",
+    "added_or_modified": {
+      "points.PUMP_A_CMD.type": "digital"
+    },
+    "removed": [],
+    "unchanged_keys_must_remain": []
+  },
+  "rubric_hints": [],
+  "expected_workflow_id": "point_creation"
+}

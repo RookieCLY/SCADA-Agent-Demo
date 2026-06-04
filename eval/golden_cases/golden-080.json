@@ -1,0 +1,27 @@
+{
+  "id": "golden-080",
+  "query": "把deploy_staging部署回滚成draft并记录原因：validation failed",
+  "domain": "multi",
+  "complexity": "medium",
+  "initial_world": {
+    "deployments": {
+      "deploy_staging": {
+        "id": "deploy_staging",
+        "status": "validated",
+        "notes": "ready"
+      }
+    }
+  },
+  "expected_behavior": "success",
+  "expected_final_state_diff": {
+    "match_mode": "subset",
+    "added_or_modified": {
+      "deployments.deploy_staging.status": "draft",
+      "deployments.deploy_staging.notes": "validation failed"
+    },
+    "removed": [],
+    "unchanged_keys_must_remain": []
+  },
+  "rubric_hints": [],
+  "expected_workflow_id": "deployment_check"
+}

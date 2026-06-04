@@ -1,0 +1,30 @@
+{
+  "id": "golden-038",
+  "query": "把已有点位LT_TANK_01的量程改成0到10米，单位保持m",
+  "domain": "point",
+  "complexity": "medium",
+  "initial_world": {
+    "points": {
+      "LT_TANK_01": {
+        "tag": "LT_TANK_01",
+        "type": "analog",
+        "unit": "m",
+        "min": 0.0,
+        "max": 5.0
+      }
+    }
+  },
+  "expected_behavior": "success",
+  "expected_final_state_diff": {
+    "match_mode": "subset",
+    "added_or_modified": {
+      "points.LT_TANK_01.min": 0.0,
+      "points.LT_TANK_01.max": 10.0,
+      "points.LT_TANK_01.unit": "m"
+    },
+    "removed": [],
+    "unchanged_keys_must_remain": []
+  },
+  "rubric_hints": [],
+  "expected_workflow_id": "point_creation"
+}

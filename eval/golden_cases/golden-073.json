@@ -1,0 +1,25 @@
+{
+  "id": "golden-073",
+  "query": "根据化工模板自动生成带罐体和温压液位的反应釜面板",
+  "domain": "multi",
+  "complexity": "medium",
+  "initial_world": {},
+  "expected_behavior": "success",
+  "expected_final_state_diff": {
+    "match_mode": "subset",
+    "added_or_modified": {
+      "pages.auto_reactor_panel.name": "反应釜面板",
+      "pages.auto_reactor_panel.widgets.tank.type": "tank",
+      "pages.auto_reactor_panel.widgets.tank.bindings.temperature": "AUTO_TT",
+      "pages.auto_reactor_panel.widgets.tank.bindings.pressure": "AUTO_PT",
+      "pages.auto_reactor_panel.widgets.tank.bindings.level": "AUTO_LT",
+      "points.AUTO_TT.type": "analog",
+      "points.AUTO_PT.type": "analog",
+      "points.AUTO_LT.type": "analog"
+    },
+    "removed": [],
+    "unchanged_keys_must_remain": []
+  },
+  "rubric_hints": [],
+  "expected_workflow_id": "chemical_screen"
+}

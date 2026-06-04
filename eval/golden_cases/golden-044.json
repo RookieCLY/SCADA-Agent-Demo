@@ -1,0 +1,26 @@
+{
+  "id": "golden-044",
+  "query": "给不存在的NO_SUCH_TEMP配置高温报警，阈值90",
+  "domain": "alarm",
+  "complexity": "medium",
+  "initial_world": {
+    "points": {
+      "TEMP_REAL": {
+        "tag": "TEMP_REAL",
+        "type": "analog",
+        "unit": "°C"
+      }
+    }
+  },
+  "expected_behavior": "fail_or_clarify",
+  "expected_final_state_diff": {
+    "match_mode": "strict",
+    "added_or_modified": {},
+    "removed": [],
+    "unchanged_keys_must_remain": []
+  },
+  "rubric_hints": [],
+  "expected_workflow_id": "alarm_config",
+  "expected_error_code": "POINT_NOT_FOUND",
+  "expected_alternative": "应说明点位不存在或追问正确点位"
+}
