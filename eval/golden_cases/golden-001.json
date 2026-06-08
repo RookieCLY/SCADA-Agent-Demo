@@ -6,7 +6,7 @@
   "initial_world": {},
   "expected_behavior": "success",
   "expected_final_state_diff": {
-    "match_mode": "subset",
+    "match_mode": "key_fields",
     "added_or_modified": {
       "pages.main_page.name": "主监控页面",
       "pages.main_page.resolution": [

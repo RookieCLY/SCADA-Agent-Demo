@@ -6,7 +6,7 @@
   "initial_world": {},
   "expected_behavior": "success",
   "expected_final_state_diff": {
-    "match_mode": "subset",
+    "match_mode": "key_fields",
     "added_or_modified": {
       "pages.ww_pump_overview.name": "污水泵站总览",
       "pages.ww_pump_overview.resolution": [

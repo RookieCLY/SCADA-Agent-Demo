@@ -105,54 +105,218 @@ def _aggregate_world_diff(tool_calls: list[dict[str, Any]]) -> dict[str, Any]:
     return {"added_or_modified": added_or_modified, "removed": sorted(removed)}
 
 
+ALIASABLE_KEY_FIELD_COLLECTIONS = {"alarms", "pages", "scripts"}
+
+
+def _split_entity_path(path: str) -> tuple[str, str] | None:
+	"""Split a flattened diff path into ``(entity_prefix, field_path)``.
+
+	Most entities use ``collection.entity_id.field``. Page widgets are nested
+	inside pages, so ``pages.page_id.widgets.widget_id.field`` is treated as a
+	separate aliasable entity from the page itself.
+	"""
+	parts = path.split(".")
+	if len(parts) >= 5 and parts[0] == "pages" and parts[2] == "widgets":
+		return ".".join(parts[:4]), ".".join(parts[4:])
+	if len(parts) < 3:
+		return None
+	return ".".join(parts[:2]), ".".join(parts[2:])
+
+
+def _group_by_entity(flat: dict[str, Any]) -> dict[str, dict[str, Any]]:
+	"""Group flattened ``collection.entity_id.field`` paths by entity prefix."""
+	grouped: dict[str, dict[str, Any]] = {}
+	for path, value in flat.items():
+		split = _split_entity_path(path)
+		if split is None:
+			continue
+		prefix, field_path = split
+		grouped.setdefault(prefix, {})[field_path] = value
+	return grouped
+
+
+def _entity_alias_scope(prefix: str) -> str | None:
+	"""Return the alias scope for an entity prefix, or ``None`` if unsafe."""
+	parts = prefix.split(".")
+	if len(parts) >= 4 and parts[0] == "pages" and parts[2] == "widgets":
+		# Widget IDs may be generated, but only within the same page.
+		return ".".join(parts[:3])
+	if len(parts) >= 2 and parts[0] in ALIASABLE_KEY_FIELD_COLLECTIONS:
+		return parts[0]
+	return None
+
+
+def _candidate_alias_scopes(prefix: str, entity_aliases: dict[str, str]) -> set[str]:
+	"""Return acceptable actual scopes for alias candidates."""
+	scope = _entity_alias_scope(prefix)
+	if scope is None:
+		return set()
+	scopes = {scope}
+	parts = prefix.split(".")
+	if len(parts) >= 4 and parts[0] == "pages" and parts[2] == "widgets":
+		page_prefix = ".".join(parts[:2])
+		if page_prefix in entity_aliases:
+			scopes.add(f"{entity_aliases[page_prefix]}.widgets")
+	return scopes
+
+
+def _entity_match_order(prefix: str) -> tuple[int, str]:
+	"""Match parent pages before nested widgets so page aliases can cascade."""
+	parts = prefix.split(".")
+	if len(parts) >= 2 and parts[0] == "pages" and (len(parts) < 4 or parts[2] != "widgets"):
+		return (0, prefix)
+	if len(parts) >= 4 and parts[0] == "pages" and parts[2] == "widgets":
+		return (1, prefix)
+	return (2, prefix)
+
+
+def _match_key_fields(
+	want_add: dict[str, Any],
+	actual_add: dict[str, Any],
+) -> tuple[dict[str, str], list[str], list[dict[str, Any]], list[str]]:
+	"""Resolve generated-entity aliases for ``key_fields`` matching.
+
+	For each expected entity (e.g. ``alarms.alarm_PT101_hi``) try to find an
+	actual entity in the same top-level collection whose values satisfy every
+	expected key field exactly. This lets a model pick its own generated ID
+	(``alarms.alarm_pt101_high``) without being penalised, as long as the
+	semantic fields match.
+
+	Returns ``(entity_aliases, matched_paths, wrong_value, ambiguous)``:
+	  - ``entity_aliases``: expected prefix -> actual prefix, only when they differ.
+	  - ``matched_paths``: expected flattened paths whose value was found.
+	  - ``wrong_value``: expected paths whose value differs from the resolved entity.
+	  - ``ambiguous``: expected prefixes that matched more than one actual entity.
+	"""
+	expected_entities = _group_by_entity(want_add)
+	actual_entities = _group_by_entity(actual_add)
+
+	entity_aliases: dict[str, str] = {}
+	matched_paths: list[str] = []
+	wrong_value: list[dict[str, Any]] = []
+	ambiguous: list[str] = []
+
+	for prefix in sorted(expected_entities, key=_entity_match_order):
+		want_fields = expected_entities[prefix]
+		alias_scopes = _candidate_alias_scopes(prefix, entity_aliases)
+		actual_fields = actual_entities.get(prefix)
+
+		# 1) literal prefix present with every expected field equal -> no alias.
+		if actual_fields is not None and all(
+			actual_fields.get(field_path) == value
+			for field_path, value in want_fields.items()
+		):
+			matched_paths.extend(f"{prefix}.{field_path}" for field_path in want_fields)
+			continue
+
+		# 2) look for a unique actual entity in the same alias scope that
+		#    satisfies every expected key field exactly.
+		candidates = []
+		if alias_scopes:
+			candidates = [
+				cand_prefix
+				for cand_prefix, cand_fields in actual_entities.items()
+				if _entity_alias_scope(cand_prefix) in alias_scopes
+				and all(
+					cand_fields.get(field_path) == value
+					for field_path, value in want_fields.items()
+				)
+			]
+
+		if len(candidates) == 1:
+			alias = candidates[0]
+			if alias != prefix:
+				entity_aliases[prefix] = alias
+			matched_paths.extend(f"{prefix}.{field_path}" for field_path in want_fields)
+			continue
+
+		if len(candidates) > 1:
+			ambiguous.append(prefix)
+
+		# 3) no unique alias -> diagnose against the literal entity if present;
+		#    fields that are neither matched nor wrong are reported as missing
+		#    by the caller.
+		for field_path, value in want_fields.items():
+			path = f"{prefix}.{field_path}"
+			if actual_fields is not None and field_path in actual_fields:
+				if actual_fields[field_path] != value:
+					wrong_value.append(
+						{"key": path, "expected": value, "actual": actual_fields[field_path]}
+					)
+				else:
+					matched_paths.append(path)
+
+	return entity_aliases, matched_paths, wrong_value, ambiguous
+
+
 def _compare_final_state_from_diff(
-    actual_diff: dict[str, Any],
-    expected: dict[str, Any],
+	actual_diff: dict[str, Any],
+	expected: dict[str, Any],
 ) -> tuple[bool, dict[str, Any]]:
-    mode = expected.get("match_mode", "subset")
-    want_add = expected.get("added_or_modified", {}) or {}
-    want_removed = set(expected.get("removed", []) or [])
-    unchanged = expected.get("unchanged_keys_must_remain", []) or []
-    actual_add = actual_diff.get("added_or_modified", {}) or {}
-    actual_removed = set(actual_diff.get("removed", []) or [])
+	mode = expected.get("match_mode", "subset")
+	want_add = expected.get("added_or_modified", {}) or {}
+	want_removed = set(expected.get("removed", []) or [])
+	unchanged = expected.get("unchanged_keys_must_remain", []) or []
+	actual_add = actual_diff.get("added_or_modified", {}) or {}
+	actual_removed = set(actual_diff.get("removed", []) or [])
 
-    report: dict[str, Any] = {
-        "mode": mode,
-        "missing": [],
-        "wrong_value": [],
-        "unexpected": [],
-    }
+	report: dict[str, Any] = {
+		"mode": mode,
+		"missing": [],
+		"wrong_value": [],
+		"unexpected": [],
+		"matched": [],
+	}
 
-    for path, expected_value in want_add.items():
-        if path not in actual_add:
-            report["missing"].append(path)
-        elif actual_add[path] != expected_value:
-            report["wrong_value"].append(
-                {"key": path, "expected": expected_value, "actual": actual_add[path]}
-            )
+	if mode == "key_fields":
+		# ID-tolerant matching: a model may generate its own entity ID, so we
+		# alias expected entities to semantically-equal actual entities.
+		entity_aliases, matched_paths, wrong_value, ambiguous = _match_key_fields(
+			want_add, actual_add
+		)
+		resolved = set(matched_paths) | {item["key"] for item in wrong_value}
+		report["matched"] = matched_paths
+		report["wrong_value"].extend(wrong_value)
+		report["missing"].extend(path for path in want_add if path not in resolved)
+		if entity_aliases:
+			report["entity_aliases"] = entity_aliases
+		if ambiguous:
+			report["ambiguous_entity_match"] = ambiguous
+	else:
+		for path, expected_value in want_add.items():
+			if path not in actual_add:
+				report["missing"].append(path)
+			elif actual_add[path] != expected_value:
+				report["wrong_value"].append(
+					{"key": path, "expected": expected_value, "actual": actual_add[path]}
+				)
+			else:
+				report["matched"].append(path)
 
-    for path in want_removed:
-        if path not in actual_removed:
-            report["missing"].append(f"removed:{path}")
+	for path in want_removed:
+		if path not in actual_removed:
+			report["missing"].append(f"removed:{path}")
 
-    if mode == "strict":
-        for path in actual_add:
-            if path not in want_add:
-                report["unexpected"].append(path)
-        unexpected_removed = sorted(actual_removed ^ want_removed)
-        if unexpected_removed:
-            report["unexpected_removed"] = unexpected_removed
+	if mode == "strict":
+		for path in actual_add:
+			if path not in want_add:
+				report["unexpected"].append(path)
+		unexpected_removed = sorted(actual_removed ^ want_removed)
+		if unexpected_removed:
+			report["unexpected_removed"] = unexpected_removed
 
-    for unchanged_path in unchanged:
-        for changed_path in list(actual_add) + list(actual_removed):
-            if _same_path_or_child(changed_path, unchanged_path):
-                report["unexpected"].append(f"violated_unchanged:{unchanged_path}")
-                break
+	for unchanged_path in unchanged:
+		for changed_path in list(actual_add) + list(actual_removed):
+			if _same_path_or_child(changed_path, unchanged_path):
+				report["unexpected"].append(f"violated_unchanged:{unchanged_path}")
+				break
 
-    matched = not report["missing"] and not report["wrong_value"] and not report["unexpected"]
-    if mode == "strict" and report.get("unexpected_removed"):
-        matched = False
-    return matched, report
+	matched = not report["missing"] and not report["wrong_value"] and not report["unexpected"]
+	if mode == "strict" and report.get("unexpected_removed"):
+		matched = False
+	if mode == "key_fields" and report.get("ambiguous_entity_match"):
+		matched = False
+	return matched, report
 
 
 def _final_state_match(
@@ -417,36 +581,43 @@ def _trajectory_metrics(
 
 
 def _parameter_metrics(
-    tool_calls: list[dict[str, Any]],
-    final_state_match: bool,
-    final_state_report: dict[str, Any],
-    actual_diff: dict[str, Any],
-    golden: GoldenRecord,
+	tool_calls: list[dict[str, Any]],
+	final_state_match: bool,
+	final_state_report: dict[str, Any],
+	actual_diff: dict[str, Any],
+	golden: GoldenRecord,
 ) -> dict[str, Any]:
-    total = len(tool_calls)
-    valid_count = sum(1 for call in tool_calls if call.get("schema_valid") is True)
-    schema_violations = sum(
-        1
-        for call in tool_calls
-        if call.get("schema_valid") is False or call.get("error_code") == "SCHEMA_ERROR"
-    )
+	total = len(tool_calls)
+	valid_count = sum(1 for call in tool_calls if call.get("schema_valid") is True)
+	schema_violations = sum(
+		1
+		for call in tool_calls
+		if call.get("schema_valid") is False or call.get("error_code") == "SCHEMA_ERROR"
+	)
 
-    want_add = golden.expected_final_state_diff.added_or_modified
-    if want_add:
-        actual_add = actual_diff.get("added_or_modified", {}) or {}
-        matched = sum(1 for path, value in want_add.items() if actual_add.get(path) == value)
-        parameter_match = matched / len(want_add)
-    else:
-        parameter_match = 1.0 if final_state_match else 0.0
+	want_add = golden.expected_final_state_diff.added_or_modified
+	if want_add:
+		matched_paths = final_state_report.get("matched")
+		if matched_paths is not None:
+			# Alias-aware: the comparator already resolved generated IDs, so
+			# count expected paths it confirmed (covers strict/subset/key_fields).
+			matched = len(set(matched_paths) & set(want_add))
+		else:
+			# Fallback for precomputed snapshots without a matched list.
+			actual_add = actual_diff.get("added_or_modified", {}) or {}
+			matched = sum(1 for path, value in want_add.items() if actual_add.get(path) == value)
+		parameter_match = matched / len(want_add)
+	else:
+		parameter_match = 1.0 if final_state_match else 0.0
 
-    return {
-        "parameter_validity": _safe_div(valid_count, total, default=1.0),
-        "parameter_match": parameter_match,
-        "schema_violation_rate": _safe_div(schema_violations, total, default=0.0),
-        "final_state_missing_count": len(final_state_report.get("missing", []) or []),
-        "final_state_wrong_value_count": len(final_state_report.get("wrong_value", []) or []),
-        "final_state_unexpected_count": len(final_state_report.get("unexpected", []) or []),
-    }
+	return {
+		"parameter_validity": _safe_div(valid_count, total, default=1.0),
+		"parameter_match": parameter_match,
+		"schema_violation_rate": _safe_div(schema_violations, total, default=0.0),
+		"final_state_missing_count": len(final_state_report.get("missing", []) or []),
+		"final_state_wrong_value_count": len(final_state_report.get("wrong_value", []) or []),
+		"final_state_unexpected_count": len(final_state_report.get("unexpected", []) or []),
+	}
 
 
 def _detect_cascade_failures(tool_calls: list[dict[str, Any]]) -> int:

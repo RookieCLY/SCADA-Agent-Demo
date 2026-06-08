@@ -72,6 +72,7 @@ Parameter rules:
 
 - Preserve explicit user values exactly unless normalization is required by the tool schema. Examples: `1920x1080`, `#000000`, `PT-100` through `PT-110`, `1 second`, `high`, `medium`, `periodic`.
 - Do not invent IDs when the expected final-state diff requires a specific stable path. If the golden hint allows model-chosen IDs, judge by the resulting semantic fields.
+- When the deterministic evaluator reports `match_mode: key_fields` (and any `entity_aliases` mapping an expected ID to a generated one), the golden case explicitly allows model-generated entity IDs. Do not penalize a different generated ID such as `alarm_pt101_high` vs `alarm_PT101_hi` as long as the semantic key fields (tag, threshold, alarm level, priority, target) match. Still require an exact ID when the user explicitly specified it, or when the operation updates, deletes, renames, or binds an existing entity.
 - For batch operations, score by coverage and exactness. Missing one item in a range should cap this score at `0.8`; missing several should cap it at `0.5`.
 - For ambiguous natural language, correct parameters may be a clarification question rather than a tool call.
 

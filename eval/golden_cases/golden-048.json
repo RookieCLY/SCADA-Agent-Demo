@@ -42,7 +42,7 @@
   },
   "expected_behavior": "success",
   "expected_final_state_diff": {
-    "match_mode": "subset",
+    "match_mode": "key_fields",
     "added_or_modified": {
       "pages.target_page.widgets.valve1.type": "valve",
       "pages.target_page.widgets.valve1.position": [

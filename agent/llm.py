@@ -428,28 +428,39 @@ class OpenAICompatibleLLM:
             )
         return out
 
-    def _domain_tool_schemas(self, names: list[str]) -> list[dict[str, Any]]:
-        """Hierarchical: one tool per domain with a discriminated union.
+    def _domain_tool_schemas(self, tools: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """Hierarchical: one tool per domain with a filtered action union.
 
-        We expose each sub-action as a fully-typed ``oneOf`` branch so the
-        model can see *exactly which fields are required for each action*.
-        Without this, mimo (and other function-calling models) tend to emit
-        only the action discriminator and forget the action-specific args,
-        producing endless SCHEMA_ERROR loops in hierarchical mode.
+        Each domain descriptor may carry ``allowed_actions`` from the orchestrator's
+        state/workflow whitelist. Only those sub-actions are exposed to the model;
+        otherwise a visible domain like ``manage_pages`` would leak every page action
+        and let the model choose state-forbidden actions that later become
+        ``OUT_OF_SCOPE``.
         """
         out: list[dict[str, Any]] = []
         if self.registry is None:
             return out
-        for n in names:
+        for tool in tools:
+            name = tool.get("name")
+            if not isinstance(name, str):
+                continue
             try:
-                d = self.registry.domain(n)
+                d = self.registry.domain(name)
             except KeyError:
                 continue
+            allowed = [
+                action
+                for action in tool.get("allowed_actions", [])
+                if isinstance(action, str) and action in d.actions
+            ]
+            if not allowed:
+                allowed = list(d.actions.keys())
             actions_doc = "\n".join(
-                f"- {a.action}: {a.description}" for a in d.actions.values()
+                f"- {action}: {d.actions[action].description}" for action in allowed
             )
             branches: list[dict[str, Any]] = []
-            for action_name, atomic in d.actions.items():
+            for action_name in allowed:
+                atomic = d.actions[action_name]
                 sub_schema = atomic.args_model.model_json_schema()
                 props = dict(sub_schema.get("properties") or {})
                 # Force the discriminator to the literal action name
@@ -476,7 +487,7 @@ class OpenAICompatibleLLM:
                     "properties": {
                         "action": {
                             "type": "string",
-                            "enum": list(d.actions.keys()),
+                            "enum": [],
                         }
                     },
                     "required": ["action"],
@@ -486,7 +497,7 @@ class OpenAICompatibleLLM:
                     "type": "function",
                     "function": {
                         "name": d.name,
-                        "description": f"{d.description}\nActions:\n{actions_doc}",
+                        "description": f"{d.description}\nCurrently allowed actions:\n{actions_doc}",
                         "parameters": params,
                     },
                 }
@@ -553,7 +564,7 @@ class OpenAICompatibleLLM:
 
         names = [t.get("name") for t in (visible_tools or []) if t.get("name")]
         if self.hierarchical:
-            tools_schema = self._domain_tool_schemas(names)
+            tools_schema = self._domain_tool_schemas(visible_tools or [])
         else:
             tools_schema = self._flat_tool_schemas(names)
 

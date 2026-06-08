@@ -14,7 +14,7 @@
   },
   "expected_behavior": "success",
   "expected_final_state_diff": {
-    "match_mode": "subset",
+    "match_mode": "key_fields",
     "added_or_modified": {
       "scripts.pt_comp_01_change.trigger": "on_change",
       "scripts.pt_comp_01_change.bound_tag": "PT_COMP_01",

@@ -13,7 +13,7 @@
   },
   "expected_behavior": "success",
   "expected_final_state_diff": {
-    "match_mode": "subset",
+    "match_mode": "key_fields",
     "added_or_modified": {
       "scripts.heartbeat_check.trigger": "periodic",
       "scripts.heartbeat_check.period_s": 60.0,

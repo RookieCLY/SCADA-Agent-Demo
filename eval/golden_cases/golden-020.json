@@ -32,7 +32,7 @@
   },
   "expected_behavior": "success",
   "expected_final_state_diff": {
-    "match_mode": "subset",
+    "match_mode": "key_fields",
     "added_or_modified": {
       "pages.backup.name": "备用画面",
       "pages.backup.resolution": [
@@ -40,8 +40,14 @@
         1080
       ],
       "pages.backup.widgets.w1.type": "text",
-      "pages.backup.widgets.w1.position": [0, 0],
-      "pages.backup.widgets.w1.size": [10, 10],
+      "pages.backup.widgets.w1.position": [
+        0,
+        0
+      ],
+      "pages.backup.widgets.w1.size": [
+        10,
+        10
+      ],
       "pages.backup.widgets.w1.page_id": "backup"
     },
     "removed": [],

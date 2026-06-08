@@ -20,7 +20,7 @@
   },
   "expected_behavior": "success",
   "expected_final_state_diff": {
-    "match_mode": "subset",
+    "match_mode": "key_fields",
     "added_or_modified": {
       "pages.pump_panel.widgets.maint_banner.type": "text",
       "pages.pump_panel.widgets.maint_banner.bindings.visible": "MAINT_MODE"

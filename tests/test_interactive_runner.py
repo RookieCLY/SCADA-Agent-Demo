@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import io
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -170,3 +171,59 @@ def test_create_session_accepts_startup_flags(tmp_path: Path):
 	assert session.show_llm_output is True
 	assert session.show_llm_reasoning is True
 	assert session.golden_records
+
+
+@pytest.mark.mock_only
+def test_llm_output_and_reasoning_default_on():
+	session = RunnerSession()
+
+	assert session.show_llm_output is True
+	assert session.show_llm_reasoning is True
+
+
+@pytest.mark.mock_only
+def test_config_picker_numbered_fallback_selects_config(tmp_path: Path):
+	# Non-TTY input (StringIO) drives the numbered fallback path of the picker.
+	session = RunnerSession(
+		results_root=tmp_path / "results",
+		provider_override="mock",
+		model_override="mock",
+	)
+	paths = sorted(Path("configs").glob("*.yaml"))
+	target = next(i for i, path in enumerate(paths) if path.name == "D_minimal.yaml")
+	out = io.StringIO()
+	inp = io.StringIO(f"{target + 1}\n")
+
+	ok, msg, _ = handle_command(session, "config", out, inp)
+
+	assert ok, msg
+	assert session.config_path is not None
+	assert session.config_path.name == "D_minimal.yaml"
+	assert session.agent is not None
+
+
+@pytest.mark.mock_only
+def test_config_picker_blank_input_cancels(tmp_path: Path):
+	session = RunnerSession(results_root=tmp_path / "results")
+	ok, msg = load_config_into_session(session, Path("configs/D_minimal.yaml"))
+	assert ok, msg
+	previous = session.config_path
+
+	out = io.StringIO()
+	inp = io.StringIO("\n")
+	ok, msg, _ = handle_command(session, "config", out, inp)
+
+	assert ok
+	assert "cancel" in msg.lower()
+	assert session.config_path == previous
+
+
+@pytest.mark.mock_only
+def test_config_command_without_input_stream_lists(tmp_path: Path):
+	# --command mode passes no input stream, so bare `config` must just list.
+	session = RunnerSession(results_root=tmp_path / "results")
+
+	ok, msg, _ = handle_command(session, "config")
+
+	assert ok
+	assert "Current config" in msg

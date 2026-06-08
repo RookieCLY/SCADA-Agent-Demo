@@ -17,7 +17,7 @@
   },
   "expected_behavior": "success",
   "expected_final_state_diff": {
-    "match_mode": "subset",
+    "match_mode": "key_fields",
     "added_or_modified": {
       "scripts.safety_script.trigger": "on_event",
       "scripts.safety_script.bound_tag": "PI-201",

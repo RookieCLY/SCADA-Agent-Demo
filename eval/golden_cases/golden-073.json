@@ -6,7 +6,7 @@
   "initial_world": {},
   "expected_behavior": "success",
   "expected_final_state_diff": {
-    "match_mode": "subset",
+    "match_mode": "key_fields",
     "added_or_modified": {
       "pages.auto_reactor_panel.name": "反应釜面板",
       "pages.auto_reactor_panel.widgets.tank.type": "tank",

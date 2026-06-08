@@ -251,3 +251,223 @@ def test_evaluate_traces_and_summary():
     assert len(rows) == 1
     assert summary["n"] == 1
     assert summary["final_state_match_rate"] == 1.0
+
+
+def _alarm_call(alarm_id: str, *, priority: str = "medium") -> dict:
+	return {
+		"turn": 1,
+		"selected": "manage_alarms",
+		"action": "create_analog_alarm",
+		"args": {"id": alarm_id, "tag": "PT101", "high_limit": 2.0, "priority": priority},
+		"schema_valid": True,
+		"result_ok": True,
+		"error_code": "OK",
+		"world_diff": {
+			"added_or_modified": {
+				f"alarms.{alarm_id}": {
+					"tag": "PT101",
+					"high_limit": 2.0,
+					"priority": priority,
+				}
+			},
+			"removed": [],
+		},
+		"intended_entities": [f"alarms.{alarm_id}"],
+		"referenced_entities": ["points.PT101"],
+	}
+
+
+def _alarm_golden(match_mode: str) -> GoldenRecord:
+	return _golden(
+		{
+			"expected_final_state_diff": {
+				"match_mode": match_mode,
+				"added_or_modified": {
+					"alarms.alarm_PT101_hi.tag": "PT101",
+					"alarms.alarm_PT101_hi.high_limit": 2.0,
+					"alarms.alarm_PT101_hi.priority": "medium",
+				},
+				"removed": [],
+				"unchanged_keys_must_remain": [],
+			},
+			"expected_trajectory": {
+				"min_steps": 1,
+				"max_steps": 3,
+				"required_tools": ["manage_alarms"],
+				"required_actions": ["create_analog_alarm"],
+				"forbidden_tools": [],
+				"terminal_state": "DONE",
+			},
+		}
+	)
+
+
+def test_key_fields_accepts_generated_entity_id():
+	# Model picked its own ID (alarm_pt101_high) instead of the symbolic
+	# expected ID (alarm_PT101_hi); semantic fields match, so it should pass.
+	golden = _alarm_golden("key_fields")
+	trace = _trace([_alarm_call("alarm_pt101_high")])
+
+	row = evaluate_trace(trace, golden)
+
+	assert row["final_state_match"] is True
+	assert row["parameter_match"] == 1.0
+	assert row["task_success"] is True
+	assert row["final_state_report"]["entity_aliases"] == {
+		"alarms.alarm_PT101_hi": "alarms.alarm_pt101_high"
+	}
+
+
+def test_key_fields_rejects_wrong_semantic_field():
+	# Generated ID differs AND priority is wrong -> no alias may form.
+	golden = _alarm_golden("key_fields")
+	trace = _trace([_alarm_call("alarm_pt101_high", priority="high")])
+
+	row = evaluate_trace(trace, golden)
+
+	assert row["final_state_match"] is False
+	assert row["parameter_match"] < 1.0
+
+
+def test_subset_mode_still_requires_exact_entity_id():
+	# subset must remain exact-path: a different generated ID is a miss.
+	golden = _alarm_golden("subset")
+	trace = _trace([_alarm_call("alarm_pt101_high")])
+
+	row = evaluate_trace(trace, golden)
+
+	assert row["final_state_match"] is False
+	assert row["parameter_match"] == 0.0
+
+
+def test_key_fields_accepts_generated_widget_id_within_same_page():
+	golden = _golden(
+		{
+			"domain": "graphics",
+			"expected_final_state_diff": {
+				"match_mode": "key_fields",
+				"added_or_modified": {
+					"pages.main_page.widgets.w_text1.type": "text",
+					"pages.main_page.widgets.w_text1.style.text": "欢迎",
+				},
+				"removed": [],
+				"unchanged_keys_must_remain": [],
+			},
+		}
+	)
+	trace = _trace(
+		[
+			{
+				"turn": 1,
+				"selected": "manage_widgets",
+				"action": "create_widget",
+				"schema_valid": True,
+				"result_ok": True,
+				"error_code": "OK",
+				"world_diff": {
+					"added_or_modified": {
+						"pages.main_page.widgets.text_auto_7": {
+							"type": "text",
+							"style": {"text": "欢迎"},
+						}
+					},
+					"removed": [],
+				},
+			}
+		]
+	)
+
+	row = evaluate_trace(trace, golden)
+
+	assert row["final_state_match"] is True
+	assert row["parameter_match"] == 1.0
+	assert row["final_state_report"]["entity_aliases"] == {
+		"pages.main_page.widgets.w_text1": "pages.main_page.widgets.text_auto_7"
+	}
+
+
+def test_key_fields_does_not_alias_point_tags():
+	golden = _golden(
+		{
+			"expected_final_state_diff": {
+				"match_mode": "key_fields",
+				"added_or_modified": {"points.PT101.type": "analog"},
+				"removed": [],
+				"unchanged_keys_must_remain": [],
+			},
+		}
+	)
+	trace = _trace(
+		[
+			{
+				"turn": 1,
+				"selected": "manage_points",
+				"action": "create_point",
+				"schema_valid": True,
+				"result_ok": True,
+				"error_code": "OK",
+				"world_diff": {
+					"added_or_modified": {"points.PT102": {"type": "analog"}},
+					"removed": [],
+				},
+			}
+		]
+	)
+
+	row = evaluate_trace(trace, golden)
+
+	assert row["final_state_match"] is False
+	assert row["parameter_match"] == 0.0
+
+
+def test_key_fields_cascades_page_alias_to_nested_widget():
+	golden = _golden(
+		{
+			"domain": "graphics",
+			"expected_final_state_diff": {
+				"match_mode": "key_fields",
+				"added_or_modified": {
+					"pages.pump_station.name": "泵站画面",
+					"pages.pump_station.widgets.pump1.type": "pump",
+					"pages.pump_station.widgets.pump1.bindings.state": "PumpA",
+				},
+				"removed": [],
+				"unchanged_keys_must_remain": [],
+			},
+		}
+	)
+	trace = _trace(
+		[
+			{
+				"turn": 1,
+				"selected": "manage_pages",
+				"action": "create_page",
+				"schema_valid": True,
+				"result_ok": True,
+				"error_code": "OK",
+				"world_diff": {
+					"added_or_modified": {
+						"pages.pump_auto": {
+							"name": "泵站画面",
+							"widgets": {
+								"pump_auto_1": {
+									"type": "pump",
+									"bindings": {"state": "PumpA"},
+								}
+							},
+						}
+					},
+					"removed": [],
+				},
+			}
+		]
+	)
+
+	row = evaluate_trace(trace, golden)
+
+	assert row["final_state_match"] is True
+	assert row["parameter_match"] == 1.0
+	assert row["final_state_report"]["entity_aliases"] == {
+		"pages.pump_station": "pages.pump_auto",
+		"pages.pump_station.widgets.pump1": "pages.pump_auto.widgets.pump_auto_1",
+	}

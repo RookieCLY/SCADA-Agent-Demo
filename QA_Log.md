@@ -1,3 +1,35 @@
+## 2026/06/05 — how task_success_rate is computed in eval metrics
+
+**My original question:** task_success_rate是怎么算的
+
+**Core answer:** `task_success_rate` is the fraction of metric rows whose boolean `task_success` is true. Per trace, `task_success` is computed deterministically from the golden record behavior: for `success`, final state must match, expected error-code condition must match, and trajectory must match if specified; for `reject` or `ask_for_clarification`, final state must match, no world mutation may occur, and trajectory must match if specified; for `fail_or_clarify`, final state must match, plus either expected error-code matches or no world mutation occurs, and trajectory must match if specified. In run `results/F_full_four_in_one/mock/000002`, there are 114 metric rows, 48 true and 66 false, so `task_success_rate = 48 / 114 = 0.42105263157894735`.
+
+**Relevant citations:** `eval/metrics.py:665-686`; `eval/metrics.py:816-857`; `results/F_full_four_in_one/mock/000002/metrics_summary.json:1-25`
+
+## 2026/06/05 — how to use project LLM-as-Judge
+
+**My original question:** 这个项目的llm-as-judge怎么用
+
+**Core answer:** LLM-as-Judge is the offline semantic scoring layer in `eval/judges.py`; it consumes `traces.jsonl` from `eval.runner`, optionally deterministic `metrics.jsonl` from `eval.metrics`, a rubric markdown file, and writes `judges.jsonl`. Recommended flow: first run `eval.runner` to generate traces, then run `eval.metrics` to compute deterministic evidence, then run `eval.judges` with `--provider xiaomi-mimo` or `--provider openai-compatible`. For xiaomi-mimo/openai-compatible, set `JUDGE_API_KEY`, usually `JUDGE_BASE_URL`, and optionally `JUDGE_MODEL`; `--provider xiaomi-mimo` is internally mapped to the OpenAI-compatible client. `--provider heuristic` is a no-external-LLM baseline, and `--dry-run` only validates/counts inputs without judging.
+
+**Relevant citations:** `eval/judges.py:0-5`; `eval/judges.py:150-156`; `eval/judges.py:170-190`; `eval/judges.py:608-625`; `eval/judges.py:628-653`; `eval/RUNNER_USAGE.md:62-70`; `eval/rubrics/README.md:48-53`
+
+## 2026/06/05 — whether golden test cases need key_fields to enable ID-tolerant matching
+
+**My original question:** do i need to change golden test cases to enable matching
+
+**Core answer:** Yes, for any golden case where the expected entity ID is only symbolic/generated and the user did not specify an exact ID, set `expected_final_state_diff.match_mode` to `"key_fields"`. The new matcher only performs generated-ID aliasing in `key_fields`; `subset` and `strict` intentionally remain exact-path modes. You do not need to change the expected semantic fields themselves, e.g. keep `alarms.alarm_PT101_hi.tag/high_limit/priority`, but change the mode so the evaluator may alias that symbolic prefix to the actual generated prefix when all fields match. Do not use `key_fields` for cases where the ID is user-specified, or for updates/deletes/renames/bindings that target an existing entity and should require exact identity.
+
+**Relevant citations:** `eval/metrics.py:210`; `eval/metrics.py:229-251`; `eval/metrics.py:541-567`; `eval/golden_cases/golden-003.json:15-20`; `eval/rubrics/default.md:72-74`
+
+## 2026/06/05 — whether eval/runner.py retries LLM errors
+
+**My original question:** 当前的eval/runner.py支持llm出错自动重试吗
+
+**Core answer:** Yes. `eval/runner.py` supports automatic reruns for technical failures: `--max-reruns` defaults to 3, and each golden record repetition can run up to `max_reruns + 1` attempts. It catches exceptions from `agent.run(...)` and also treats `terminal_state == "UNKNOWN"` or `early_terminated` as technical failures, retrying until attempts are exhausted. Exhausted failures are written to `_failures.jsonl`; successful completed pairs are skipped on `--resume`, while `UNKNOWN`/early-terminated traces are not counted as completed. This retry logic applies to experiment trace generation, not the offline LLM judge, because this runner deliberately does not run judges.
+
+**Relevant citations:** `eval/runner.py:7-12`; `eval/runner.py:150-164`; `eval/runner.py:171-175`; `eval/runner.py:345-390`; `eval/runner.py:444-445`
+
 ## 2026/06/04 — advice on tolerating generated alarm ID mismatch in judges
 
 **My original question:** in golden-003 i noticed that both llm judge and naive judge detects alarm id mismatch while they means the same semantically. since name is not specified in the query, i don't think this is a fail. i think the judge should be tolerate this, but the current logic cannot achieve this. do you have any advice

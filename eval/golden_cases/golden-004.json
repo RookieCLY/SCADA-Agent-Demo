@@ -13,7 +13,7 @@
   },
   "expected_behavior": "success",
   "expected_final_state_diff": {
-    "match_mode": "subset",
+    "match_mode": "key_fields",
     "added_or_modified": {
       "pages.main_page.widgets.w_text1.type": "text",
       "pages.main_page.widgets.w_text1.style.text": "欢迎"

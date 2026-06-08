@@ -14,7 +14,7 @@
   },
   "expected_behavior": "success",
   "expected_final_state_diff": {
-    "match_mode": "subset",
+    "match_mode": "key_fields",
     "added_or_modified": {
       "alarms.PT_COMP_01_H.tag": "PT_COMP_01",
       "alarms.PT_COMP_01_H.high_limit": 2.8,

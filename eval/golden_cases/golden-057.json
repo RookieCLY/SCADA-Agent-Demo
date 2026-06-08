@@ -23,7 +23,7 @@
   },
   "expected_behavior": "success",
   "expected_final_state_diff": {
-    "match_mode": "subset",
+    "match_mode": "key_fields",
     "added_or_modified": {
       "scripts.pt_comp_01_hh_alarm.trigger": "on_alarm",
       "scripts.pt_comp_01_hh_alarm.bound_tag": "PT_COMP_01",

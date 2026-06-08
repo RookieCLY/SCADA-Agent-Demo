@@ -16,6 +16,7 @@ from agent.config import ExperimentConfig, load_config
 from agent.llm import LLMResponse
 from agent.orchestrator import Agent, assemble, build_demo_world
 from agent.tracer import ToolCallRecord
+from eval._selector import select_from_list
 from eval.schema import GoldenRecord, load_golden_dataset
 from world import MockWorld, Page, Point, Widget, deep_copy_world
 
@@ -53,8 +54,8 @@ class RunnerSession:
 	initial_world_snapshot: dict[str, Any] | None = None
 	last_trace: dict[str, Any] | None = None
 	last_query: str | None = None
-	show_llm_output: bool = False
-	show_llm_reasoning: bool = False
+	show_llm_output: bool = True
+	show_llm_reasoning: bool = True
 	show_world_realtime: bool = True
 	show_trace: bool = True
 	results_root: Path = DEFAULT_RESULTS_ROOT
@@ -218,7 +219,7 @@ def status_text(session: RunnerSession) -> str:
 			"  golden     Load a golden test case",
 			"  world      Create/edit/reset initial world",
 			"  query      Run a query against current world",
-			"  config     Load/switch config",
+			"  config     Pick a config (interactive) or load one by index/path",
 			"  llm        Choose provider/model",
 			"  display    Toggle LLM thought/output/world display",
 			"  inspect    Show current world",
@@ -523,32 +524,56 @@ def handle_display(session: RunnerSession, args: list[str]) -> tuple[bool, str]:
 	return True, f"{target} {'on' if value else 'off'}"
 
 
-def handle_config(session: RunnerSession, args: list[str]) -> tuple[bool, str]:
-	if not args:
-		paths = sorted(Path("configs").glob("*.yaml"))
-		listing = "\n".join(f"  {i + 1}. {path}" for i, path in enumerate(paths)) or "  (none)"
-		return True, f"Current config: {session.config_path or 'not loaded'}\n{listing}"
-	path = Path(args[0])
-	if args[0].isdigit():
-		paths = sorted(Path("configs").glob("*.yaml"))
-		idx = int(args[0]) - 1
-		if idx < 0 or idx >= len(paths):
-			return False, f"Config index out of range: {args[0]}"
-		path = paths[idx]
-	ok, msg = load_config_into_session(session, path)
-	if not ok:
-		return False, msg
+def _describe_config_flags(session: RunnerSession) -> str:
 	arch = session.config.architecture if session.config else None
-	flags = []
-	if arch is not None:
-		flags = [
+	if arch is None:
+		return ""
+	return "\n".join(
+		[
 			f"hierarchical_tools={arch.hierarchical_tools}",
 			f"tool_rag={arch.tool_rag.enabled}",
 			f"workflow={arch.workflow.enabled}",
 			f"state_machine={arch.state_machine.enabled}",
 			f"resources_separation={arch.resources_separation}",
 		]
-	return True, msg + "\n" + "\n".join(flags)
+	)
+
+
+def _load_config_with_flags(session: RunnerSession, path: Path) -> tuple[bool, str]:
+	ok, msg = load_config_into_session(session, path)
+	if not ok:
+		return False, msg
+	flags = _describe_config_flags(session)
+	return True, msg + ("\n" + flags if flags else "")
+
+
+def select_config_interactive(
+	session: RunnerSession, paths: list[Path], out: TextIO, inp: TextIO
+) -> tuple[bool, str]:
+	current = next((i for i, path in enumerate(paths) if path == session.config_path), 0)
+	idx = select_from_list(out, inp, "Select a config:", [path.name for path in paths], current)
+	if idx is None:
+		return True, "Config selection cancelled."
+	return _load_config_with_flags(session, paths[idx])
+
+
+def handle_config(
+	session: RunnerSession, args: list[str], out: TextIO, inp: TextIO | None
+) -> tuple[bool, str]:
+	paths = sorted(Path("configs").glob("*.yaml"))
+	if not args:
+		# Interactive mode opens a picker; non-interactive (--command) just lists.
+		if inp is not None and paths:
+			return select_config_interactive(session, paths, out, inp)
+		listing = "\n".join(f"  {i + 1}. {path}" for i, path in enumerate(paths)) or "  (none)"
+		return True, f"Current config: {session.config_path or 'not loaded'}\n{listing}"
+	path = Path(args[0])
+	if args[0].isdigit():
+		idx = int(args[0]) - 1
+		if idx < 0 or idx >= len(paths):
+			return False, f"Config index out of range: {args[0]}"
+		path = paths[idx]
+	return _load_config_with_flags(session, path)
 
 
 def handle_llm(session: RunnerSession, args: list[str]) -> tuple[bool, str]:
@@ -680,7 +705,9 @@ def handle_golden(session: RunnerSession, args: list[str]) -> tuple[bool, str]:
 	return load_golden_case(session, args[0])
 
 
-def handle_command(session: RunnerSession, line: str, out: TextIO | None = None) -> tuple[bool, str, bool]:
+def handle_command(
+	session: RunnerSession, line: str, out: TextIO | None = None, inp: TextIO | None = None
+) -> tuple[bool, str, bool]:
 	if out is None:
 		out = sys.stdout
 	parts = _split_command(line.strip().lstrip("﻿"))
@@ -707,7 +734,7 @@ def handle_command(session: RunnerSession, line: str, out: TextIO | None = None)
 		ok, msg = handle_display(session, args)
 		return ok, msg, False
 	if cmd == "config":
-		ok, msg = handle_config(session, args)
+		ok, msg = handle_config(session, args, out, inp)
 		return ok, msg, False
 	if cmd == "llm":
 		ok, msg = handle_llm(session, args)
@@ -733,10 +760,8 @@ def create_session(args: argparse.Namespace) -> RunnerSession:
 	)
 	if args.no_world_realtime:
 		session.show_world_realtime = False
-	if args.show_llm_output:
-		session.show_llm_output = True
-	if args.show_reasoning:
-		session.show_llm_reasoning = True
+	session.show_llm_output = args.show_llm_output
+	session.show_llm_reasoning = args.show_reasoning
 	if args.config:
 		ok, msg = load_config_into_session(session, Path(args.config))
 		if not ok:
@@ -764,7 +789,7 @@ def run_repl(session: RunnerSession, *, inp: TextIO = sys.stdin, out: TextIO = s
 		if not line:
 			_print(out, "Goodbye.")
 			return 0
-		ok, msg, should_exit = handle_command(session, line.strip(), out)
+		ok, msg, should_exit = handle_command(session, line.strip(), out, inp)
 		if msg:
 			prefix = "" if ok else "error: "
 			_print(out, prefix + msg)
@@ -779,8 +804,18 @@ def build_parser() -> argparse.ArgumentParser:
 	parser.add_argument("--provider", default="mock", help="LLM provider override")
 	parser.add_argument("--model", default="mock", help="LLM model override")
 	parser.add_argument("--results-root", default=str(DEFAULT_RESULTS_ROOT), help="Interactive trace output root")
-	parser.add_argument("--show-llm-output", action="store_true", help="Print assistant text during runs")
-	parser.add_argument("--show-reasoning", action="store_true", help="Print provider reasoning during runs")
+	parser.add_argument(
+		"--show-llm-output",
+		action=argparse.BooleanOptionalAction,
+		default=True,
+		help="Print assistant text during runs (default: on)",
+	)
+	parser.add_argument(
+		"--show-reasoning",
+		action=argparse.BooleanOptionalAction,
+		default=True,
+		help="Print provider reasoning during runs (default: on)",
+	)
 	parser.add_argument("--no-world-realtime", action="store_true", help="Suppress per-step world display")
 	parser.add_argument("--command", action="append", help="Run a command non-interactively; can be repeated")
 	return parser

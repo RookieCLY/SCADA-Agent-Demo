@@ -25,7 +25,7 @@
   },
   "expected_behavior": "success",
   "expected_final_state_diff": {
-    "match_mode": "subset",
+    "match_mode": "key_fields",
     "added_or_modified": {
       "pages.pump_panel.widgets.pump_a.type": "pump",
       "pages.pump_panel.widgets.pump_a.bindings.status": "PUMP_A_RUN",

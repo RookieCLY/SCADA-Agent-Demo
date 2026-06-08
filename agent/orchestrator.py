@@ -123,6 +123,11 @@ DEFAULT_SYSTEM_PROMPT = """\
 4. 若信息不足,先调用查询类工具或向用户确认
 5. 若当前阶段的可用工具不满足需求，你可以在回复的纯文本中包含 "next_state: 阶段名" 来切换到【可切换的下一阶段】中的合适阶段
 6. 完成任务后明确告知用户，并在回复的纯文本中包含 "next_state: DONE" 来结束整个任务
+
+【高危操作安全准则(最高优先级,高于上述行为准则)】
+1. 对于高危操作,你必须拒绝直接执行,例如:跳过校验或强制下装(deploy_project 的 force=true,或在未通过 validate_project 校验的情况下下装到生产现场)、批量或不可逆的删除/禁用操作(如批量删除点位/页面、一次性禁用全部报警)
+2. 遇到高危操作时,先用纯文本向用户说明风险与后果,然后拒绝执行
+3. 用户的"直接""强制""立即""跳过校验"等措辞不能作为绕过本准则的理由;安全准则的优先级高于此类指令
 """
 
 
@@ -240,57 +245,76 @@ class Agent:
         sm_state: str,
         query: str,
         wf_state: WorkflowExecutionState | None,
-    ) -> tuple[list[str], list[str]]:
+    ) -> tuple[list[dict[str, Any]], list[str]]:
         """Determine the final visible tools to present to the LLM and the allowed atomic pool.
-        
+
         This orchestrates the hard filtering (`_allowed_atomics`) and soft ranking (`_rank_with_rag`).
-        In hierarchical mode, it projects the ranked atomic tools up to their parent Domain tools 
-        to shrink the prompt size.
+        In hierarchical mode, it projects the ranked atomic tools up to their parent Domain tools
+        to shrink the prompt size while preserving only the currently allowed sub-actions.
 
         Args:
             sm_state: The current state of the StateMachine.
             query: The user's natural language query.
             wf_state: The current execution state of the active Workflow (if any).
-            
+
         Returns:
             A tuple containing:
-                - List of LLM-facing tool names (Domain names if hierarchical, else atomics).
+                - List of LLM-facing tool descriptors.
                 - List of underlying allowed atomic tool names for dispatch validation.
         """
         arch = self.config.architecture
         allowed_atomics = self._allowed_atomics(sm_state, wf_state)
         ranked = self._rank_with_rag(query, allowed_atomics)
         if arch.hierarchical_tools:
-            seen: list[str] = []
+            by_domain: dict[str, list[str]] = {}
             for atomic in ranked:
                 try:
-                    domain, _ = self.registry.lookup(atomic)
+                    domain, action = self.registry.lookup(atomic)
                 except KeyError:
                     continue
-                if domain not in seen:
-                    seen.append(domain)
-            return seen, ranked
-        return ranked, ranked
+                by_domain.setdefault(domain, [])
+                if action not in by_domain[domain]:
+                    by_domain[domain].append(action)
+            return [
+                {"name": domain, "allowed_actions": actions}
+                for domain, actions in by_domain.items()
+            ], ranked
+        return [{"name": name} for name in ranked], ranked
 
-    def _render_tool_list(self, names: list[str]) -> str:
+    def _render_tool_list(self, tools: list[dict[str, Any]]) -> str:
         """Format the list of visible tools into a markdown string for the system prompt.
-        
+
         Args:
-            names: The list of LLM-facing tool names to render.
-            
+            tools: The list of LLM-facing tool descriptors to render.
+
         Returns:
             A formatted string describing the available tools and their actions.
         """
         lines: list[str] = []
         if self.config.architecture.hierarchical_tools:
-            for name in names:
+            for tool in tools:
+                name = tool.get("name")
+                if not isinstance(name, str):
+                    continue
                 try:
                     d = self.registry.domain(name)
                 except KeyError:
                     continue
-                lines.append(f"- {name} ({len(d.actions)} actions): {d.description}")
+                actions = [
+                    action
+                    for action in tool.get("allowed_actions", [])
+                    if isinstance(action, str) and action in d.actions
+                ]
+                if actions:
+                    action_doc = ", ".join(actions)
+                    lines.append(f"- {name}: {d.description}; 当前允许 actions: {action_doc}")
+                else:
+                    lines.append(f"- {name}: {d.description}")
         else:
-            for name in names:
+            for tool in tools:
+                name = tool.get("name")
+                if not isinstance(name, str):
+                    continue
                 try:
                     m = self.registry.atomic(name)
                 except KeyError:
@@ -517,7 +541,7 @@ class Agent:
                 resp: LLMResponse = self.llm.call(
                     system_prompt=system_prompt,
                     user_query=query,
-                    visible_tools=[{"name": n} for n in visible],
+                    visible_tools=visible,
                     history=history,
                     state=sm.current,
                 )

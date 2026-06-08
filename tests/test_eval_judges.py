@@ -181,3 +181,34 @@ def test_judge_trace_accepts_static_client_response():
 	assert result.judge_model == "static"
 	assert result.passed is True
 	assert result.raw_response is not None
+
+
+def test_heuristic_judge_tolerates_generated_id_with_key_fields():
+	# golden expects a symbolic ID; the agent generated a different one. With
+	# key_fields the deterministic metrics alias it, so the judge must pass.
+	golden = _golden(
+		{
+			"expected_final_state_diff": {
+				"match_mode": "key_fields",
+				"added_or_modified": {
+					"alarms.alarm_temp101_high.tag": "TEMP_101",
+					"alarms.alarm_temp101_high.high_limit": 80.0,
+				},
+				"removed": [],
+				"unchanged_keys_must_remain": [],
+			},
+		}
+	)
+	trace = _trace([_successful_alarm_call()])
+	metrics = evaluate_trace(trace, golden)
+
+	assert metrics["final_state_match"] is True
+	assert metrics["parameter_match"] == 1.0
+	assert metrics["final_state_report"].get("entity_aliases") == {
+		"alarms.alarm_temp101_high": "alarms.alarm_high_temp_101"
+	}
+
+	result = heuristic_judge(golden, trace, metrics)
+
+	assert result.passed is True
+	assert result.failure_category is None

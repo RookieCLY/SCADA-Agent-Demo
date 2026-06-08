@@ -6,7 +6,7 @@
   "initial_world": {},
   "expected_behavior": "success",
   "expected_final_state_diff": {
-    "match_mode": "subset",
+    "match_mode": "key_fields",
     "added_or_modified": {
       "pages.pump_a_console.name": "泵站A控制台",
       "points.PUMP_A_RUN.type": "digital",

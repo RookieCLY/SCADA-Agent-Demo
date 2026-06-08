@@ -13,7 +13,7 @@
   },
   "expected_behavior": "success",
   "expected_final_state_diff": {
-    "match_mode": "subset",
+    "match_mode": "key_fields",
     "added_or_modified": {
       "scripts.script_pt101.trigger": "on_change",
       "scripts.script_pt101.bound_tag": "PT101"

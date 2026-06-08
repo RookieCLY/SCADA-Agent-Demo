@@ -148,6 +148,29 @@ class JudgeResult(BaseModel):
 		return row
 
 
+def _load_dotenv_into_environ(path: str | Path = ".env") -> None:
+	"""Best-effort .env loader for judge credentials."""
+	p = Path(path)
+	if not p.is_file():
+		return
+	try:
+		from dotenv import load_dotenv
+
+		load_dotenv(dotenv_path=str(p), override=False)
+		return
+	except ImportError:
+		pass
+	for raw in p.read_text(encoding="utf-8").splitlines():
+		line = raw.strip()
+		if not line or line.startswith("#") or "=" not in line:
+			continue
+		key, _, val = line.partition("=")
+		key = key.strip()
+		val = val.strip().strip('"').strip("'")
+		if key and key not in os.environ:
+			os.environ[key] = val
+
+
 class OpenAICompatibleJudgeClient:
 	"""Minimal OpenAI-compatible JSON judge client.
 
@@ -317,7 +340,8 @@ def build_judge_prompts(
 		"deterministic_metrics": dict(deterministic_metrics or {}),
 		"required_output_reminder": {
 			"golden_id": golden.id,
-			"scores": "all numeric scores must be in [0.0, 1.0]",
+			"scores": "task_completion, tool_correctness, parameter_correctness, step_efficiency, communication_quality, and overall must be numeric scores in [0.0, 1.0]; do not return null for these fields",
+			"nullable_fields": "only clarification_or_rejection_quality may be null",
 			"passed": "true only when overall >= 0.8 and no hard gate is triggered",
 			"failure_category_values": list(FAILURE_CATEGORIES),
 		},
@@ -345,6 +369,30 @@ def extract_json_object(text: str) -> dict[str, Any]:
 	return parsed
 
 
+def _coerce_required_score(value: Any, *, field_name: str) -> float:
+	"""Coerce nullable/non-numeric judge scores into a schema-valid fallback."""
+	if isinstance(value, int | float):
+		return max(0.0, min(1.0, float(value)))
+	if value is None:
+		return 0.0
+	try:
+		return max(0.0, min(1.0, float(value)))
+	except (TypeError, ValueError) as exc:
+		raise ValueError(f"{field_name} must be a numeric score") from exc
+
+
+def _normalize_judge_scores(obj: dict[str, Any]) -> None:
+	"""Normalize LLM JSON before strict pydantic validation.
+
+	Some OpenAI-compatible models occasionally emit ``null`` for required score
+	fields despite the schema reminder. Treat null as 0.0 so one malformed field
+	does not abort the whole offline judge run; the raw response is still stored.
+	"""
+	for field in SCORE_FIELDS:
+		if field in obj:
+			obj[field] = _coerce_required_score(obj[field], field_name=field)
+
+
 def parse_judge_response(
 	text: str,
 	*,
@@ -358,6 +406,7 @@ def parse_judge_response(
 	obj = extract_json_object(text)
 	if "golden_id" not in obj:
 		obj["golden_id"] = golden_id
+	_normalize_judge_scores(obj)
 	parsed = RubricJudgeOutput.model_validate(obj)
 	if parsed.golden_id != golden_id:
 		raise ValueError(f"judge returned golden_id={parsed.golden_id!r}, expected {golden_id!r}")
@@ -516,12 +565,11 @@ def judge_trace(
 	provider: str = DEFAULT_PROVIDER,
 ) -> JudgeResult:
 	"""Judge a single trace using either a real client or heuristic fallback."""
-	judge_model = model_name or getattr(client, "model_name", DEFAULT_MODEL)
 	if provider == "heuristic" and client is None:
-		return heuristic_judge(golden, trace, metrics, model_name=judge_model)
+		return heuristic_judge(golden, trace, metrics, model_name=model_name or DEFAULT_MODEL)
 	if client is None:
-		client = OpenAICompatibleJudgeClient(model=judge_model)
-	judge_model = getattr(client, "model_name", judge_model)
+		client = OpenAICompatibleJudgeClient(model=model_name)
+	judge_model = getattr(client, "model_name", model_name or DEFAULT_MODEL)
 	system_prompt, user_prompt = build_judge_prompts(
 		golden,
 		trace,
@@ -571,7 +619,7 @@ def judge_traces(
 	metrics_rows: Sequence[Mapping[str, Any]] | None = None,
 	rubric: str | None = None,
 	provider: str = DEFAULT_PROVIDER,
-	model_name: str | None = DEFAULT_MODEL,
+	model_name: str | None = None,
 	client: JudgeClient | None = None,
 	skip_missing_golden: bool = False,
 	limit: int | None = None,
@@ -580,7 +628,9 @@ def judge_traces(
 	golden_by_id = {record.id: record for record in golden_records}
 	metrics_lookup = _metrics_by_key(metrics_rows or []) if metrics_rows is not None else None
 	results: list[JudgeResult] = []
-	for trace in traces:
+	t0 = time.time()
+	n = len(traces)
+	for i, trace in enumerate(traces):  # noqa: B007
 		query = trace.get("query", {}) or {}
 		golden_id = query.get("golden_id")
 		if golden_id not in golden_by_id:
@@ -589,20 +639,27 @@ def judge_traces(
 			raise KeyError(f"Trace references unknown golden_id: {golden_id!r}")
 		golden = golden_by_id[golden_id]
 		metrics = _lookup_metrics(trace, golden, metrics_lookup)
-		results.append(
-			judge_trace(
-				golden,
-				trace,
-				metrics=metrics,
-				rubric=rubric,
-				client=client,
-				model_name=model_name,
-				provider=provider,
-			)
+		result = judge_trace(
+			golden,
+			trace,
+			metrics=metrics,
+			rubric=rubric,
+			client=client,
+			model_name=model_name,
+			provider=provider,
 		)
+		results.append(result)
+		elapsed = time.time() - t0
+		avg = elapsed / len(results)
+		remaining = avg * (n - len(results))
+		print(
+			f"  [{len(results)}/{n}] {golden_id} overall={result.overall:.2f}"
+			f" passed={result.passed} ({elapsed:.0f}s elapsed, ~{remaining:.0f}s left)",
+			flush=True,
+		)
+		yield result
 		if limit is not None and len(results) >= limit:
 			break
-	return results
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -629,6 +686,7 @@ def main(argv: list[str] | None = None) -> int:
 	parser = build_parser()
 	args = parser.parse_args(argv)
 	try:
+		_load_dotenv_into_environ()
 		records = load_golden_dataset(args.dataset)
 		traces = load_jsonl(args.traces)
 		if args.limit is not None:
@@ -639,18 +697,26 @@ def main(argv: list[str] | None = None) -> int:
 			print(f"loaded records={len(records)} traces={len(traces)} provider={args.provider}")
 			return 0
 		provider = "openai-compatible" if args.provider == "xiaomi-mimo" else args.provider
-		results = judge_traces(
-			traces,
-			records,
-			metrics_rows=metrics_rows,
-			rubric=rubric,
-			provider=provider,
-			model_name=args.model,
-			skip_missing_golden=args.skip_missing_golden,
-		)
-		write_jsonl(args.output, (result.to_json_row() for result in results))
-		passed = sum(1 for result in results if result.passed)
-		print(f"judged={len(results)} passed={passed} output={args.output}")
+		output_path = Path(args.output)
+		output_path.parent.mkdir(parents=True, exist_ok=True)
+		with output_path.open("w", encoding="utf-8") as fout:
+			n_written = 0
+			n_passed = 0
+			for result in judge_traces(
+				traces,
+				records,
+				metrics_rows=metrics_rows,
+				rubric=rubric,
+				provider=provider,
+				model_name=args.model,
+				skip_missing_golden=args.skip_missing_golden,
+			):
+				fout.write(json.dumps(result.to_json_row(), ensure_ascii=False, default=str) + "\n")
+				fout.flush()
+				n_written += 1
+				if result.passed:
+					n_passed += 1
+		print(f"judged={n_written} passed={n_passed} output={args.output}")
 	except (OSError, KeyError, RuntimeError, ValidationError, json.JSONDecodeError, ValueError) as exc:
 		print(f"Error: {exc}", file=sys.stderr)
 		return 2
