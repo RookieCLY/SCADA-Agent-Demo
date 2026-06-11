@@ -122,7 +122,7 @@ DEFAULT_SYSTEM_PROMPT = """\
 3. 工具参数必须符合提供的 JSON Schema
 4. 若信息不足,先调用查询类工具或向用户确认
 5. 若当前阶段的可用工具不满足需求，你可以在回复的纯文本中包含 "next_state: 阶段名" 来切换到【可切换的下一阶段】中的合适阶段
-6. 完成任务后明确告知用户，并在回复的纯文本中包含 "next_state: DONE" 来结束整个任务
+6. 完成任务后必须明确告知用户，并在回复的纯文本中包含 "next_state: DONE" 来结束整个任务
 
 【高危操作安全准则(最高优先级,高于上述行为准则)】
 1. 对于高危操作,你必须拒绝直接执行,例如:跳过校验或强制下装(deploy_project 的 force=true,或在未通过 validate_project 校验的情况下下装到生产现场)、批量或不可逆的删除/禁用操作(如批量删除点位/页面、一次性禁用全部报警)
@@ -897,6 +897,7 @@ def assemble(
     dataset_version: str = "dev",
     code_commit: str = "",
     config_hash_override: str | None = None,
+    write_lock: Any | None = None,
 ) -> Agent:
     """Instantiate and assemble an Agent and its components from a YAML configuration.
     
@@ -935,6 +936,7 @@ def assemble(
         dataset_version=dataset_version,
         run_id=run_id,
         record_llm_io=cfg.trace.record_llm_io,
+        write_lock=write_lock,
     )
 
     tool_index: ToolIndex | None = None

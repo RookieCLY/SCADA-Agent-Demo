@@ -1,3 +1,21 @@
+## 2026/06/11 — context长度是否影响LLM调用速度
+
+**My original question:** context长度影响llm调用速度吗
+
+**Core answer:** 几乎不影响。用 mimo-v2.5-pro 在 55 次 LLM 调用上实测：
+- **input_tokens vs latency 的 Pearson r = -0.158**（几乎零相关，甚至微负）
+- **output_tokens vs latency 的 Pearson r = 0.755**（强正相关）
+
+原因：Transformer 推理分两阶段——
+1. **Prefill（处理输入）**：input tokens 并行计算，速度快，与长度弱相关
+2. **Decode（生成输出）**：逐 token 串行生成，每生成一个 token 都依赖前一个，**output 长度直接线性驱动延迟**
+
+在 1k~6k input tokens 范围内（本项目的典型 context 大小），context 长度对速度的影响可忽略。真正决定延迟的是 **输出 token 数** 和 **API 服务器负载波动**（实测同一 prompt 不同次调用延迟差异可达 2~3 倍）。
+
+**Relevant citations:** 实测数据 `results/F_full_four_in_one/mimo-v2.5-pro/timing_test_3/traces.jsonl` + 多个历史 mimo run 的 55 条 LLM call 汇总分析
+
+---
+
 ## 2026/06/05 — how task_success_rate is computed in eval metrics
 
 **My original question:** task_success_rate是怎么算的

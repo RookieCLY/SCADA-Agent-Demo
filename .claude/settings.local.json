@@ -83,7 +83,8 @@
       "PowerShell(.\\\\.venv\\\\Scripts\\\\python.exe -m ruff check eval\\\\interactive_runner.py tests\\\\test_interactive_runner.py agent\\\\orchestrator.py)",
       "PowerShell(.\\\\.venv\\\\Scripts\\\\python.exe -m pytest tests\\\\test_e2e.py tests\\\\test_phase2_e2e.py tests\\\\test_eval_metrics.py tests\\\\test_eval_judges.py tests\\\\test_interactive_runner.py -q)",
       "PowerShell(uv run *)",
-      "PowerShell($names = @\\('JUDGE_API_KEY','JUDGE_BASE_URL','JUDGE_MODEL','XIAOMI_MIMO_API_KEY','XIAOMI_MIMO_API_URL','XIAOMI_MIMO_MODEL','XIAOMI-MIMO_API_KEY','XIAOMI-MIMO_API_URL','XIAOMI-MIMO_MODEL','OPENAI_API_KEY','OPENAI_BASE_URL','OPENAI_MODEL'\\); foreach \\($name in $names\\) { $value = [Environment]::GetEnvironmentVariable\\($name\\); if \\($value\\) { \"$name=set\" } else { \"$name=missing\" } })"
+      "PowerShell($names = @\\('JUDGE_API_KEY','JUDGE_BASE_URL','JUDGE_MODEL','XIAOMI_MIMO_API_KEY','XIAOMI_MIMO_API_URL','XIAOMI_MIMO_MODEL','XIAOMI-MIMO_API_KEY','XIAOMI-MIMO_API_URL','XIAOMI-MIMO_MODEL','OPENAI_API_KEY','OPENAI_BASE_URL','OPENAI_MODEL'\\); foreach \\($name in $names\\) { $value = [Environment]::GetEnvironmentVariable\\($name\\); if \\($value\\) { \"$name=set\" } else { \"$name=missing\" } })",
+      "PowerShell(Test-Path *)"
     ]
   }
 }

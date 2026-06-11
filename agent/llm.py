@@ -479,7 +479,12 @@ class OpenAICompatibleLLM:
                     }
                 )
             if branches:
-                params: dict[str, Any] = {"oneOf": branches}
+                # Wrap oneOf inside a proper object schema — some providers
+                # (e.g. DeepSeek) reject top-level schemas without "type".
+                params: dict[str, Any] = {
+                    "type": "object",
+                    "oneOf": branches,
+                }
             else:
                 # Domain with no actions — defensive fallback.
                 params = {
@@ -530,10 +535,17 @@ class OpenAICompatibleLLM:
             while i >= 0 and history[i].get("role") in ("tool", "user"):
                 buf.append(history[i])
                 i -= 1
+            # Two-pass: tool messages first (must immediately follow the
+            # assistant's tool_calls for strict providers like DeepSeek),
+            # then user messages (e.g. state-transition nudges).
+            tool_buf: list[dict[str, Any]] = []
+            user_buf: list[dict[str, Any]] = []
             for h in reversed(buf):
                 if h.get("role") == "user":
-                    self._messages.append({"role": "user", "content": h.get("content") or ""})
-                    continue
+                    user_buf.append(h)
+                else:
+                    tool_buf.append(h)
+            for h in tool_buf:
                 tname = h.get("name") or ""
                 tid = self._pending_tool_ids.get(tname)
                 if not tid:
@@ -560,6 +572,8 @@ class OpenAICompatibleLLM:
                         "content": json.dumps(payload, ensure_ascii=False),
                     }
                 )
+            for h in user_buf:
+                self._messages.append({"role": "user", "content": h.get("content") or ""})
             self._pending_tool_ids.clear()
 
         names = [t.get("name") for t in (visible_tools or []) if t.get("name")]
@@ -673,6 +687,25 @@ def build_llm(
         if not base_url:
             raise RuntimeError(
                 "xiaomi-mimo: missing XIAOMI-MIMO_API_URL (set it in .env or env)."
+            )
+        hierarchical = arch.hierarchical_tools if arch is not None else False
+        return OpenAICompatibleLLM(
+            model=model_name,
+            api_key=api_key,
+            base_url=base_url,
+            temperature=cfg.temperature,
+            max_tokens=cfg.max_tokens,
+            registry=registry,
+            hierarchical=hierarchical,
+        )
+    if cfg.provider == "deepseek":
+        _load_dotenv_into_environ()
+        api_key = _env("DEEPSEEK_API_KEY")
+        base_url = _env("DEEPSEEK_API_URL") or "https://api.deepseek.com/v1"
+        model_name = cfg.name or "deepseek-chat"
+        if not api_key:
+            raise RuntimeError(
+                "deepseek: missing DEEPSEEK_API_KEY (set it in .env or env)."
             )
         hierarchical = arch.hierarchical_tools if arch is not None else False
         return OpenAICompatibleLLM(

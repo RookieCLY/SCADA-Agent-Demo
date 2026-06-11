@@ -8,11 +8,15 @@ A ``Tracer`` instance corresponds to a single experiment *run* (one
 ``config × model × seed`` tuple). Inside the run, every query opens a
 ``TraceContext`` that accumulates tool / LLM / resource events and flushes
 exactly one JSONL line on close.
+
+Thread safety: pass ``write_lock=threading.Lock()`` to serialise writes across
+multiple tracer instances that share the same output files.
 """
 from __future__ import annotations
 
 import json
 import os
+import threading
 import time
 import uuid
 from contextlib import contextmanager
@@ -216,6 +220,7 @@ class Tracer:
         dataset_version: str = "dev",
         run_id: str | None = None,
         record_llm_io: bool = False,
+        write_lock: threading.Lock | None = None,
     ) -> None:
         self.config_name = config_name
         self.model_name = model_name
@@ -224,6 +229,7 @@ class Tracer:
         self.code_commit = code_commit
         self.dataset_version = dataset_version
         self.run_id = run_id or _new_trace_id()[:8]
+        self._write_lock = write_lock
 
         root = Path(results_root) / config_name / model_name / self.run_id
         root.mkdir(parents=True, exist_ok=True)
@@ -293,8 +299,14 @@ class Tracer:
                 )
 
     def _write(self, record: dict[str, Any]) -> None:
-        with self.traces_path.open("a", encoding="utf-8") as f:
-            f.write(json.dumps(record, ensure_ascii=False, default=str) + "\n")
+        if self._write_lock is not None:
+            self._write_lock.acquire()
+        try:
+            with self.traces_path.open("a", encoding="utf-8") as f:
+                f.write(json.dumps(record, ensure_ascii=False, default=str) + "\n")
+        finally:
+            if self._write_lock is not None:
+                self._write_lock.release()
         if self._langfuse:  # pragma: no cover
             try:
                 self._langfuse.trace(

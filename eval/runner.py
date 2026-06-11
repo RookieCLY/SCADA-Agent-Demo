@@ -15,13 +15,16 @@ merged by aggregation scripts.
 from __future__ import annotations
 
 import argparse
+import concurrent.futures
 import hashlib
 import json
+import os
 import random
 import shutil
 import stat
 import subprocess
 import sys
+import threading
 import time
 from collections.abc import Iterable
 from datetime import UTC, datetime
@@ -35,6 +38,33 @@ from world import MockWorld
 
 DEFAULT_DATASET = "eval/golden_dataset.jsonl"
 DEFAULT_JUDGE_MODEL = "claude-opus-4-7"
+
+
+class RateLimiter:
+    """Simple sliding-window rate limiter (RPM-based).
+
+    Each call to ``acquire()`` blocks until a slot is available within the
+    rolling minute window defined by ``max_per_minute``.
+    """
+
+    def __init__(self, max_per_minute: int) -> None:
+        self._max = max_per_minute
+        self._lock = threading.Lock()
+        self._timestamps: list[float] = []
+
+    def acquire(self) -> None:
+        with self._lock:
+            now = time.monotonic()
+            cutoff = now - 60.0
+            self._timestamps = [t for t in self._timestamps if t > cutoff]
+            while len(self._timestamps) >= self._max:
+                sleep_s = self._timestamps[0] - cutoff + 0.1
+                if sleep_s > 0:
+                    time.sleep(sleep_s)
+                now = time.monotonic()
+                cutoff = now - 60.0
+                self._timestamps = [t for t in self._timestamps if t > cutoff]
+            self._timestamps.append(now)
 
 
 def _utc_iso() -> str:
@@ -238,6 +268,93 @@ def _build_metadata(
     }
 
 
+def _run_one_pair(
+    *,
+    record: GoldenRecord,
+    rep_index: int,
+    seed: int,
+    max_reruns: int,
+    config_path: Path,
+    args: argparse.Namespace,
+    run_id: str,
+    config_hash: str,
+    code_commit: str,
+    write_lock: threading.Lock,
+    rate_limiter: RateLimiter | None,
+) -> dict[str, Any]:
+    """Execute one (golden_id, rep) pair — called from a worker thread.
+
+    Each worker creates its own Agent (because LLM providers hold per-instance
+    mutable message state). A shared ``write_lock`` serialises writes to the
+    shared traces.jsonl / _failures.jsonl so files don't get corrupted.
+    """
+    if rate_limiter is not None:
+        rate_limiter.acquire()
+    agent = assemble(
+        config_path,
+        model_override=args.model,
+        provider_override=args.provider,
+        results_root=args.results_root,
+        run_id=run_id,
+        dataset_version=args.dataset_version,
+        code_commit=code_commit,
+        config_hash_override=config_hash,
+        write_lock=write_lock,
+    )
+
+    max_attempts = max_reruns + 1
+    for attempt_index in range(max_attempts):
+        try:
+            world = _world_from_record(record)
+            result = agent.run(
+                record.query,
+                golden_id=record.id,
+                initial_world=world,
+                rep_index=rep_index,
+                seed=seed,
+                complexity=record.complexity,
+                domain=record.domain,
+            )
+            if _technical_success(result):
+                return {
+                    "status": "completed",
+                    "record_id": record.id,
+                    "rep_index": rep_index,
+                    "terminal": result["execution"]["terminal_state"],
+                    "turns": result["execution"]["total_turns"],
+                }
+            raise RuntimeError(
+                f"technical failure terminal={result['execution']['terminal_state']} "
+                f"reason={result['execution'].get('termination_reason')}"
+            )
+        except Exception as exc:
+            if attempt_index < max_reruns:
+                continue
+            # All attempts exhausted — record failure
+            failure = {
+                "record_id": record.id,
+                "query": record.query,
+                "rep_index": rep_index,
+                "seed": seed,
+                "attempt_index": attempt_index,
+                "max_reruns": max_reruns,
+                "error_type": type(exc).__name__,
+                "error": str(exc),
+                "record": record.model_dump(mode="json"),
+                "created_at": _utc_iso(),
+            }
+            failures_path = agent.tracer.run_dir / "_failures.jsonl"
+            with write_lock:
+                _append_jsonl(failures_path, failure)
+            return {
+                "status": "failed",
+                "record_id": record.id,
+                "rep_index": rep_index,
+                "error_type": type(exc).__name__,
+                "error": str(exc),
+            }
+
+
 def run_experiment(args: argparse.Namespace) -> int:
     config_path = Path(args.config)
     config = load_config(config_path)
@@ -252,6 +369,10 @@ def run_experiment(args: argparse.Namespace) -> int:
     reps = args.reps if args.reps is not None else config.repetitions
     if reps <= 0:
         raise ValueError("--reps must be positive")
+
+    workers = args.workers
+    if workers == 0:
+        workers = os.cpu_count() or 4
 
     seed_base = args.seed_base if args.seed_base is not None else config.seed_base
     selected_records = _select_records(
@@ -273,6 +394,7 @@ def run_experiment(args: argparse.Namespace) -> int:
         str(time.time_ns()),
     )
 
+    # Prime the run directory with one "bootstrap" agent
     agent = assemble(
         config_path,
         model_override=args.model,
@@ -300,10 +422,9 @@ def run_experiment(args: argparse.Namespace) -> int:
     failures_path.touch(exist_ok=True)
 
     started_at = _utc_iso()
-    completed = 0
-    failed = 0
-    retried = 0
-    skipped = 0
+    write_lock = threading.Lock()
+    counters_lock = threading.Lock()
+    counters = {"completed": 0, "failed": 0, "retried": 0, "skipped": 0}
     completed_pairs = _completed_pairs(traces_path) if args.resume else set()
 
     freeze_mode = "filesystem" if args.freeze else "metadata"
@@ -328,68 +449,119 @@ def run_experiment(args: argparse.Namespace) -> int:
     )
     _write_json(meta_path, metadata)
 
+    # Build the work list
+    work_items: list[dict[str, Any]] = []
+    for record in selected_records:
+        for rep_index in range(reps):
+            pair = (record.id, rep_index)
+            if pair in completed_pairs:
+                with counters_lock:
+                    counters["skipped"] += 1
+                continue
+            work_items.append({
+                "record": record,
+                "rep_index": rep_index,
+                "seed": seed_base + rep_index,
+            })
+
     total = len(selected_records) * reps
+    rate_limiter = RateLimiter(args.rate_limit) if args.rate_limit > 0 else None
     print(f"Run directory: {run_dir}")
     print(f"Loaded {len(records)} records; selected {len(selected_records)}; reps={reps}; expected traces={total}")
+    if workers > 1:
+        print(f"Concurrency: {workers} workers over {len(work_items)} work items")
+    if rate_limiter is not None:
+        print(f"Rate limit: {args.rate_limit} RPM")
+
+    if not work_items:
+        print("All pairs already completed — nothing to do.")
+        metadata["status"] = "completed"
+        metadata["completed_at"] = _utc_iso()
+        _write_json(meta_path, metadata)
+        print(f"completed={counters['completed']} skipped={counters['skipped']} failed={counters['failed']}")
+        return 0
+
+    print_idx = [0]  # mutable counter for print-friendly ordering under lock
+
+    def _print_status(result: dict[str, Any]) -> None:
+        with counters_lock:
+            print_idx[0] += 1
+            idx = print_idx[0]
+            if result["status"] == "completed":
+                counters["completed"] += 1
+                tag = "ok"
+                detail = f"terminal={result['terminal']} turns={result['turns']}"
+            elif result["status"] == "skipped":
+                counters["skipped"] += 1
+                tag = "skipped"
+                detail = "(already completed)"
+            else:
+                counters["failed"] += 1
+                tag = "FAIL"
+                detail = f"{result['error_type']}: {result['error']}"
+            print(f"  [{idx}/{len(work_items)}] {result['record_id']} rep={result['rep_index']} {tag} {detail}")
 
     try:
-        for record in selected_records:
-            print(f"\n[{record.id}] {record.query}")
-            for rep_index in range(reps):
-                pair = (record.id, rep_index)
-                if pair in completed_pairs:
-                    skipped += 1
-                    print(f"  - rep {rep_index}: skipped (already completed)")
-                    continue
+        if workers <= 1:
+            # Serial path — simpler output, reuses single agent
+            for item in work_items:
+                record = item["record"]
+                rep_index = item["rep_index"]
+                result = _run_one_pair(
+                    record=record,
+                    rep_index=rep_index,
+                    seed=item["seed"],
+                    max_reruns=args.max_reruns,
+                    config_path=config_path,
+                    args=args,
+                    run_id=run_id,
+                    config_hash=config_hash,
+                    code_commit=code_commit,
+                    write_lock=write_lock,
+                    rate_limiter=rate_limiter,
+                )
+                _print_status(result)
+        else:
+            # Concurrent path
+            with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as executor:
+                future_to_item: dict[concurrent.futures.Future, dict[str, Any]] = {}
+                for item in work_items:
+                    future = executor.submit(
+                        _run_one_pair,
+                        record=item["record"],
+                        rep_index=item["rep_index"],
+                        seed=item["seed"],
+                        max_reruns=args.max_reruns,
+                        config_path=config_path,
+                        args=args,
+                        run_id=run_id,
+                        config_hash=config_hash,
+                        code_commit=code_commit,
+                        write_lock=write_lock,
+                        rate_limiter=rate_limiter,
+                    )
+                    future_to_item[future] = item
 
-                seed = seed_base + rep_index
-                max_attempts = args.max_reruns + 1
-                for attempt_index in range(max_attempts):
-                    prefix = f"  - rep {rep_index}, attempt {attempt_index + 1}/{max_attempts}"
+                for future in concurrent.futures.as_completed(future_to_item):
                     try:
-                        world = _world_from_record(record)
-                        result = agent.run(
-                            record.query,
-                            golden_id=record.id,
-                            initial_world=world,
-                            rep_index=rep_index,
-                            seed=seed,
-                            complexity=record.complexity,
-                            domain=record.domain,
-                        )
-                        terminal = result["execution"]["terminal_state"]
-                        turns = result["execution"]["total_turns"]
-                        if _technical_success(result):
-                            completed += 1
-                            print(f"{prefix}: ok terminal={terminal} turns={turns}")
-                            break
-
-                        raise RuntimeError(
-                            f"technical failure terminal={terminal} reason={result['execution'].get('termination_reason')}"
-                        )
+                        result = future.result()
                     except Exception as exc:
-                        if attempt_index < args.max_reruns:
-                            retried += 1
-                            print(f"{prefix}: retrying after {type(exc).__name__}: {exc}")
-                            continue
-
-                        failed += 1
-                        failure = {
-                            "record_id": record.id,
-                            "query": record.query,
-                            "rep_index": rep_index,
-                            "seed": seed,
-                            "attempt_index": attempt_index,
-                            "max_reruns": args.max_reruns,
+                        item = future_to_item[future]
+                        result = {
+                            "status": "failed",
+                            "record_id": item["record"].id,
+                            "rep_index": item["rep_index"],
                             "error_type": type(exc).__name__,
                             "error": str(exc),
-                            "record": record.model_dump(mode="json"),
-                            "created_at": _utc_iso(),
                         }
-                        _append_jsonl(failures_path, failure)
-                        print(f"{prefix}: failed after retries: {type(exc).__name__}: {exc}")
+                    _print_status(result)
+    except KeyboardInterrupt:
+        print("\nInterrupted — waiting for in-flight workers...")
+        raise
     finally:
-        status = "completed" if failed == 0 else "completed_with_failures"
+        with counters_lock:
+            c = dict(counters)
+        status = "completed" if c["failed"] == 0 else "completed_with_failures"
         metadata = _build_metadata(
             config_path=config_path,
             config_hash=config_hash,
@@ -408,10 +580,10 @@ def run_experiment(args: argparse.Namespace) -> int:
             started_at=started_at,
             completed_at=_utc_iso(),
             status=status,
-            failed_traces=failed,
-            retried_traces=retried,
-            skipped_traces=skipped,
-            completed_traces=completed,
+            failed_traces=c["failed"],
+            retried_traces=c["retried"],
+            skipped_traces=c["skipped"],
+            completed_traces=c["completed"],
             freeze_mode=freeze_mode,
         )
         _write_json(meta_path, metadata)
@@ -419,11 +591,11 @@ def run_experiment(args: argparse.Namespace) -> int:
             _freeze_files(run_dir)
 
     print("\n=== Runner Complete ===")
-    print(f"completed={completed} skipped={skipped} retried={retried} failed={failed}")
+    print(f"completed={counters['completed']} skipped={counters['skipped']} retried={counters['retried']} failed={counters['failed']}")
     print(f"traces={traces_path}")
     print(f"failures={failures_path}")
     print(f"metadata={meta_path}")
-    return 0 if failed == 0 else 1
+    return 0 if counters["failed"] == 0 else 1
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -450,6 +622,19 @@ def build_parser() -> argparse.ArgumentParser:
         "--freeze",
         action="store_true",
         help="Mark result files read-only after completion. Metadata is always marked frozen logically.",
+    )
+    parser.add_argument(
+        "-w",
+        "--workers",
+        type=int,
+        default=1,
+        help="Number of concurrent workers (default: 1, serial). Set to 0 for CPU-count auto-detect.",
+    )
+    parser.add_argument(
+        "--rate-limit",
+        type=int,
+        default=0,
+        help="Max RPM (requests per minute) for LLM calls. 0 = no explicit limit (default: 0).",
     )
     return parser
 
