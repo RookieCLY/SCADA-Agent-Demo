@@ -10,6 +10,7 @@ dependencies = [
     "typing-extensions>=4.9",
     "rank-bm25>=0.2,<1",
     "numpy>=1.20",
+    "openai",
 ]
 
 [project.optional-dependencies]
