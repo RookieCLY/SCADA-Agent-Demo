@@ -1,0 +1,8 @@
+{
+  "config_name": "t",
+  "model": "m",
+  "config_hash": "sha256:abc",
+  "code_commit": "deadbeef",
+  "dataset_version": "dev",
+  "started_at": "2026-06-12T05:32:35.456Z"
+}

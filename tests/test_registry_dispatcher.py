@@ -47,8 +47,8 @@ def test_visible_to_llm_hierarchical(registry: ToolRegistry):
     arch = ArchitectureConfig(hierarchical_tools=True)
     view = registry.visible_to_llm(arch)
     assert all(t["kind"] == "domain" for t in view)
-    # 7 domains: alarms / points / pages / graphics / history / scripts / deployment
-    assert len(view) == 7
+    # 17 domains registered in build_default_registry
+    assert len(view) == 17
     names = {t["name"] for t in view}
     assert names == {
         "manage_alarms",
@@ -58,6 +58,16 @@ def test_visible_to_llm_hierarchical(registry: ToolRegistry):
         "manage_history",
         "manage_scripts",
         "deployment",
+        "manage_devices",
+        "manage_trends",
+        "manage_recipes",
+        "manage_users",
+        "manage_communication",
+        "manage_reports",
+        "manage_schedules",
+        "manage_security",
+        "manage_databases",
+        "manage_notifications",
     }
 
 

@@ -140,6 +140,7 @@ def test_state_machine_filters_alarm_tools_outside_alarm_state(tmp_path: Path):
 
 
 # ============================================================ workflow
+@pytest.mark.mock_only
 def test_workflow_selects_chemical(tmp_path: Path):
     arch = ArchitectureConfig(
         hierarchical_tools=True,
@@ -148,7 +149,7 @@ def test_workflow_selects_chemical(tmp_path: Path):
     )
     # Workflow selection is rules-based and happens before any LLM call —
     # the assertion is unaffected by which provider is wired in.
-    agent = _agent(arch, tmp_path, with_index=False, with_resources=False)
+    agent = _agent(arch, tmp_path, with_index=False, with_resources=False, force_mock=True)
     record = agent.run(
         "帮我建一个化工反应釜监控画面",
         golden_id="g_chem",
@@ -158,12 +159,13 @@ def test_workflow_selects_chemical(tmp_path: Path):
     assert record["workflow"]["selected_workflow"] == "ChemicalProductionScreen"
 
 
+@pytest.mark.mock_only
 def test_workflow_no_match_returns_none(tmp_path: Path):
     arch = ArchitectureConfig(
         workflow=WorkflowConfig(enabled=True, yaml_path=str(WORKFLOWS_DIR)),
         state_machine=StateMachineConfig(enabled=False),
     )
-    agent = _agent(arch, tmp_path, with_index=False, with_resources=False)
+    agent = _agent(arch, tmp_path, with_index=False, with_resources=False, force_mock=True)
     record = agent.run(
         "讲个故事好不好",
         golden_id="g_none",

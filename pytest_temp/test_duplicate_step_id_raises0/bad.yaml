@@ -1,0 +1,13 @@
+
+name: Bad
+trigger:
+  keywords: ["x"]
+steps:
+  - id: a
+    type: llm_step
+    state: ANALYZE_INTENT
+    allowed_tools: [list_pages]
+  - id: a
+    type: llm_step
+    state: ANALYZE_INTENT
+    allowed_tools: [list_points]

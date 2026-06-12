@@ -1,0 +1,15 @@
+architecture:
+  hierarchical_tools: true
+  resources_separation: true
+  state_machine:
+    enabled: true
+  tool_rag:
+    enabled: true
+    top_k: 5
+  workflow:
+    enabled: true
+    yaml_path: C:\Users\20906\.gemini\antigravity\worktrees\SCADA-Agent-Demo\implement-golden-dataset-schema\workflows
+model:
+  name: mock
+  provider: mock
+name: D_test

@@ -1,0 +1,10 @@
+
+name: Bad
+trigger:
+  keywords: ["x"]
+steps:
+  - id: a
+    type: llm_step
+    state: ANALYZE_INTENT
+    depends_on: [ghost]
+    allowed_tools: [list_pages]

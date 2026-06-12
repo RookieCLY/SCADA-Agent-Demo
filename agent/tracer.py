@@ -231,7 +231,7 @@ class Tracer:
         self.run_id = run_id or _new_trace_id()[:8]
         self._write_lock = write_lock
 
-        root = Path(results_root) / config_name / model_name / self.run_id
+        root = Path(results_root) / self.run_id
         root.mkdir(parents=True, exist_ok=True)
         self.run_dir = root
         self.traces_path = root / "traces.jsonl"

@@ -28,11 +28,21 @@ from agent.config import ArchitectureConfig
 from tools import (
     deployment,
     manage_alarms,
+    manage_communication,
+    manage_databases,
+    manage_devices,
     manage_graphics,
     manage_history,
+    manage_notifications,
     manage_pages,
     manage_points,
+    manage_recipes,
+    manage_reports,
+    manage_schedules,
     manage_scripts,
+    manage_security,
+    manage_trends,
+    manage_users,
 )
 from tools._base import MockTool
 
@@ -282,6 +292,66 @@ def build_default_registry() -> ToolRegistry:
         union_model=deployment.DeploymentArgs,
         actions=deployment.DEPLOYMENT_ACTIONS,
         description="Project validation, deployment, rollback, status.",
+    )
+    reg.register_domain(
+        domain="manage_devices",
+        union_model=manage_devices.ManageDevicesArgs,
+        actions=manage_devices.DEVICE_ACTIONS,
+        description="Device catalog: create, update, delete, configure params, status queries.",
+    )
+    reg.register_domain(
+        domain="manage_trends",
+        union_model=manage_trends.ManageTrendsArgs,
+        actions=manage_trends.TREND_ACTIONS,
+        description="Trend curves: create groups, add pens, configure axes, sampling, scroll-back.",
+    )
+    reg.register_domain(
+        domain="manage_recipes",
+        union_model=manage_recipes.ManageRecipesArgs,
+        actions=manage_recipes.RECIPE_ACTIONS,
+        description="Batch recipes: steps, parameters, validation, activation, cloning.",
+    )
+    reg.register_domain(
+        domain="manage_users",
+        union_model=manage_users.ManageUsersArgs,
+        actions=manage_users.USER_ACTIONS,
+        description="User accounts: CRUD, role assignment, permissions, session policy.",
+    )
+    reg.register_domain(
+        domain="manage_communication",
+        union_model=manage_communication.ManageCommunicationArgs,
+        actions=manage_communication.COMM_ACTIONS,
+        description="Communication drivers: configure, start/stop polling, test, reset, stats.",
+    )
+    reg.register_domain(
+        domain="manage_reports",
+        union_model=manage_reports.ManageReportsArgs,
+        actions=manage_reports.REPORT_ACTIONS,
+        description="Report templates: sections, scheduling, generation, format, export.",
+    )
+    reg.register_domain(
+        domain="manage_schedules",
+        union_model=manage_schedules.ManageSchedulesArgs,
+        actions=manage_schedules.SCHEDULE_ACTIONS,
+        description="Scheduled jobs: triggers (cron/interval/event), actions, status.",
+    )
+    reg.register_domain(
+        domain="manage_security",
+        union_model=manage_security.ManageSecurityArgs,
+        actions=manage_security.SECURITY_ACTIONS,
+        description="Security: audit log, compliance checks, password policy, backup/restore.",
+    )
+    reg.register_domain(
+        domain="manage_databases",
+        union_model=manage_databases.ManageDatabasesArgs,
+        actions=manage_databases.DATABASE_ACTIONS,
+        description="External databases: connections, table creation, SQL queries, retention.",
+    )
+    reg.register_domain(
+        domain="manage_notifications",
+        union_model=manage_notifications.ManageNotificationsArgs,
+        actions=manage_notifications.NOTIFICATION_ACTIONS,
+        description="Alarm notifications: rules, escalation, channel config, testing.",
     )
     reg.selfcheck()
     if DEFAULT_GENERATED_EXAMPLES.is_file():

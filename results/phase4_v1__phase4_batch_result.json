@@ -1,0 +1,13 @@
+{
+  "prefix": "phase4_v1",
+  "results": [
+    {
+      "run_id": "phase4_v1_A_flat",
+      "status": "exit-1",
+      "exit_code": 1,
+      "elapsed_s": 6755.1,
+      "cmd": "C:\\Users\\20906\\.gemini\\antigravity\\worktrees\\SCADA-Agent-Demo\\implement-golden-dataset-schema\\.venv\\Scripts\\python.exe -m eval.runner --config configs/A_flat_baseline.yaml --all --reps 5 --provider xiaomi-mimo --run-id phase4_v1_A_flat -w 3 --model mimo-v2.5-pro"
+    }
+  ],
+  "elapsed_s": 6755.1
+}
