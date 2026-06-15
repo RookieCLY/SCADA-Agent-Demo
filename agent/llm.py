@@ -392,7 +392,7 @@ class OpenAICompatibleLLM:
         self.hierarchical = hierarchical
         # cross-turn conversation state
         self._messages: list[dict[str, Any]] = []
-        self._pending_tool_ids: dict[str, str] = {}
+        self._pending_tool_ids: list[tuple[str, str]] = []
         self._first_call = True
 
     def reset(self) -> None:
@@ -403,7 +403,7 @@ class OpenAICompatibleLLM:
         does not bleed messages from a previous query into the next prompt.
         """
         self._messages = []
-        self._pending_tool_ids = {}
+        self._pending_tool_ids = []
         self._first_call = True
 
     # ----------------------------------------- tool schema builders
@@ -547,7 +547,12 @@ class OpenAICompatibleLLM:
                     tool_buf.append(h)
             for h in tool_buf:
                 tname = h.get("name") or ""
-                tid = self._pending_tool_ids.get(tname)
+                tid = None
+                for idx, (name, call_id) in enumerate(self._pending_tool_ids):
+                    if name == tname:
+                        tid = call_id
+                        self._pending_tool_ids.pop(idx)
+                        break
                 if not tid:
                     continue
                 payload: dict[str, Any] = {
@@ -619,7 +624,7 @@ class OpenAICompatibleLLM:
                     args = {}
                 args = _coerce_nested_json_strings(args)
                 tool_calls.append(LLMToolCall(name=fn.name, arguments=args))
-                self._pending_tool_ids[fn.name] = tc.id
+                self._pending_tool_ids.append((fn.name, tc.id))
                 assistant_record["tool_calls"].append(
                     {
                         "id": tc.id,
