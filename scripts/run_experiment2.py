@@ -49,7 +49,8 @@ DEFAULT_TOOL_COUNTS = [30, 100, 300, 500]
 # Concurrency presets per provider  (workers, rate_limit, model)
 PROVIDER_DEFAULTS: dict[str, dict[str, Any]] = {
     "xiaomi-mimo": {"workers": 3, "rate_limit": 0, "model": "mimo-v2.5-pro"},
-    "deepseek":    {"workers": 3, "rate_limit": 0, "model": "deepseek-chat"},
+    "deepseek":    {"workers": 3, "rate_limit": 0, "model": "deepseek-v4-flash"},
+    "openrouter":  {"workers": 3, "rate_limit": 0, "model": "openrouter/owl-alpha"},
 }
 
 RESULT_FILE = "_exp2_tool_count_sweep.json"

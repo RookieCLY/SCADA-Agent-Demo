@@ -924,7 +924,7 @@ def assemble(
     if provider_override:
         cfg.model.provider = provider_override
         
-    registry = build_default_registry()
+    registry = build_default_registry(tool_count=cfg.tool_count)
     llm = build_llm(cfg.model, registry=registry, arch=cfg.architecture)
     cfg_hash = hashlib.sha256(Path(config_path).read_bytes()).hexdigest()
     tracer = Tracer(

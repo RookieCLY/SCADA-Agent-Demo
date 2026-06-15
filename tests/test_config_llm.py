@@ -69,3 +69,30 @@ def test_mock_llm_high_temp_alarm_script():
     args = resp2.tool_calls[0].arguments
     assert args["action"] == "create_analog_alarm"
     assert args["high_limit"] == 80
+
+
+def test_build_llm_openrouter():
+    import os
+    from unittest.mock import patch
+    from agent.config import ModelConfig
+    from agent.llm import OpenAICompatibleLLM
+
+    cfg = ModelConfig(
+        provider="openrouter",
+        name="nvidia/nemotron-3-ultra-550b-a55b:free",
+        temperature=0.0,
+        max_tokens=4096,
+    )
+    original_get = os.environ.get
+    def mock_get(key, default=None):
+        if key == "OPENROUTER_API_KEY":
+            return "test-key"
+        return original_get(key, default)
+
+    with patch.object(os.environ, "get", side_effect=mock_get):
+        llm = build_llm(cfg)
+        assert isinstance(llm, OpenAICompatibleLLM)
+        assert llm.model_name == "nvidia/nemotron-3-ultra-550b-a55b:free"
+        assert llm._client.api_key == "test-key"
+        assert "openrouter.ai" in str(llm._client.base_url)
+

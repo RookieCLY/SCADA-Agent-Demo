@@ -43,7 +43,7 @@ class ArchitectureConfig(BaseModel):
 
 
 class ModelConfig(BaseModel):
-    provider: Literal["mock", "anthropic", "openai", "deepseek", "xiaomi-mimo"] = "mock"
+    provider: Literal["mock", "anthropic", "openai", "deepseek", "xiaomi-mimo", "openrouter"] = "mock"
     name: str = "mock"
     temperature: float = 0.0
     max_tokens: int = 4096
@@ -68,6 +68,7 @@ class ExperimentConfig(BaseModel):
     trace: TraceConfig = Field(default_factory=TraceConfig)
     repetitions: int = 1
     seed_base: int = 42
+    tool_count: int | None = None
 
 
 def load_config(path: str | Path) -> ExperimentConfig:

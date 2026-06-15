@@ -49,6 +49,7 @@ PROVIDER_DEFAULTS: dict[str, dict[str, Any]] = {
     "xiaomi-mimo": {"workers": 3, "rate_limit": 0, "model": "mimo-v2.5-pro",
                      "F_full_workers": 3, "F_full_rpm": 0},
     "deepseek":    {"workers": 3, "rate_limit": 0, "model": "deepseek-v4-flash"},
+    "openrouter":  {"workers": 3, "rate_limit": 0, "model": "openrouter/owl-alpha"},
 }
 
 RESULT_FILE = "_phase4_batch_result.json"

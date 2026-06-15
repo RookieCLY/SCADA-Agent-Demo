@@ -722,6 +722,25 @@ def build_llm(
             registry=registry,
             hierarchical=hierarchical,
         )
+    if cfg.provider == "openrouter":
+        _load_dotenv_into_environ()
+        api_key = _env("OPENROUTER_API_KEY")
+        base_url = _env("OPENROUTER_API_URL") or "https://openrouter.ai/api/v1"
+        model_name = cfg.name or "nvidia/nemotron-3-ultra-550b-a55b:free"
+        if not api_key:
+            raise RuntimeError(
+                "openrouter: missing OPENROUTER_API_KEY (set it in .env or env)."
+            )
+        hierarchical = arch.hierarchical_tools if arch is not None else False
+        return OpenAICompatibleLLM(
+            model=model_name,
+            api_key=api_key,
+            base_url=base_url,
+            temperature=cfg.temperature,
+            max_tokens=cfg.max_tokens,
+            registry=registry,
+            hierarchical=hierarchical,
+        )
     raise NotImplementedError(
         f"Provider {cfg.provider!r} is not wired yet."
     )

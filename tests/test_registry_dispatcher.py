@@ -186,3 +186,42 @@ def test_merge_generated_examples_missing_file_is_noop(tmp_path: Path):
     assert out == {}
     for m in reg.all_atomics():
         assert m.examples == snapshot[m.name]
+
+
+def test_build_default_registry_with_tool_counts():
+    core_tool_names = {
+        'apply_flow_layout', 'bind_point', 'create_analog_alarm', 'create_circle',
+        'create_digital_alarm', 'create_line', 'create_page', 'create_point',
+        'create_rect', 'create_script', 'create_text', 'create_widget',
+        'delete_alarm', 'delete_page', 'delete_point', 'delete_script',
+        'delete_widget', 'deploy_project', 'disable_alarm', 'disable_history',
+        'disable_script', 'enable_alarm', 'enable_history', 'enable_script',
+        'group_widgets', 'list_history', 'list_pages', 'list_points',
+        'list_scripts', 'query_history', 'rename_page', 'rollback_deployment',
+        'set_retention', 'set_threshold', 'set_widget_style', 'show_deployment_status',
+        'update_point', 'update_script_body', 'validate_project'
+    }
+    
+    # 1. tool_count=30: must still retain all 39 core tools
+    reg30 = build_default_registry(tool_count=30)
+    all_names30 = {t.name for t in reg30.all_atomics()}
+    assert len(all_names30) == 39
+    assert core_tool_names.issubset(all_names30)
+    
+    # 2. tool_count=100: exactly 100 tools
+    reg100 = build_default_registry(tool_count=100)
+    all_names100 = {t.name for t in reg100.all_atomics()}
+    assert len(all_names100) == 100
+    assert core_tool_names.issubset(all_names100)
+    
+    # 3. tool_count=300: exactly 300 tools
+    reg300 = build_default_registry(tool_count=300)
+    all_names300 = {t.name for t in reg300.all_atomics()}
+    assert len(all_names300) == 300
+    assert core_tool_names.issubset(all_names300)
+    
+    # 4. tool_count=500: exactly 500 tools
+    reg500 = build_default_registry(tool_count=500)
+    all_names500 = {t.name for t in reg500.all_atomics()}
+    assert len(all_names500) == 500
+    assert core_tool_names.issubset(all_names500)
