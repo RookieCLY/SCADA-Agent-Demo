@@ -1,0 +1,48 @@
+{
+  "prefix": "phase4_v1_ds",
+  "results": [
+    {
+      "run_id": "phase4_v1_ds_A_flat",
+      "status": "ok",
+      "exit_code": 0,
+      "elapsed_s": 8.9,
+      "cmd": "/home/codespace/.python/current/bin/python -m eval.runner --config configs/A_flat_baseline.yaml --all --reps 5 --provider deepseek --run-id phase4_v1_ds_A_flat -w 3 --results-root results/phase4_v1_ds --model deepseek-v4-flash --resume --max-reruns 10"
+    },
+    {
+      "run_id": "phase4_v1_ds_B_hier",
+      "status": "ok",
+      "exit_code": 0,
+      "elapsed_s": 2.3,
+      "cmd": "/home/codespace/.python/current/bin/python -m eval.runner --config configs/B_hierarchical_only.yaml --all --reps 5 --provider deepseek --run-id phase4_v1_ds_B_hier -w 3 --results-root results/phase4_v1_ds --model deepseek-v4-flash --resume --max-reruns 10"
+    },
+    {
+      "run_id": "phase4_v1_ds_C_rag",
+      "status": "ok",
+      "exit_code": 0,
+      "elapsed_s": 1.5,
+      "cmd": "/home/codespace/.python/current/bin/python -m eval.runner --config configs/C_hier_rag.yaml --all --reps 5 --provider deepseek --run-id phase4_v1_ds_C_rag -w 3 --results-root results/phase4_v1_ds --model deepseek-v4-flash --resume --max-reruns 10"
+    },
+    {
+      "run_id": "phase4_v1_ds_D_wf",
+      "status": "ok",
+      "exit_code": 0,
+      "elapsed_s": 2.0,
+      "cmd": "/home/codespace/.python/current/bin/python -m eval.runner --config configs/D_hier_rag_workflow.yaml --all --reps 5 --provider deepseek --run-id phase4_v1_ds_D_wf -w 3 --results-root results/phase4_v1_ds --model deepseek-v4-flash --resume --max-reruns 10"
+    },
+    {
+      "run_id": "phase4_v1_ds_E_sm",
+      "status": "ok",
+      "exit_code": 0,
+      "elapsed_s": 2.0,
+      "cmd": "/home/codespace/.python/current/bin/python -m eval.runner --config configs/E_with_state_machine.yaml --all --reps 5 --provider deepseek --run-id phase4_v1_ds_E_sm -w 3 --results-root results/phase4_v1_ds --model deepseek-v4-flash --resume --max-reruns 10"
+    },
+    {
+      "run_id": "phase4_v1_ds_F_full",
+      "status": "ok",
+      "exit_code": 0,
+      "elapsed_s": 2.0,
+      "cmd": "/home/codespace/.python/current/bin/python -m eval.runner --config configs/F_full_four_in_one.yaml --all --reps 5 --provider deepseek --run-id phase4_v1_ds_F_full -w 3 --results-root results/phase4_v1_ds --model deepseek-v4-flash --resume --max-reruns 10"
+    }
+  ],
+  "elapsed_s": 18.7
+}
