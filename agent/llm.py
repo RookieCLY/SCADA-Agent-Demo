@@ -731,6 +731,24 @@ def build_llm(
             raise RuntimeError(
                 "openrouter: missing OPENROUTER_API_KEY (set it in .env or env)."
             )
+        return OpenAICompatibleLLM(
+            model=model_name,
+            api_key=api_key,
+            base_url=base_url,
+            temperature=cfg.temperature,
+            max_tokens=cfg.max_tokens,
+            registry=registry,
+            hierarchical=hierarchical,
+        )
+    if cfg.provider == "glm":
+        _load_dotenv_into_environ()
+        api_key = _env("GLM_API_KEY")
+        base_url = _env("GLM_API_URL") or "https://open.bigmodel.cn/api/paas/v4"
+        model_name = cfg.name or "glm-4-flash"
+        if not api_key:
+            raise RuntimeError(
+                "glm: missing GLM_API_KEY (set it in .env or env)."
+            )
         hierarchical = arch.hierarchical_tools if arch is not None else False
         return OpenAICompatibleLLM(
             model=model_name,
