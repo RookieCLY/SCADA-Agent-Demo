@@ -1,0 +1,32 @@
+architecture:
+  hierarchical_tools: false
+  resources_separation: false
+  state_machine:
+    enabled: false
+  tool_rag:
+    enabled: false
+  workflow:
+    enabled: false
+description: 'Baseline (paper §3.2) — flat tool surface (all atomics exposed), no
+  state
+
+  machine, no RAG, no workflow. Used as the H1 comparison point for the
+
+  hierarchical configuration. Phase 1 wires the config; the actual sweep needs
+
+  a real LLM (Phase 2).
+
+  '
+model:
+  max_tokens: 4096
+  name: mock
+  provider: mock
+  temperature: 0.0
+name: A_flat_baseline
+repetitions: 1
+seed_base: 42
+tool_count: 500
+trace:
+  record_llm_io: true
+world:
+  backend: memory

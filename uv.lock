@@ -2652,6 +2652,7 @@ full = [
     { name = "pandas" },
     { name = "plotly" },
     { name = "polars" },
+    { name = "scipy" },
     { name = "sentence-transformers" },
 ]
 
@@ -2678,6 +2679,7 @@ requires-dist = [
     { name = "pyyaml", specifier = ">=6.0,<7" },
     { name = "rank-bm25", specifier = ">=0.2,<1" },
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.4" },
+    { name = "scipy", marker = "extra == 'full'", specifier = ">=1.11" },
     { name = "sentence-transformers", marker = "extra == 'full'", specifier = ">=2.7" },
     { name = "typing-extensions", specifier = ">=4.9" },
 ]

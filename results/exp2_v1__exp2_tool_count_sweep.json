@@ -1,0 +1,69 @@
+{
+  "experiment": "exp2_tool_count_sweep",
+  "prefix": "exp2_v1",
+  "tool_counts": [
+    30,
+    100,
+    300,
+    500
+  ],
+  "results": [
+    {
+      "run_id": "exp2_v1_tc30_A_flat_deepseek",
+      "status": "ok",
+      "exit_code": 0,
+      "elapsed_s": 1.2,
+      "cmd": "C:\\Users\\5004\\OneDrive - University of Illinois - Urbana\\桌面\\Code\\202605\\Current_Demo\\.venv\\Scripts\\python.exe -m eval.runner --config C:\\Users\\5004\\AppData\\Local\\Temp\\exp2_sweep_o1ojht35.yaml --dataset-sample=50 --reps 3 --provider deepseek --run-id exp2_v1_tc30_A_flat_deepseek -w 3 --results-root results/exp2_v1 --model deepseek-v4-flash --max-reruns 10 --resume"
+    },
+    {
+      "run_id": "exp2_v1_tc30_D_wf_deepseek",
+      "status": "ok",
+      "exit_code": 0,
+      "elapsed_s": 1.0,
+      "cmd": "C:\\Users\\5004\\OneDrive - University of Illinois - Urbana\\桌面\\Code\\202605\\Current_Demo\\.venv\\Scripts\\python.exe -m eval.runner --config C:\\Users\\5004\\AppData\\Local\\Temp\\exp2_sweep_ttdhy871.yaml --dataset-sample=50 --reps 3 --provider deepseek --run-id exp2_v1_tc30_D_wf_deepseek -w 3 --results-root results/exp2_v1 --model deepseek-v4-flash --max-reruns 10 --resume"
+    },
+    {
+      "run_id": "exp2_v1_tc100_A_flat_deepseek",
+      "status": "ok",
+      "exit_code": 0,
+      "elapsed_s": 1.2,
+      "cmd": "C:\\Users\\5004\\OneDrive - University of Illinois - Urbana\\桌面\\Code\\202605\\Current_Demo\\.venv\\Scripts\\python.exe -m eval.runner --config C:\\Users\\5004\\AppData\\Local\\Temp\\exp2_sweep_7146kq_d.yaml --dataset-sample=50 --reps 3 --provider deepseek --run-id exp2_v1_tc100_A_flat_deepseek -w 3 --results-root results/exp2_v1 --model deepseek-v4-flash --max-reruns 10 --resume"
+    },
+    {
+      "run_id": "exp2_v1_tc100_D_wf_deepseek",
+      "status": "ok",
+      "exit_code": 0,
+      "elapsed_s": 1.2,
+      "cmd": "C:\\Users\\5004\\OneDrive - University of Illinois - Urbana\\桌面\\Code\\202605\\Current_Demo\\.venv\\Scripts\\python.exe -m eval.runner --config C:\\Users\\5004\\AppData\\Local\\Temp\\exp2_sweep_4zs8rodt.yaml --dataset-sample=50 --reps 3 --provider deepseek --run-id exp2_v1_tc100_D_wf_deepseek -w 3 --results-root results/exp2_v1 --model deepseek-v4-flash --max-reruns 10 --resume"
+    },
+    {
+      "run_id": "exp2_v1_tc300_A_flat_deepseek",
+      "status": "ok",
+      "exit_code": 0,
+      "elapsed_s": 1.2,
+      "cmd": "C:\\Users\\5004\\OneDrive - University of Illinois - Urbana\\桌面\\Code\\202605\\Current_Demo\\.venv\\Scripts\\python.exe -m eval.runner --config C:\\Users\\5004\\AppData\\Local\\Temp\\exp2_sweep_xxgjw2bs.yaml --dataset-sample=50 --reps 3 --provider deepseek --run-id exp2_v1_tc300_A_flat_deepseek -w 3 --results-root results/exp2_v1 --model deepseek-v4-flash --max-reruns 10 --resume"
+    },
+    {
+      "run_id": "exp2_v1_tc300_D_wf_deepseek",
+      "status": "ok",
+      "exit_code": 0,
+      "elapsed_s": 1.2,
+      "cmd": "C:\\Users\\5004\\OneDrive - University of Illinois - Urbana\\桌面\\Code\\202605\\Current_Demo\\.venv\\Scripts\\python.exe -m eval.runner --config C:\\Users\\5004\\AppData\\Local\\Temp\\exp2_sweep_dbq1jhvs.yaml --dataset-sample=50 --reps 3 --provider deepseek --run-id exp2_v1_tc300_D_wf_deepseek -w 3 --results-root results/exp2_v1 --model deepseek-v4-flash --max-reruns 10 --resume"
+    },
+    {
+      "run_id": "exp2_v1_tc500_A_flat_deepseek",
+      "status": "ok",
+      "exit_code": 0,
+      "elapsed_s": 1.3,
+      "cmd": "C:\\Users\\5004\\OneDrive - University of Illinois - Urbana\\桌面\\Code\\202605\\Current_Demo\\.venv\\Scripts\\python.exe -m eval.runner --config C:\\Users\\5004\\AppData\\Local\\Temp\\exp2_sweep_t0cz3pu5.yaml --dataset-sample=50 --reps 3 --provider deepseek --run-id exp2_v1_tc500_A_flat_deepseek -w 3 --results-root results/exp2_v1 --model deepseek-v4-flash --max-reruns 10 --resume"
+    },
+    {
+      "run_id": "exp2_v1_tc500_D_wf_deepseek",
+      "status": "ok",
+      "exit_code": 0,
+      "elapsed_s": 1.2,
+      "cmd": "C:\\Users\\5004\\OneDrive - University of Illinois - Urbana\\桌面\\Code\\202605\\Current_Demo\\.venv\\Scripts\\python.exe -m eval.runner --config C:\\Users\\5004\\AppData\\Local\\Temp\\exp2_sweep_u07w1yf8.yaml --dataset-sample=50 --reps 3 --provider deepseek --run-id exp2_v1_tc500_D_wf_deepseek -w 3 --results-root results/exp2_v1 --model deepseek-v4-flash --max-reruns 10 --resume"
+    }
+  ],
+  "elapsed_s": 9.5
+}

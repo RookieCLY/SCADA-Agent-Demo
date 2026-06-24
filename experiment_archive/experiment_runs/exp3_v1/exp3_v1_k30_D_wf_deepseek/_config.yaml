@@ -1,0 +1,34 @@
+architecture:
+  hierarchical_tools: true
+  resources_separation: false
+  state_machine:
+    enabled: false
+  tool_rag:
+    alpha_dense: 0.6
+    enabled: true
+    top_k: 30
+    top_n: 30
+    use_reranker: true
+  workflow:
+    enabled: true
+    yaml_path: workflows
+description: '§3.2 Config D — 分层 + RAG + Workflow,**不含** state_machine,**不含** Resources
+  separation.
+
+  This config exists to isolate H4 (Workflow lift) — vs C it adds only the
+
+  Workflow engine; vs E it removes the state machine; vs F it removes Resources.
+
+  '
+model:
+  max_tokens: 4096
+  name: mock
+  provider: mock
+  temperature: 0.0
+name: D_hier_rag_workflow
+repetitions: 5
+seed_base: 42
+trace:
+  record_llm_io: true
+world:
+  backend: memory

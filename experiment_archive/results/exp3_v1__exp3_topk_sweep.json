@@ -1,0 +1,84 @@
+{
+  "experiment": "exp3_topk_sweep",
+  "prefix": "exp3_v1",
+  "top_k_values": [
+    5,
+    10,
+    15,
+    20,
+    30
+  ],
+  "results": [
+    {
+      "run_id": "exp3_v1_k5_D_wf_xiaomi_mimo",
+      "status": "ok",
+      "exit_code": 0,
+      "elapsed_s": 1.3,
+      "cmd": "C:\\Users\\5004\\OneDrive - University of Illinois - Urbana\\桌面\\Code\\202605\\Current_Demo\\.venv\\Scripts\\python.exe -m eval.runner --config C:\\Users\\5004\\AppData\\Local\\Temp\\exp3_sweep_309jwi0g.yaml --dataset-sample=50 --reps 3 --provider xiaomi-mimo --run-id exp3_v1_k5_D_wf_xiaomi_mimo -w 3 --results-root results/exp3_v1 --model mimo-v2.5-pro --max-reruns 10 --resume"
+    },
+    {
+      "run_id": "exp3_v1_k10_D_wf_xiaomi_mimo",
+      "status": "ok",
+      "exit_code": 0,
+      "elapsed_s": 1.3,
+      "cmd": "C:\\Users\\5004\\OneDrive - University of Illinois - Urbana\\桌面\\Code\\202605\\Current_Demo\\.venv\\Scripts\\python.exe -m eval.runner --config C:\\Users\\5004\\AppData\\Local\\Temp\\exp3_sweep_6v9t5lb1.yaml --dataset-sample=50 --reps 3 --provider xiaomi-mimo --run-id exp3_v1_k10_D_wf_xiaomi_mimo -w 3 --results-root results/exp3_v1 --model mimo-v2.5-pro --max-reruns 10 --resume"
+    },
+    {
+      "run_id": "exp3_v1_k15_D_wf_xiaomi_mimo",
+      "status": "ok",
+      "exit_code": 0,
+      "elapsed_s": 1.3,
+      "cmd": "C:\\Users\\5004\\OneDrive - University of Illinois - Urbana\\桌面\\Code\\202605\\Current_Demo\\.venv\\Scripts\\python.exe -m eval.runner --config C:\\Users\\5004\\AppData\\Local\\Temp\\exp3_sweep_q229a8y2.yaml --dataset-sample=50 --reps 3 --provider xiaomi-mimo --run-id exp3_v1_k15_D_wf_xiaomi_mimo -w 3 --results-root results/exp3_v1 --model mimo-v2.5-pro --max-reruns 10 --resume"
+    },
+    {
+      "run_id": "exp3_v1_k20_D_wf_xiaomi_mimo",
+      "status": "ok",
+      "exit_code": 0,
+      "elapsed_s": 1.3,
+      "cmd": "C:\\Users\\5004\\OneDrive - University of Illinois - Urbana\\桌面\\Code\\202605\\Current_Demo\\.venv\\Scripts\\python.exe -m eval.runner --config C:\\Users\\5004\\AppData\\Local\\Temp\\exp3_sweep_19saa0li.yaml --dataset-sample=50 --reps 3 --provider xiaomi-mimo --run-id exp3_v1_k20_D_wf_xiaomi_mimo -w 3 --results-root results/exp3_v1 --model mimo-v2.5-pro --max-reruns 10 --resume"
+    },
+    {
+      "run_id": "exp3_v1_k30_D_wf_xiaomi_mimo",
+      "status": "ok",
+      "exit_code": 0,
+      "elapsed_s": 1.3,
+      "cmd": "C:\\Users\\5004\\OneDrive - University of Illinois - Urbana\\桌面\\Code\\202605\\Current_Demo\\.venv\\Scripts\\python.exe -m eval.runner --config C:\\Users\\5004\\AppData\\Local\\Temp\\exp3_sweep_g3k6tin2.yaml --dataset-sample=50 --reps 3 --provider xiaomi-mimo --run-id exp3_v1_k30_D_wf_xiaomi_mimo -w 3 --results-root results/exp3_v1 --model mimo-v2.5-pro --max-reruns 10 --resume"
+    },
+    {
+      "run_id": "exp3_v1_k5_D_wf_deepseek",
+      "status": "ok",
+      "exit_code": 0,
+      "elapsed_s": 1.3,
+      "cmd": "C:\\Users\\5004\\OneDrive - University of Illinois - Urbana\\桌面\\Code\\202605\\Current_Demo\\.venv\\Scripts\\python.exe -m eval.runner --config C:\\Users\\5004\\AppData\\Local\\Temp\\exp3_sweep_3b_w87pt.yaml --dataset-sample=50 --reps 3 --provider deepseek --run-id exp3_v1_k5_D_wf_deepseek -w 3 --results-root results/exp3_v1 --model deepseek-v4-flash --max-reruns 10 --resume"
+    },
+    {
+      "run_id": "exp3_v1_k10_D_wf_deepseek",
+      "status": "ok",
+      "exit_code": 0,
+      "elapsed_s": 1.3,
+      "cmd": "C:\\Users\\5004\\OneDrive - University of Illinois - Urbana\\桌面\\Code\\202605\\Current_Demo\\.venv\\Scripts\\python.exe -m eval.runner --config C:\\Users\\5004\\AppData\\Local\\Temp\\exp3_sweep_mx00mrmj.yaml --dataset-sample=50 --reps 3 --provider deepseek --run-id exp3_v1_k10_D_wf_deepseek -w 3 --results-root results/exp3_v1 --model deepseek-v4-flash --max-reruns 10 --resume"
+    },
+    {
+      "run_id": "exp3_v1_k15_D_wf_deepseek",
+      "status": "ok",
+      "exit_code": 0,
+      "elapsed_s": 1.3,
+      "cmd": "C:\\Users\\5004\\OneDrive - University of Illinois - Urbana\\桌面\\Code\\202605\\Current_Demo\\.venv\\Scripts\\python.exe -m eval.runner --config C:\\Users\\5004\\AppData\\Local\\Temp\\exp3_sweep_1ablu94v.yaml --dataset-sample=50 --reps 3 --provider deepseek --run-id exp3_v1_k15_D_wf_deepseek -w 3 --results-root results/exp3_v1 --model deepseek-v4-flash --max-reruns 10 --resume"
+    },
+    {
+      "run_id": "exp3_v1_k20_D_wf_deepseek",
+      "status": "ok",
+      "exit_code": 0,
+      "elapsed_s": 1.3,
+      "cmd": "C:\\Users\\5004\\OneDrive - University of Illinois - Urbana\\桌面\\Code\\202605\\Current_Demo\\.venv\\Scripts\\python.exe -m eval.runner --config C:\\Users\\5004\\AppData\\Local\\Temp\\exp3_sweep_2bw4fhcb.yaml --dataset-sample=50 --reps 3 --provider deepseek --run-id exp3_v1_k20_D_wf_deepseek -w 3 --results-root results/exp3_v1 --model deepseek-v4-flash --max-reruns 10 --resume"
+    },
+    {
+      "run_id": "exp3_v1_k30_D_wf_deepseek",
+      "status": "ok",
+      "exit_code": 0,
+      "elapsed_s": 1.4,
+      "cmd": "C:\\Users\\5004\\OneDrive - University of Illinois - Urbana\\桌面\\Code\\202605\\Current_Demo\\.venv\\Scripts\\python.exe -m eval.runner --config C:\\Users\\5004\\AppData\\Local\\Temp\\exp3_sweep_442bzia3.yaml --dataset-sample=50 --reps 3 --provider deepseek --run-id exp3_v1_k30_D_wf_deepseek -w 3 --results-root results/exp3_v1 --model deepseek-v4-flash --max-reruns 10 --resume"
+    }
+  ],
+  "elapsed_s": 13.1
+}
