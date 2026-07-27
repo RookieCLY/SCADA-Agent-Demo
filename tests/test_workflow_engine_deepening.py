@@ -73,12 +73,15 @@ def _wf(steps, *, name="DeepeningDemo", keywords=("deepening-demo",)):
     )
 
 
-def _agent(tmp_path, catalogue, responses, *, selection="keyword"):
+def _agent(tmp_path, catalogue, responses, *, selection="keyword", rollback=False):
     cfg = ExperimentConfig(
         name="wf_deepening",
         architecture=ArchitectureConfig(
             state_machine=StateMachineConfig(enabled=True),
-            workflow=WorkflowConfig(enabled=True, mode="engine", selection=selection),
+            workflow=WorkflowConfig(
+                enabled=True, mode="engine", selection=selection,
+                rollback_on_failure=rollback,
+            ),
         ),
         model=make_test_model_config(force_mock=True),
     )
@@ -379,3 +382,152 @@ def test_unregistered_predicate_degrades_to_failed_step(tmp_path: Path):
         c["selected"] == "workflow:c" and c["error_code"] == "BUSINESS_RULE"
         for c in record["tool_calls"]
     )
+
+
+# ================================================================ Saga compensation (§4.3.4)
+@pytest.mark.mock_only
+def test_saga_runs_per_step_compensation_in_reverse(tmp_path: Path):
+    """A step declares an inverse action; when a later step fails, the engine
+    undoes only what actually ran — not a blanket world reset."""
+    wf = _wf(
+        [
+            {"id": "s_alarm", "type": "llm_step", "state": "CONFIG_ALARM",
+             "allowed_tools": ["create_analog_alarm"], "must_call_tool": True,
+             "compensate": {"tool": "delete_alarm", "arguments": {"id": "sa1"}}},
+            # This tool_call is missing required args -> SCHEMA_ERROR -> the step
+            # fails, which triggers the Saga unwind of s_alarm.
+            {"id": "s_bad", "type": "tool_call_step", "state": "VALIDATE",
+             "tool": "create_analog_alarm", "arguments": {}},
+        ]
+    )
+    catalogue = WorkflowCatalogue([WorkflowEngine(wf)])
+    agent = _agent(
+        tmp_path, catalogue,
+        [_tool("create_analog_alarm", {"id": "sa1", "tag": "TEMP_101", "high_limit": 80.0})],
+        rollback=True,
+    )
+    world = _world()
+    record = agent.run("deepening-demo saga", initial_world=world)
+
+    assert record["workflow"]["failed_step"] == "s_bad"
+    assert record["workflow"]["rolled_back"] is True
+    # The alarm was created, then compensated away.
+    assert "sa1" not in world.alarms, "per-step compensation should delete the alarm"
+    selected = [c["selected"] for c in record["tool_calls"]]
+    assert "compensate:s_alarm" in selected, "expected a per-step compensation record"
+    # Per-step Saga, not the coarse checkpoint restore.
+    assert "workflow:__saga_rollback__" not in selected
+
+
+@pytest.mark.mock_only
+def test_saga_falls_back_to_checkpoint_when_no_compensation_declared(tmp_path: Path):
+    """Without a declared inverse, rollback still restores the entry world
+    (coarse fallback) — preserving the prior behaviour."""
+    wf = _wf(
+        [
+            {"id": "s_alarm", "type": "llm_step", "state": "CONFIG_ALARM",
+             "allowed_tools": ["create_analog_alarm"], "must_call_tool": True},
+            {"id": "s_bad", "type": "tool_call_step", "state": "VALIDATE",
+             "tool": "create_analog_alarm", "arguments": {}},
+        ]
+    )
+    catalogue = WorkflowCatalogue([WorkflowEngine(wf)])
+    agent = _agent(
+        tmp_path, catalogue,
+        [_tool("create_analog_alarm", {"id": "sa1", "tag": "TEMP_101", "high_limit": 80.0})],
+        rollback=True,
+    )
+    world = _world()
+    record = agent.run("deepening-demo saga-fallback", initial_world=world)
+
+    assert record["workflow"]["rolled_back"] is True
+    assert "sa1" not in world.alarms
+    selected = [c["selected"] for c in record["tool_calls"]]
+    assert "workflow:__saga_rollback__" in selected
+    assert not any(s.startswith("compensate:") for s in selected)
+
+
+# ================================================================ sub-workflow (§4.3.3)
+@pytest.mark.mock_only
+def test_sub_workflow_runs_inline_without_an_llm_turn(tmp_path: Path):
+    child = _wf(
+        [
+            {"id": "c1", "type": "tool_call_step", "state": "CONFIG_ALARM",
+             "tool": "create_analog_alarm",
+             "arguments": {"action": "create_analog_alarm", "id": "child_alarm",
+                           "tag": "TEMP_101", "high_limit": 90.0}},
+        ],
+        name="ChildProc", keywords=("child-proc-never",),
+    )
+    parent = _wf(
+        [
+            {"id": "p1", "type": "sub_workflow_step", "state": "CONFIG_ALARM",
+             "workflow": "ChildProc"},
+        ],
+        name="ParentProc", keywords=("deepening-demo",),
+    )
+    catalogue = WorkflowCatalogue([WorkflowEngine(parent), WorkflowEngine(child)])
+    agent = _agent(tmp_path, catalogue, [])  # no LLM turn should be needed
+    world = _world()
+    record = agent.run("deepening-demo parent", initial_world=world)
+
+    assert record["workflow"]["selected_workflow"] == "ParentProc"
+    assert record["workflow"]["finished"] is True
+    assert "child_alarm" in world.alarms, "the sub-workflow's tool_call should have run"
+    assert any(c["selected"] == "subworkflow:ChildProc" for c in record["tool_calls"])
+    # The scripted LLM has no responses, so it cannot have created the alarm —
+    # the engine did, during entry resolution. The one turn is only the agent's
+    # terminal wrap-up after the workflow had already finished.
+    assert agent.llm.turns <= 1
+
+
+@pytest.mark.mock_only
+def test_unknown_sub_workflow_degrades_to_failed_step(tmp_path: Path):
+    parent = _wf(
+        [
+            {"id": "p1", "type": "sub_workflow_step", "state": "CONFIG_ALARM",
+             "workflow": "NoSuchWorkflow"},
+        ],
+        keywords=("deepening-demo",),
+    )
+    catalogue = WorkflowCatalogue([WorkflowEngine(parent)])
+    agent = _agent(tmp_path, catalogue, [])
+    record = agent.run("deepening-demo missing child", initial_world=_world())
+    assert record["workflow"]["failed_step"] == "p1"
+    assert any(
+        c["selected"] == "subworkflow:NoSuchWorkflow" and c["error_code"] == "BUSINESS_RULE"
+        for c in record["tool_calls"]
+    )
+
+
+@pytest.mark.mock_only
+def test_sub_workflow_compensations_merge_onto_parent(tmp_path: Path):
+    """A child step's compensation is unwound when the *parent* later fails."""
+    child = _wf(
+        [
+            {"id": "c1", "type": "tool_call_step", "state": "CONFIG_ALARM",
+             "tool": "create_analog_alarm",
+             "arguments": {"action": "create_analog_alarm", "id": "child_alarm",
+                           "tag": "TEMP_101", "high_limit": 90.0},
+             "compensate": {"tool": "delete_alarm", "arguments": {"id": "child_alarm"}}},
+        ],
+        name="ChildProc2", keywords=("child-proc-never",),
+    )
+    parent = _wf(
+        [
+            {"id": "p1", "type": "sub_workflow_step", "state": "CONFIG_ALARM",
+             "workflow": "ChildProc2"},
+            {"id": "p_bad", "type": "tool_call_step", "state": "VALIDATE",
+             "tool": "create_analog_alarm", "arguments": {}},  # fails
+        ],
+        name="ParentProc2", keywords=("deepening-demo",),
+    )
+    catalogue = WorkflowCatalogue([WorkflowEngine(parent), WorkflowEngine(child)])
+    agent = _agent(tmp_path, catalogue, [], rollback=True)
+    world = _world()
+    record = agent.run("deepening-demo parent-saga", initial_world=world)
+
+    assert record["workflow"]["failed_step"] == "p_bad"
+    assert record["workflow"]["rolled_back"] is True
+    assert "child_alarm" not in world.alarms, "child compensation must run on parent failure"
+    assert any(c["selected"] == "compensate:c1" for c in record["tool_calls"])

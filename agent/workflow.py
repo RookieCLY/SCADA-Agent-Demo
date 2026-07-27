@@ -12,12 +12,17 @@ the loop when it detects an applicable user intent. Each step is one of:
 * ``conditional_step`` — branch on a registered predicate over the world.
 * ``loop_step``      — bounded repeat of a single body step while a predicate
                        holds (``max_iterations`` guards against runaway).
+* ``sub_workflow_step`` — nest another (engine-driven) workflow as one step;
+                       its compensations merge onto the parent's Saga stack.
 
 Only ``llm_step`` is ever shown to the model; the rest are resolved by the
 engine, which is what makes "the engine owns control flow" (§4.3.1) real rather
 than the LLM improvising sequencing. ``depends_on`` is a DAG checked for cycles
 at load and enforced on every *linear* forward transition (explicit
 conditional/loop jumps are author-directed control flow and are not gated).
+Steps may declare a ``compensate`` inverse; on failure the engine unwinds the
+completed-step compensations in reverse (§4.3.4 Saga), falling back to a
+whole-world checkpoint restore when no per-step compensation is declared.
 
 The engine accomplishes three things at once:
 
@@ -54,6 +59,17 @@ from agent.state_machine import STATES
 
 
 # ============================================================ YAML schema
+class CompensationAction(BaseModel):
+    """§4.3.4 Saga — the inverse action for a step, dispatched to undo its
+    effect when a later step fails. A single fixed tool call (e.g. the step
+    created an alarm → compensate by deleting it)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    tool: str = Field(description="Atomic or domain tool that reverses the step")
+    arguments: dict[str, Any] = Field(default_factory=dict)
+
+
 class StepBase(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -62,6 +78,11 @@ class StepBase(BaseModel):
     description: str | None = None
     depends_on: list[str] = Field(default_factory=list)
     on_failure: str | None = None  # next step id when this step fails
+    #: §4.3.4 per-step compensation. When declared, a *successful* run of this
+    #: step registers this inverse on the workflow's compensation stack; if the
+    #: workflow later fails, the engine unwinds the stack in reverse (true Saga,
+    #: as opposed to the coarse whole-world checkpoint restore).
+    compensate: CompensationAction | None = None
 
 
 class LLMStep(StepBase):
@@ -123,15 +144,41 @@ class LoopStep(StepBase):
     max_iterations: int = Field(default=100, ge=1)
 
 
+class SubWorkflowStep(StepBase):
+    """§4.3.3 Sub-workflow Step — nest another workflow as one step (e.g. a
+    reusable "create sub-device" procedure). The named workflow is run to
+    completion inline by the engine; its per-step compensations are merged onto
+    the parent's Saga stack, so a later parent failure unwinds the child too.
+
+    Constraint: the referenced workflow must be fully engine-driven (no
+    ``llm_step``) so it can run without surfacing a turn to the model; a
+    sub-workflow that stalls on an ``llm_step`` is treated as a failure.
+    """
+
+    type: Literal["sub_workflow_step"] = "sub_workflow_step"
+    workflow: str = Field(description="Name of the workflow to run as a sub-step")
+
+
 # Discriminated on ``type`` so YAML parses unambiguously to the right subclass
 # (smart-union guessing gets fragile once several members share field shapes).
 Step = Annotated[
-    LLMStep | DeterministicStep | ToolCallStep | ConditionalStep | LoopStep,
+    LLMStep
+    | DeterministicStep
+    | ToolCallStep
+    | ConditionalStep
+    | LoopStep
+    | SubWorkflowStep,
     Field(discriminator="type"),
 ]
 
 # Step types the engine executes/resolves on its own, without an LLM turn.
-_ENGINE_DRIVEN = (DeterministicStep, ToolCallStep, ConditionalStep, LoopStep)
+_ENGINE_DRIVEN = (
+    DeterministicStep,
+    ToolCallStep,
+    ConditionalStep,
+    LoopStep,
+    SubWorkflowStep,
+)
 
 
 # Characters that mean a trigger keyword is really a regex pattern. Several
@@ -288,6 +335,9 @@ class WorkflowExecutionState:
     # returns control to the loop instead of falling through).
     loop_counters: dict[str, int] = field(default_factory=dict)
     loop_return: list[str] = field(default_factory=list)
+    # §4.3.4 Saga: (step_id, inverse action) pushed as each compensable step
+    # completes successfully; unwound in reverse by the orchestrator on failure.
+    compensations: list[tuple[str, CompensationAction]] = field(default_factory=list)
 
     def advance_to(self, step_id: str) -> None:
         self.current_step_id = step_id
@@ -441,6 +491,11 @@ class WorkflowEngine:
             exec_state.finished = True
             return
         exec_state.completed_steps.append(step.id)
+        # §4.3.4 Saga: register this step's inverse so a later failure can undo
+        # it (in reverse order). Loop bodies push once per iteration — each
+        # iteration's effect gets its own compensation.
+        if step.compensate is not None:
+            exec_state.compensations.append((step.id, step.compensate))
         # A single-step loop body returns control to its LoopStep, which then
         # re-evaluates the predicate (see resolve_loop).
         if exec_state.loop_return:
@@ -587,11 +642,13 @@ def compile_to_langgraph(engine: WorkflowEngine):  # pragma: no cover — option
 
 
 __all__ = [
+    "CompensationAction",
     "ConditionalStep",
     "DeterministicHandler",
     "DeterministicStep",
     "LLMStep",
     "LoopStep",
+    "SubWorkflowStep",
     "ToolCallStep",
     "WorkflowCatalogue",
     "WorkflowDef",

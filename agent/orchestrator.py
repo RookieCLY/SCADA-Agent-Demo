@@ -45,6 +45,7 @@ from agent.workflow import (
     DeterministicStep,
     LLMStep,
     LoopStep,
+    SubWorkflowStep,
     ToolCallStep,
     WorkflowCatalogue,
     WorkflowEngine,
@@ -1197,30 +1198,54 @@ class Agent:
                 and wf_state is not None
                 and wf_state.failed_step is not None
             ):
-                world.restore(saga_checkpoint)
-                rolled_back = True
-                ctx.log_tool_call(
-                    ToolCallRecord(
-                        turn=turn,
-                        state=sm.current,
-                        visible_tools=[],
-                        visible_count=0,
-                        selected="workflow:__saga_rollback__",
-                        action=None,
-                        args={"failed_step": wf_state.failed_step},
-                        schema_valid=True,
-                        result_ok=True,
-                        error_code="OK",
-                        error_msg=None,
-                        result_data={
-                            "workflow_id": wf_state.workflow_id,
-                            "failed_step": wf_state.failed_step,
-                            "completed_steps": list(wf_state.completed_steps),
-                        },
-                        world_diff=None,
-                        latency_ms=0.0,
+                if wf_state.compensations:
+                    # §4.3.4 Saga proper: run each completed step's declared
+                    # inverse in reverse order, so only the effects that
+                    # actually happened are undone — not a blanket world reset.
+                    for step_id, comp in reversed(wf_state.compensations):
+                        c_result, _p, c_lat, c_action = self._route_and_dispatch(
+                            comp.tool, comp.arguments, world
+                        )
+                        ctx.log_tool_call(
+                            ToolCallRecord(
+                                turn=turn, state=sm.current, visible_tools=[],
+                                visible_count=0,
+                                selected=f"compensate:{step_id}", action=c_action,
+                                args=comp.arguments,
+                                schema_valid=c_result.error_code != "SCHEMA_ERROR",
+                                result_ok=c_result.ok, error_code=c_result.error_code,
+                                error_msg=c_result.error_msg, result_data=c_result.data,
+                                world_diff=c_result.world_diff, latency_ms=c_lat,
+                            )
+                        )
+                    rolled_back = True
+                else:
+                    # No per-step compensation declared → coarse fallback:
+                    # restore the whole world to the workflow-entry checkpoint.
+                    world.restore(saga_checkpoint)
+                    rolled_back = True
+                    ctx.log_tool_call(
+                        ToolCallRecord(
+                            turn=turn,
+                            state=sm.current,
+                            visible_tools=[],
+                            visible_count=0,
+                            selected="workflow:__saga_rollback__",
+                            action=None,
+                            args={"failed_step": wf_state.failed_step},
+                            schema_valid=True,
+                            result_ok=True,
+                            error_code="OK",
+                            error_msg=None,
+                            result_data={
+                                "workflow_id": wf_state.workflow_id,
+                                "failed_step": wf_state.failed_step,
+                                "completed_steps": list(wf_state.completed_steps),
+                            },
+                            world_diff=None,
+                            latency_ms=0.0,
+                        )
                     )
-                )
 
             ctx.workflow_summary = {
                 **ctx.workflow_summary,
@@ -1249,6 +1274,8 @@ class Agent:
     # legitimate long loop with a non-LLM body is not cut off mid-run.
     _MAX_AUTO_STEPS = 2000
 
+    _MAX_SUBWORKFLOW_DEPTH = 8
+
     @staticmethod
     def _engine_step_budget(engine: WorkflowEngine) -> int:
         loop_budget = sum(
@@ -1263,12 +1290,14 @@ class Agent:
         world: MockWorld,
         ctx: Any,
         turn: int,
+        depth: int = 0,
     ) -> None:
         """Drive the workflow through every step the engine owns — deterministic
-        handlers, fixed tool calls, and conditional/loop control flow — until it
-        lands on an ``llm_step`` (which the LLM must act on) or the workflow
-        finishes. This is where "the engine owns control flow" (§4.3.1) actually
-        happens: the LLM is never shown a control-flow or deterministic step.
+        handlers, fixed tool calls, conditional/loop control flow, and nested
+        sub-workflows — until it lands on an ``llm_step`` (which the LLM must act
+        on) or the workflow finishes. This is where "the engine owns control
+        flow" (§4.3.1) actually happens: the LLM is never shown a control-flow,
+        deterministic, tool-call, or sub-workflow step.
         """
         steps = 0
         budget = self._engine_step_budget(engine)
@@ -1286,6 +1315,8 @@ class Agent:
                     self._exec_deterministic_step(engine, wf_state, step, world, ctx, turn)
                 elif isinstance(step, ToolCallStep):
                     self._exec_tool_call_step(engine, wf_state, step, world, ctx, turn)
+                elif isinstance(step, SubWorkflowStep):
+                    self._exec_sub_workflow_step(engine, wf_state, step, world, ctx, turn, depth)
                 elif isinstance(step, ConditionalStep):
                     engine.resolve_conditional(wf_state, world, {"workflow_id": engine.wf.name})
                 elif isinstance(step, LoopStep):
@@ -1378,6 +1409,67 @@ class Agent:
         if result.ok:
             self.policy.record_execution(str(policy_target or step.tool))
         engine.advance(wf_state, succeeded=result.ok)
+
+    def _exec_sub_workflow_step(
+        self, engine: WorkflowEngine, wf_state: WorkflowExecutionState,
+        step: SubWorkflowStep, world: MockWorld, ctx: Any, turn: int, depth: int,
+    ) -> None:
+        """§4.3.3 nested workflow. Runs the referenced (engine-driven) workflow
+        inline to completion, merges its Saga compensations onto the parent's
+        stack, and reports success/failure to the parent cursor. A sub-workflow
+        that stalls on an ``llm_step`` or exceeds the nesting depth is a failure.
+        """
+        def _fail(msg: str) -> None:
+            ctx.log_tool_call(
+                ToolCallRecord(
+                    turn=turn, state=step.state, visible_tools=[], visible_count=0,
+                    selected=f"subworkflow:{step.workflow}", action=None, args={},
+                    schema_valid=True, result_ok=False, error_code="BUSINESS_RULE",
+                    error_msg=msg, result_data={}, world_diff=None, latency_ms=0.0,
+                )
+            )
+            engine.advance(wf_state, succeeded=False)
+
+        if depth + 1 > self._MAX_SUBWORKFLOW_DEPTH:
+            _fail(f"sub-workflow nesting exceeded depth {self._MAX_SUBWORKFLOW_DEPTH}")
+            return
+        sub_engine = (
+            next(
+                (e for e in self.workflow_catalogue.all() if e.wf.name == step.workflow),
+                None,
+            )
+            if self.workflow_catalogue is not None
+            else None
+        )
+        if sub_engine is None:
+            _fail(f"unknown sub-workflow {step.workflow!r}")
+            return
+
+        sub_state = sub_engine.initial_state()
+        self._run_engine_steps(sub_engine, sub_state, world, ctx, turn, depth + 1)
+        # Merge the child's compensations so a later *parent* failure unwinds the
+        # child's effects too (§4.3.4). Merge regardless of child outcome.
+        wf_state.compensations.extend(sub_state.compensations)
+
+        ok = sub_state.finished and sub_state.failed_step is None
+        if not ok:
+            reason = (
+                f"failed at step {sub_state.failed_step!r}"
+                if sub_state.failed_step is not None
+                else "stalled on an llm_step (sub-workflows must be engine-driven)"
+            )
+            _fail(f"sub-workflow {step.workflow!r} did not complete: {reason}")
+            return
+        ctx.log_tool_call(
+            ToolCallRecord(
+                turn=turn, state=step.state, visible_tools=[], visible_count=0,
+                selected=f"subworkflow:{step.workflow}", action=None, args={},
+                schema_valid=True, result_ok=True, error_code="OK", error_msg=None,
+                result_data={"completed_steps": list(sub_state.completed_steps)},
+                world_diff=None, latency_ms=0.0,
+            )
+        )
+        engine.advance(wf_state, succeeded=True)
 
 
 # ============================================================ assembly helper
