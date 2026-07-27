@@ -35,6 +35,13 @@ class WorkflowConfig(BaseModel):
     #: the checkpoint taken when the workflow was entered, so a partial run does
     #: not leave half-built configuration behind (§2.5(5)).
     rollback_on_failure: bool = False
+    #: Workflow entry selection (§4.3.1 "LLM 是 Workflow 的入口决策器").
+    #: ``keyword`` — deterministic trigger keyword/regex match (default; keeps
+    #:               experiments reproducible and cheap).
+    #: ``llm``     — ask the model to pick the best-matching workflow (or none)
+    #:               from the catalogue, falling back to keyword match if the
+    #:               model abstains or names an unknown workflow.
+    selection: Literal["keyword", "llm"] = "keyword"
 
 
 class StateMachineConfig(BaseModel):

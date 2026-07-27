@@ -41,7 +41,11 @@ from agent.tool_rag import (
 from agent.tool_registry import ToolRegistry, build_default_registry
 from agent.tracer import LLMCallRecord, ToolCallRecord, Tracer
 from agent.workflow import (
+    ConditionalStep,
+    DeterministicStep,
     LLMStep,
+    LoopStep,
+    ToolCallStep,
     WorkflowCatalogue,
     WorkflowEngine,
     WorkflowExecutionState,
@@ -187,6 +191,15 @@ class Agent:
         self.workflow_catalogue = workflow_catalogue
         self.resource_registry = resource_registry
         self.policy = policy if policy is not None else build_policy(config.safety)
+        # The registry is fixed for an Agent's lifetime, so cache the two
+        # lookups the turn loop hits repeatedly (each ``all_atomics()`` /
+        # ``all_domains()`` call returns a fresh list). ``_allowed_atomics``
+        # runs several times per turn and the domain-membership test fires on
+        # every tool call — recomputing them was pure per-turn overhead.
+        self._atomic_names: list[str] = [m.name for m in registry.all_atomics()]
+        self._domain_names: frozenset[str] = frozenset(
+            d.name for d in registry.all_domains()
+        )
 
     # ------------------------------------------------------------------ tool visibility
     def _allowed_atomics(
@@ -207,7 +220,7 @@ class Agent:
             A list of atomic tool names permitted to be executed in the current state.
         """
         arch = self.config.architecture
-        all_atomics = [m.name for m in self.registry.all_atomics()]
+        all_atomics = self._atomic_names
 
         if arch.state_machine.enabled:
             allowed = [t for t in all_atomics if t in STATES[sm_state].allowed_tools]
@@ -467,6 +480,33 @@ class Agent:
             None,
         )
 
+    def _enter_engine_state(
+        self, sm: StateMachine, ctx: Any, target_state: str, event_sink: Any
+    ) -> bool:
+        """Sync the FSM to the workflow engine's current-step ``state``.
+
+        In ``engine`` mode the engine owns control flow and is authoritative, so
+        it forces past the per-state ``next_states`` adjacency graph — a
+        ``conditional_step`` / ``loop_step`` branch may legitimately land on a
+        state the graph does not list as adjacent, and a ``can_transit`` gate
+        would silently strand the FSM one step behind with the wrong (possibly
+        empty) tool whitelist. In ``filter`` mode the LLM still drives, so we
+        respect ``can_transit``. Returns True if the state changed.
+        """
+        if target_state == sm.current:
+            return False
+        if self._workflow_engine_mode:
+            ctx.exit_state()
+            sm.force_to(target_state)
+        elif sm.can_transit(target_state):
+            ctx.exit_state()
+            sm.transit(target_state)
+        else:
+            return False
+        ctx.enter_state(sm.current)
+        _emit_event(event_sink, "on_state_enter", sm.current)
+        return True
+
     # ------------------------------------------------------------------ out-of-scope guidance
     @staticmethod
     def _states_exposing(atomic: str) -> list[str]:
@@ -523,7 +563,7 @@ class Agent:
                 - action_or_None: The resolved atomic action name if a domain tool was called.
         """
         try:
-            if any(d.name == tool_name for d in self.registry.all_domains()):
+            if tool_name in self._domain_names:
                 return dispatch_domain(self.registry, tool_name, arguments, world)
         except KeyError:
             pass
@@ -576,7 +616,37 @@ class Agent:
         arch = self.config.architecture
         if not arch.workflow.enabled or self.workflow_catalogue is None:
             return None
+        if arch.workflow.selection == "llm":
+            chosen = self._llm_select_workflow(query)
+            if chosen is not None:
+                return chosen
+            # Model abstained or named an unknown workflow → deterministic fallback.
         return self.workflow_catalogue.select(query)
+
+    def _llm_select_workflow(self, query: str) -> WorkflowEngine | None:
+        """§4.3.1 entry decision: let the model pick the workflow to enter.
+
+        Delegates to the LLM backend's optional ``select_workflow`` hook so the
+        one-shot classification stays isolated from the main conversation state.
+        Returns None (→ keyword fallback) if the backend has no hook, errors, or
+        names a workflow not in the catalogue.
+        """
+        if self.workflow_catalogue is None:
+            return None
+        engines = self.workflow_catalogue.all()
+        selector = getattr(self.llm, "select_workflow", None)
+        if not engines or not callable(selector):
+            return None
+        options = [
+            {"name": e.wf.name, "description": e.wf.description} for e in engines
+        ]
+        try:
+            name = selector(query, options)
+        except Exception:
+            return None
+        if not name:
+            return None
+        return next((e for e in engines if e.wf.name == name), None)
 
     # ------------------------------------------------------------------ main loop
     def run(
@@ -650,6 +720,21 @@ class Agent:
             ctx.initial_world_hash = world.hash()
             ctx.enter_state(sm.current)
             _emit_event(event_sink, "on_state_enter", sm.current)
+            # Engine mode (§4.3.1) owns control flow from the very first step:
+            # resolve any leading deterministic / tool-call / conditional / loop
+            # steps before the model is ever prompted, then sync the state
+            # machine to wherever the cursor lands. Filter mode keeps its exact
+            # legacy behaviour (deterministic steps still resolve post-turn).
+            if (
+                self._workflow_engine_mode
+                and wf_engine is not None
+                and wf_state is not None
+                and not wf_state.finished
+            ):
+                self._run_engine_steps(wf_engine, wf_state, world, ctx, 0)
+                if not wf_state.finished:
+                    entry_state = wf_engine.current_step(wf_state).state
+                    self._enter_engine_state(sm, ctx, entry_state, event_sink)
             ctx.rag_summary = {
                 "enabled": self.config.architecture.tool_rag.enabled,
                 "top_n": self.config.architecture.tool_rag.top_n,
@@ -741,11 +826,7 @@ class Agent:
                                 wf_engine.advance(wf_state, succeeded=True)
                         if not wf_state.finished:
                             next_state = wf_engine.current_step(wf_state).state
-                            if next_state != sm.current and sm.can_transit(next_state):
-                                ctx.exit_state()
-                                sm.transit(next_state)
-                                ctx.enter_state(sm.current)
-                                _emit_event(event_sink, "on_state_enter", sm.current)
+                            if self._enter_engine_state(sm, ctx, next_state, event_sink):
                                 history.append({
                                     "role": "user",
                                     "content": f"你已进入 {sm.current} 阶段，请使用当前可用工具继续完成任务。",
@@ -756,7 +837,7 @@ class Agent:
                 # Tool / Resource call branch
                 any_tool_dispatched = False
                 oos_circuit_open = False
-                for call in resp.tool_calls:
+                for call_idx, call in enumerate(resp.tool_calls):
                     if call.name == READ_RESOURCE_TOOL:
                         found, payload, err, lat = self._handle_resource_read(
                             call.arguments, world
@@ -775,6 +856,7 @@ class Agent:
                             {
                                 "role": "tool",
                                 "name": READ_RESOURCE_TOOL,
+                                "tool_call_id": call.call_id,
                                 "ok": found,
                                 "error_msg": err,
                             }
@@ -782,9 +864,7 @@ class Agent:
                         continue
 
                     if self.config.architecture.state_machine.enabled or (self.config.architecture.workflow.enabled and wf_state is not None and not wf_state.finished):
-                        is_domain = any(
-                            d.name == call.name for d in self.registry.all_domains()
-                        )
+                        is_domain = call.name in self._domain_names
                         # Identify the atomic the call ultimately resolves to,
                         # so we can fast-forward optional workflow steps.
                         atomic_for_check = (
@@ -813,11 +893,7 @@ class Agent:
                             atomic_pool = self._allowed_atomics(sm.current, wf_state)
                             # also sync the SM if the new step targets a different state
                             new_state = wf_engine.current_step(wf_state).state if not wf_state.finished else sm.current
-                            if new_state != sm.current and sm.can_transit(new_state):
-                                ctx.exit_state()
-                                sm.transit(new_state)
-                                ctx.enter_state(sm.current)
-                                _emit_event(event_sink, "on_state_enter", sm.current)
+                            if self._enter_engine_state(sm, ctx, new_state, event_sink):
                                 atomic_pool = self._allowed_atomics(sm.current, wf_state)
                         permitted = False
                         if is_domain:
@@ -863,18 +939,18 @@ class Agent:
                                 latency_ms=0.0,
                             )
                             ctx.log_tool_call(rec)
-                            _emit_event(
-                                event_sink,
-                                "on_tool_call",
-                                turn,
-                                rec,
-                                deep_copy_world(world),
-                                deep_copy_world(world),
-                            )
+                            if event_sink is not None:
+                                # World is not mutated on an OOS block, so one
+                                # snapshot serves as both before and after.
+                                snap = deep_copy_world(world)
+                                _emit_event(
+                                    event_sink, "on_tool_call", turn, rec, snap, snap
+                                )
                             history.append(
                                 {
                                     "role": "tool",
                                     "name": call.name,
+                                    "tool_call_id": call.call_id,
                                     "ok": False,
                                     "error_code": "OUT_OF_SCOPE",
                                     "data": {},
@@ -901,6 +977,24 @@ class Agent:
                                     # Already asking, or nowhere to divert to —
                                     # end the run instead of burning the budget.
                                     oos_circuit_open = True
+                                # The breaker skips this turn's remaining tool
+                                # calls, but the assistant message the provider
+                                # holds still lists them. Strict OpenAI-compatible
+                                # providers (e.g. DeepSeek) reject the next request
+                                # if any tool_call_id goes unanswered, so close out
+                                # each skipped call with a synthetic result.
+                                for skipped in resp.tool_calls[call_idx + 1:]:
+                                    history.append(
+                                        {
+                                            "role": "tool",
+                                            "name": skipped.name,
+                                            "tool_call_id": skipped.call_id,
+                                            "ok": False,
+                                            "error_code": "OUT_OF_SCOPE",
+                                            "data": {},
+                                            "error_msg": "本轮后续调用已被运行时熔断跳过",
+                                        }
+                                    )
                                 break
                             continue
 
@@ -909,7 +1003,7 @@ class Agent:
                     # mutate the world — independent of what the prompt said.
                     policy_target = (
                         call.arguments.get("action")
-                        if any(d.name == call.name for d in self.registry.all_domains())
+                        if call.name in self._domain_names
                         else call.name
                     )
                     decision = self.policy.check(
@@ -933,18 +1027,18 @@ class Agent:
                             latency_ms=0.0,
                         )
                         ctx.log_tool_call(rec)
-                        _emit_event(
-                            event_sink,
-                            "on_tool_call",
-                            turn,
-                            rec,
-                            deep_copy_world(world),
-                            deep_copy_world(world),
-                        )
+                        if event_sink is not None:
+                            # Denied before dispatch — world is untouched, so a
+                            # single snapshot is both before and after.
+                            snap = deep_copy_world(world)
+                            _emit_event(
+                                event_sink, "on_tool_call", turn, rec, snap, snap
+                            )
                         history.append(
                             {
                                 "role": "tool",
                                 "name": call.name,
+                                "tool_call_id": call.call_id,
                                 "ok": False,
                                 "error_code": "POLICY_DENIED",
                                 "data": {"rule_id": decision.rule_id},
@@ -953,7 +1047,10 @@ class Agent:
                         )
                         continue
 
-                    world_before = deep_copy_world(world)
+                    # Snapshot the pre-dispatch world only when someone is
+                    # listening; the eval runner attaches no sink, so on the
+                    # throughput path this avoids a full world deep-copy per call.
+                    world_before = deep_copy_world(world) if event_sink is not None else None
                     result, parsed, lat, action = self._route_and_dispatch(
                         call.name, call.arguments, world
                     )
@@ -987,18 +1084,20 @@ class Agent:
                         referenced_entities=referenced,
                     )
                     ctx.log_tool_call(rec)
-                    _emit_event(
-                        event_sink,
-                        "on_tool_call",
-                        turn,
-                        rec,
-                        world_before,
-                        deep_copy_world(world),
-                    )
+                    if event_sink is not None:
+                        _emit_event(
+                            event_sink,
+                            "on_tool_call",
+                            turn,
+                            rec,
+                            world_before,
+                            deep_copy_world(world),
+                        )
                     history.append(
                         {
                             "role": "tool",
                             "name": call.name,
+                            "tool_call_id": call.call_id,
                             "ok": result.ok,
                             "error_code": result.error_code,
                             "data": result.data,
@@ -1059,11 +1158,7 @@ class Agent:
                     self._maybe_run_deterministic(wf_engine, wf_state, world, ctx, turn)
                     if not wf_state.finished:
                         next_state = wf_engine.current_step(wf_state).state
-                        if next_state != sm.current and sm.can_transit(next_state):
-                            ctx.exit_state()
-                            sm.transit(next_state)
-                            ctx.enter_state(sm.current)
-                            _emit_event(event_sink, "on_state_enter", sm.current)
+                        if self._enter_engine_state(sm, ctx, next_state, event_sink):
                             history.append({
                                 "role": "user",
                                 "content": f"你已进入 {sm.current} 阶段，请使用当前可用工具继续完成任务。",
@@ -1147,8 +1242,21 @@ class Agent:
             _emit_event(event_sink, "on_run_finish", record, deep_copy_world(world))
             return record
 
-    # ------------------------------------------------------------------ deterministic-step glue
-    def _maybe_run_deterministic(
+    # ------------------------------------------------------------------ engine-native step glue
+    # Base bound on the engine's own advancement so a mis-authored conditional
+    # cycle can never spin the runtime forever (§4.6.3 circuit-breaker). Loops
+    # add their declared iteration budget on top (see _engine_step_budget), so a
+    # legitimate long loop with a non-LLM body is not cut off mid-run.
+    _MAX_AUTO_STEPS = 2000
+
+    @staticmethod
+    def _engine_step_budget(engine: WorkflowEngine) -> int:
+        loop_budget = sum(
+            s.max_iterations for s in engine.wf.steps if isinstance(s, LoopStep)
+        )
+        return Agent._MAX_AUTO_STEPS + 4 * loop_budget
+
+    def _run_engine_steps(
         self,
         engine: WorkflowEngine,
         wf_state: WorkflowExecutionState,
@@ -1156,23 +1264,58 @@ class Agent:
         ctx: Any,
         turn: int,
     ) -> None:
-        """Attempt to execute a deterministic workflow step without LLM intervention.
-        
-        If the current workflow step is marked as deterministic (e.g. system validation),
-        this function invokes the registered python handler and automatically advances 
-        the workflow state.
-        
-        Args:
-            engine: The active WorkflowEngine.
-            wf_state: The current execution state of the workflow.
-            world: The MockWorld instance to pass to the handler.
-            ctx: The tracing context to log the deterministic step execution.
-            turn: The current turn number for the tracer.
+        """Drive the workflow through every step the engine owns — deterministic
+        handlers, fixed tool calls, and conditional/loop control flow — until it
+        lands on an ``llm_step`` (which the LLM must act on) or the workflow
+        finishes. This is where "the engine owns control flow" (§4.3.1) actually
+        happens: the LLM is never shown a control-flow or deterministic step.
         """
-        step = engine.current_step(wf_state)
-        if isinstance(step, LLMStep):
-            return
-        # deterministic step: run the registered handler
+        steps = 0
+        budget = self._engine_step_budget(engine)
+        while not wf_state.finished:
+            steps += 1
+            if steps > budget:
+                wf_state.failed_step = wf_state.current_step_id
+                wf_state.finished = True
+                return
+            step = engine.current_step(wf_state)
+            if isinstance(step, LLMStep):
+                return  # hand control back to the model
+            try:
+                if isinstance(step, DeterministicStep):
+                    self._exec_deterministic_step(engine, wf_state, step, world, ctx, turn)
+                elif isinstance(step, ToolCallStep):
+                    self._exec_tool_call_step(engine, wf_state, step, world, ctx, turn)
+                elif isinstance(step, ConditionalStep):
+                    engine.resolve_conditional(wf_state, world, {"workflow_id": engine.wf.name})
+                elif isinstance(step, LoopStep):
+                    engine.resolve_loop(wf_state, world, {"workflow_id": engine.wf.name})
+                else:  # pragma: no cover — defensive; unknown step kind
+                    engine.advance(wf_state, succeeded=True)
+            except Exception as e:
+                # A depends_on/illegal-transition violation (WorkflowError) or a
+                # bad/throwing predicate (e.g. an unregistered predicate name)
+                # must degrade to a recorded step failure, not crash the run —
+                # matching the graceful handling of deterministic handlers.
+                ctx.log_tool_call(
+                    ToolCallRecord(
+                        turn=turn, state=step.state, visible_tools=[], visible_count=0,
+                        selected=f"workflow:{step.id}", action=None, args={},
+                        schema_valid=True, result_ok=False, error_code="BUSINESS_RULE",
+                        error_msg=str(e), result_data={}, world_diff=None, latency_ms=0.0,
+                    )
+                )
+                wf_state.failed_step = step.id
+                wf_state.finished = True
+                return
+
+    # Kept as an alias: several call sites and tests still reference the old name.
+    _maybe_run_deterministic = _run_engine_steps
+
+    def _exec_deterministic_step(
+        self, engine: WorkflowEngine, wf_state: WorkflowExecutionState,
+        step: DeterministicStep, world: MockWorld, ctx: Any, turn: int,
+    ) -> None:
         try:
             fn = get_handler(step.handler)
             t0 = time.perf_counter()
@@ -1180,43 +1323,61 @@ class Agent:
             lat = (time.perf_counter() - t0) * 1000
             ctx.log_tool_call(
                 ToolCallRecord(
-                    turn=turn,
-                    state=step.state,
-                    visible_tools=[],
-                    visible_count=0,
-                    selected=f"workflow:{step.handler}",
-                    action=None,
-                    args={},
-                    schema_valid=True,
-                    result_ok=True,
-                    error_code="OK",
-                    error_msg=None,
-                    result_data=payload,
-                    world_diff=None,
-                    latency_ms=lat,
+                    turn=turn, state=step.state, visible_tools=[], visible_count=0,
+                    selected=f"workflow:{step.handler}", action=None, args={},
+                    schema_valid=True, result_ok=True, error_code="OK", error_msg=None,
+                    result_data=payload, world_diff=None, latency_ms=lat,
                 )
             )
             engine.advance(wf_state, succeeded=True)
         except Exception as e:
             ctx.log_tool_call(
                 ToolCallRecord(
-                    turn=turn,
-                    state=step.state,
-                    visible_tools=[],
-                    visible_count=0,
-                    selected=f"workflow:{step.handler}",
-                    action=None,
-                    args={},
-                    schema_valid=True,
-                    result_ok=False,
-                    error_code="BUSINESS_RULE",
-                    error_msg=str(e),
-                    result_data={},
-                    world_diff=None,
+                    turn=turn, state=step.state, visible_tools=[], visible_count=0,
+                    selected=f"workflow:{step.handler}", action=None, args={},
+                    schema_valid=True, result_ok=False, error_code="BUSINESS_RULE",
+                    error_msg=str(e), result_data={}, world_diff=None, latency_ms=0.0,
+                )
+            )
+            engine.advance(wf_state, succeeded=False)
+
+    def _exec_tool_call_step(
+        self, engine: WorkflowEngine, wf_state: WorkflowExecutionState,
+        step: ToolCallStep, world: MockWorld, ctx: Any, turn: int,
+    ) -> None:
+        """Engine-driven fixed tool dispatch (§4.3.3). Still subject to the §4.7
+        runtime cage — a denied call never reaches the handler."""
+        policy_target = step.arguments.get("action", step.tool)
+        decision = self.policy.check(str(policy_target or step.tool), step.arguments, world)
+        if decision.denied:
+            ctx.log_tool_call(
+                ToolCallRecord(
+                    turn=turn, state=step.state, visible_tools=[], visible_count=0,
+                    selected=step.tool, action=step.arguments.get("action"),
+                    args=step.arguments, schema_valid=True, result_ok=False,
+                    error_code="POLICY_DENIED",
+                    error_msg=f"[{decision.rule_id}] {decision.reason}",
+                    result_data={"rule_id": decision.rule_id}, world_diff=None,
                     latency_ms=0.0,
                 )
             )
             engine.advance(wf_state, succeeded=False)
+            return
+        result, _parsed, lat, action = self._route_and_dispatch(
+            step.tool, step.arguments, world
+        )
+        ctx.log_tool_call(
+            ToolCallRecord(
+                turn=turn, state=step.state, visible_tools=[], visible_count=0,
+                selected=step.tool, action=action, args=step.arguments,
+                schema_valid=result.error_code != "SCHEMA_ERROR", result_ok=result.ok,
+                error_code=result.error_code, error_msg=result.error_msg,
+                result_data=result.data, world_diff=result.world_diff, latency_ms=lat,
+            )
+        )
+        if result.ok:
+            self.policy.record_execution(str(policy_target or step.tool))
+        engine.advance(wf_state, succeeded=result.ok)
 
 
 # ============================================================ assembly helper

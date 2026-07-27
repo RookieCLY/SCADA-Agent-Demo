@@ -15,7 +15,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from agent.workflow import register_handler
+from agent.workflow import register_handler, register_predicate
 from tools.deployment import _collect_validation_errors
 
 
@@ -36,9 +36,35 @@ def assert_alarm_exists(world: Any, ctx: dict[str, Any]) -> dict[str, Any]:
     return {"ok": True, "n_alarms": len(world.alarms)}
 
 
+# ----------------------------------------- predicates (conditional / loop steps)
+# Signature: predicate(world, ctx) -> bool. Pure reads over the world, used by
+# ConditionalStep / LoopStep to let the engine branch and iterate (§4.3.3).
+def project_is_valid(world: Any, ctx: dict[str, Any]) -> bool:
+    """True when the project passes the global consistency check."""
+    return not _collect_validation_errors(world)
+
+
+def has_alarms(world: Any, ctx: dict[str, Any]) -> bool:
+    return bool(world.alarms)
+
+
+def has_points(world: Any, ctx: dict[str, Any]) -> bool:
+    return bool(world.points)
+
+
 # ----------------------------------------- registration
 register_handler("handlers.validate_project", validate_project)
 register_handler("handlers.assert_alarm_exists", assert_alarm_exists)
 
+register_predicate("predicates.project_is_valid", project_is_valid)
+register_predicate("predicates.has_alarms", has_alarms)
+register_predicate("predicates.has_points", has_points)
 
-__all__ = ["assert_alarm_exists", "validate_project"]
+
+__all__ = [
+    "assert_alarm_exists",
+    "has_alarms",
+    "has_points",
+    "project_is_valid",
+    "validate_project",
+]

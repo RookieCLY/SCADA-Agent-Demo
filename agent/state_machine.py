@@ -272,6 +272,21 @@ class StateMachine:
         self.current = target
         self.history.append(target)
 
+    def force_to(self, target: str) -> None:
+        """Set the state directly, bypassing the per-state ``next_states``
+        whitelist.
+
+        Reserved for an authoritative sequencer — the Workflow Engine in
+        ``mode: engine`` (§4.3.1) owns control flow while a workflow runs and may
+        legitimately land on a state the adjacency graph does not list (e.g. a
+        ``conditional_step`` branch). Using ``transit`` there would raise and
+        strand the run with a stale whitelist. Not for LLM-driven transitions.
+        """
+        if target not in STATES:
+            raise ValueError(f"unknown state {target!r}")
+        self.current = target
+        self.history.append(target)
+
     @property
     def is_terminal(self) -> bool:
         return STATES[self.current].terminal

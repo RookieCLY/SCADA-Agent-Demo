@@ -16,10 +16,22 @@ import os
 import re
 import time
 from dataclasses import dataclass, field
+from functools import lru_cache
 from pathlib import Path
 from typing import Any, Literal, Protocol
 
 from agent.config import ArchitectureConfig, ModelConfig
+
+
+@lru_cache(maxsize=2048)
+def _cached_json_schema(model_cls: type) -> dict[str, Any]:
+    """``model_cls.model_json_schema()`` is static per class but non-trivial to
+    build; the tool schemas are otherwise regenerated for every visible tool on
+    every turn. Cache keyed on the (hashable) model class. Callers must treat
+    the returned dict as read-only — the two builders below only read it or copy
+    sub-sections, never mutate it in place.
+    """
+    return model_cls.model_json_schema()
 
 
 # ============================================================ data classes
@@ -29,6 +41,11 @@ class LLMToolCall:
 
     name: str
     arguments: dict[str, Any]
+    # Provider-assigned tool_call id (OpenAI-compatible `tc.id`). Used to
+    # correlate each tool *result* back to the exact call it answers when
+    # threading history across turns. None for backends that don't emit ids
+    # (e.g. MockLLM), which don't rely on cross-turn result threading.
+    call_id: str | None = None
 
 
 @dataclass
@@ -69,11 +86,16 @@ class MockLLM:
     main loop terminates cleanly rather than spinning.
     """
 
-    # Mapping: state -> list[(query_pattern, response_factory)]
-    SCRIPT: dict[str, list[tuple[re.Pattern[str], Any]]] = {}
+    # Mapping: state -> list[(query_pattern, response_factory)].
+    # Instantiated per instance in __init__ — a class-level mutable default
+    # would accumulate a fresh copy of every scripted rule on each MockLLM()
+    # construction (the test suite builds many), growing the shared dict
+    # unboundedly.
+    SCRIPT: dict[str, list[tuple[re.Pattern[str], Any]]]
 
     def __init__(self, model_name: str = "mock") -> None:
         self.model_name = model_name
+        self.SCRIPT = {}
         self._install_default_script()
 
     # ----------------------------------------- factories return LLMResponse
@@ -140,7 +162,7 @@ class MockLLM:
 
         def alarm_done(_: str) -> LLMResponse:
             return self._resp_text(
-                f"已创建高温报警,阈值生效。", next_state=None
+                "已创建高温报警,阈值生效。", next_state=None
             )
 
         self.SCRIPT.setdefault("ANALYZE_INTENT", []).append((rx_alarm_high, alarm_high_intent))
@@ -292,6 +314,13 @@ class MockLLM:
             raw={"matched_state": state, "model": self.model_name},
         )
 
+    def select_workflow(
+        self, query: str, options: list[dict[str, str]]
+    ) -> str | None:
+        """The scripted mock abstains — the orchestrator then falls back to the
+        deterministic keyword router, which keeps mock runs reproducible."""
+        return None
+
 
 # ============================================================ OpenAI-compatible provider
 def _coerce_nested_json_strings(args: Any) -> Any:
@@ -406,6 +435,44 @@ class OpenAICompatibleLLM:
         self._pending_tool_ids = []
         self._first_call = True
 
+    def select_workflow(
+        self, query: str, options: list[dict[str, str]]
+    ) -> str | None:
+        """§4.3.1 workflow entry decision — a *stateless* one-shot classification
+        that deliberately does not touch ``self._messages`` (so it can't pollute
+        the main conversation). Returns a workflow name from ``options`` or None.
+        """
+        if not options:
+            return None
+        catalogue = "\n".join(
+            f"- {o['name']}: {o.get('description', '')}" for o in options
+        )
+        sys_prompt = (
+            "你是工业 SCADA Agent 的工作流路由器。根据用户请求，从下列工作流中选出"
+            "最匹配的一个，只输出它的 name(原样);若都不匹配则只输出 NONE。"
+            "不要输出任何解释或其它文字。\n可选工作流:\n" + catalogue
+        )
+        try:
+            resp = self._client.chat.completions.create(
+                model=self.model_name,
+                messages=[
+                    {"role": "system", "content": sys_prompt},
+                    {"role": "user", "content": query},
+                ],
+                temperature=0.0,
+                max_tokens=32,
+            )
+            text = (resp.choices[0].message.content or "").strip()
+        except Exception:
+            return None
+        if not text or "NONE" in text.upper():
+            return None
+        # The model may wrap the name in punctuation/quotes; match by containment.
+        for o in options:
+            if o["name"] in text:
+                return o["name"]
+        return None
+
     # ----------------------------------------- tool schema builders
     def _flat_tool_schemas(self, names: list[str]) -> list[dict[str, Any]]:
         out: list[dict[str, Any]] = []
@@ -422,7 +489,7 @@ class OpenAICompatibleLLM:
                     "function": {
                         "name": a.name,
                         "description": a.description,
-                        "parameters": a.args_model.model_json_schema(),
+                        "parameters": _cached_json_schema(a.args_model),
                     },
                 }
             )
@@ -461,7 +528,7 @@ class OpenAICompatibleLLM:
             branches: list[dict[str, Any]] = []
             for action_name in allowed:
                 atomic = d.actions[action_name]
-                sub_schema = atomic.args_model.model_json_schema()
+                sub_schema = _cached_json_schema(atomic.args_model)
                 props = dict(sub_schema.get("properties") or {})
                 # Force the discriminator to the literal action name
                 props["action"] = {"type": "string", "const": action_name}
@@ -545,14 +612,36 @@ class OpenAICompatibleLLM:
                     user_buf.append(h)
                 else:
                     tool_buf.append(h)
+            # `buf` walks the whole trailing run of tool/user rows, which
+            # accumulates across every consecutive tool-executing turn (the
+            # orchestrator only inserts an assistant row on talk-only turns).
+            # Correlate each result to its call by the exact tool_call_id, not
+            # by tool name: name-matching paired the *oldest* same-named row to
+            # the newest pending call, feeding the model stale data and dropping
+            # the real result. Exact-id matching also skips rows from earlier
+            # turns (their ids are no longer pending — they were injected when
+            # they were current).
+            pending = list(self._pending_tool_ids)
             for h in tool_buf:
+                hid = h.get("tool_call_id")
                 tname = h.get("name") or ""
                 tid = None
-                for idx, (name, call_id) in enumerate(self._pending_tool_ids):
-                    if name == tname:
-                        tid = call_id
-                        self._pending_tool_ids.pop(idx)
-                        break
+                if hid:
+                    for idx, (_name, call_id) in enumerate(pending):
+                        if call_id == hid:
+                            tid = call_id
+                            pending.pop(idx)
+                            break
+                    # id present but not pending -> already answered earlier.
+                    if tid is None:
+                        continue
+                else:
+                    # Legacy rows without an id: fall back to first name match.
+                    for idx, (name, call_id) in enumerate(pending):
+                        if name == tname:
+                            tid = call_id
+                            pending.pop(idx)
+                            break
                 if not tid:
                     continue
                 payload: dict[str, Any] = {
@@ -623,7 +712,7 @@ class OpenAICompatibleLLM:
                 except json.JSONDecodeError:
                     args = {}
                 args = _coerce_nested_json_strings(args)
-                tool_calls.append(LLMToolCall(name=fn.name, arguments=args))
+                tool_calls.append(LLMToolCall(name=fn.name, arguments=args, call_id=tc.id))
                 self._pending_tool_ids.append((fn.name, tc.id))
                 assistant_record["tool_calls"].append(
                     {
