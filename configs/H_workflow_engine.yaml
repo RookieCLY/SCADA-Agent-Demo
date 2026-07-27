@@ -1,0 +1,53 @@
+name: H_workflow_engine
+description: |
+  §4.3.1 Config H — identical to F, but the Workflow Engine actually **owns
+  control flow** instead of merely filtering the tool surface.
+
+  In every A–F config the workflow is a `filter`: it intersects the current
+  step's `allowed_tools` into the visibility pipeline while the LLM still drives
+  turn-to-turn sequencing. That is the opposite of what §4.3.1 describes —
+  "LLM 并不拥有或生成 Workflow，它只是 Workflow 的入口决策器" — and it means D/E/F
+  paid the cost of the constraint layers without ever relieving the model of the
+  long-chain planning that §2.5 identifies as the dominant task-layer failure.
+  It is the most likely explanation for F scoring below the flat baseline A in
+  the main ablation.
+
+  In `engine` mode the LLM's `next_state` is ignored while a workflow is live,
+  the prompt is scoped to the current step's local task, and the engine advances
+  the cursor and terminates the run. `rollback_on_failure` adds the §4.3.4 Saga
+  compensation so a workflow that dies mid-way does not leave the half-built
+  configuration §2.5(5) warns about.
+
+  Compare H vs F to isolate the effect; both share every other lever.
+
+architecture:
+  hierarchical_tools: true
+  tool_rag:
+    enabled: true
+    top_n: 30
+    top_k: 12
+    alpha_dense: 0.6
+    use_reranker: true
+  workflow:
+    enabled: true
+    yaml_path: workflows
+    mode: engine            # ← the lever under test (F uses `filter`)
+    rollback_on_failure: true
+  state_machine:
+    enabled: true
+  resources_separation: true
+
+model:
+  provider: mock
+  name: mock
+  temperature: 0.0
+  max_tokens: 4096
+
+trace:
+  record_llm_io: true
+
+world:
+  backend: memory
+
+repetitions: 5
+seed_base: 42

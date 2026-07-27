@@ -16,6 +16,13 @@ for ablation studies:
 
 Configs `A`–`F` in `configs/` flip these levers in documented combinations (A = flat baseline, F = all four on). The paper's hypotheses H1–H6 compare these configs.
 
+Two further levers exist outside the A–F matrix, added to close gaps between the paper and the runtime. Both default **off** so the archived A–F results stay reproducible:
+
+5. **Runtime safety policy** (`safety.enabled`, `agent/policy.py`) — the §4.7 "outer cage". A declarative rule table evaluated *before dispatch*, so a denied call never reaches a handler and cannot mutate the world. This is what makes the high-risk rules a boundary rather than a prompt request: `deploy_project(force=true)` bypasses validation at the handler level, so `DEFAULT_SYSTEM_PROMPT` alone never actually stopped it. Denials surface as `POLICY_DENIED`, distinct from `OUT_OF_SCOPE` (inner cage) and `BUSINESS_RULE` (handler rule). `configs/G_safety_runtime.yaml` = F + this, giving the prompt-only vs runtime-enforced arms.
+6. **Workflow engine mode** (`architecture.workflow.mode: filter | engine`) — `filter` is the legacy behaviour where the workflow only intersects per-step `allowed_tools` while the LLM drives sequencing. `engine` implements §4.3.1: the engine owns control flow, the LLM's `next_state` is ignored while a workflow is live, and the prompt is scoped to one step's local task. `architecture.workflow.rollback_on_failure` adds §4.3.4 Saga compensation (restore the world to the workflow-entry checkpoint on failure). `configs/H_workflow_engine.yaml` = F + both.
+
+Related: `state_machine.oos_guidance` / `oos_repeat_limit` control out-of-scope feedback. A blocked call now names the state that exposes the tool and how to reach it, and identical blocked calls are capped before diverting to `ASK_USER` — the H3 result (out-of-scope rate *rising* D→E) came from bare rejections that models simply retried. Set `oos_guidance: false, oos_repeat_limit: 0` to reproduce the old behaviour.
+
 ## Environment & commands
 
 Python 3.11/3.12 only. The virtualenv lives at `venv/` (some docs/scripts also reference `.venv/`). Shell is PowerShell — use `;` not `&&` to chain.

@@ -14,7 +14,7 @@ happy-path slice exercised by ``configs/D_minimal.yaml``.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 
 
 @dataclass(frozen=True)
@@ -223,6 +223,22 @@ STATES: dict[str, StateSpec] = {
         next_states=frozenset(),
         terminal=True,
     ),
+}
+
+
+# Every non-terminal working state must be able to bail out to ASK_USER.
+# §4.4.3 lists "失败触发：错误时回退到安全状态" as a first-class transition trigger,
+# and the out-of-scope circuit breaker in the orchestrator depends on it: without
+# a universal escape hatch, an agent that keeps requesting a tool the current
+# state forbids can only thrash until max_turns or die early. Applied as a
+# post-pass so the per-state tables above stay readable.
+STATES = {
+    name: (
+        spec
+        if spec.terminal or name == "ASK_USER"
+        else replace(spec, next_states=spec.next_states | frozenset({"ASK_USER"}))
+    )
+    for name, spec in STATES.items()
 }
 
 INITIAL_STATE = "ANALYZE_INTENT"

@@ -116,6 +116,8 @@ class TraceContext:
         # Phase-2 architecture metadata (populated by orchestrator)
         self.rag_summary: dict[str, Any] = {"enabled": False}
         self.workflow_summary: dict[str, Any] = {"enabled": False, "selected_workflow": None}
+        # §4.7 runtime safety cage — per-run denial log (see agent/policy.py)
+        self.policy_summary: dict[str, Any] = {"enabled": False}
 
     # ---------- state events
     def enter_state(self, name: str) -> None:
@@ -196,6 +198,7 @@ class TraceContext:
             "llm_calls": [asdict(c) for c in self.llm_calls],
             "rag": self.rag_summary,
             "workflow": self.workflow_summary,
+            "policy": self.policy_summary,
             "totals": {
                 "input_tokens": total_input,
                 "output_tokens": total_output,

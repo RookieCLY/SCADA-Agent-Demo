@@ -89,7 +89,11 @@ class ToolRegistry:
         from pydantic import Field
         args_models = [cls.args_model for cls in actions.values()]
         if len(args_models) > 1:
-            union_model = Annotated[Union.__getitem__(tuple(args_models)), Field(discriminator="action")]
+            # Subscript form rather than ``Union.__getitem__(...)``: on Python
+            # 3.14 ``Union`` is ``types.UnionType`` and its ``__getitem__`` is a
+            # descriptor that rejects a bare tuple. ``Union[tuple(...)]`` builds
+            # the identical type on 3.11–3.14.
+            union_model = Annotated[Union[tuple(args_models)], Field(discriminator="action")]
         elif len(args_models) == 1:
             union_model = args_models[0]
         else:

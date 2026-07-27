@@ -188,6 +188,10 @@ class WorkflowEngine:
     def current_step(self, exec_state: WorkflowExecutionState) -> Step:
         return self._by_id[exec_state.current_step_id]
 
+    def step_order(self) -> list[str]:
+        """Step ids in YAML declaration order (used to render progress)."""
+        return list(self._order)
+
     def step_allowed_tools(self, exec_state: WorkflowExecutionState) -> set[str] | None:
         """Per-step Tool whitelist (``None`` if step is deterministic)."""
         step = self.current_step(exec_state)
