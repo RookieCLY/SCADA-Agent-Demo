@@ -80,7 +80,7 @@ class ArchitectureConfig(BaseModel):
 
 
 class ModelConfig(BaseModel):
-    provider: Literal["mock", "anthropic", "openai", "deepseek", "xiaomi-mimo", "openrouter", "glm"] = "mock"
+    provider: Literal["mock", "anthropic", "openai", "deepseek", "xiaomi-mimo", "openrouter", "glm", "docode"] = "mock"
     name: str = "mock"
     temperature: float = 0.0
     max_tokens: int = 4096

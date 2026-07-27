@@ -20,7 +20,7 @@ def _schema_for(schemas: list[dict], name: str) -> dict:
 
 
 def test_hierarchical_prompt_lists_only_allowed_actions():
-	agent = assemble(CONFIGS_DIR / "F_full_four_in_one.yaml")
+	agent = assemble(CONFIGS_DIR / "E_with_state_machine.yaml")
 	visible, atomic_pool = agent._visible_tools_for("ANALYZE_INTENT", "维护模式横幅", None)
 
 	manage_pages = next(tool for tool in visible if tool["name"] == "manage_pages")
@@ -34,7 +34,7 @@ def test_hierarchical_prompt_lists_only_allowed_actions():
 
 
 def test_hierarchical_schema_filters_domain_action_branches():
-	agent = assemble(CONFIGS_DIR / "F_full_four_in_one.yaml")
+	agent = assemble(CONFIGS_DIR / "E_with_state_machine.yaml")
 	llm = OpenAICompatibleLLM(
 		model="test",
 		api_key="test",
@@ -62,7 +62,7 @@ def test_hierarchical_schema_filters_domain_action_branches():
 
 
 def test_state_machine_still_rejects_manually_injected_disallowed_action():
-	agent = assemble(CONFIGS_DIR / "F_full_four_in_one.yaml")
+	agent = assemble(CONFIGS_DIR / "E_with_state_machine.yaml")
 	visible, atomic_pool = agent._visible_tools_for("MANAGE_PAGES", "维护模式横幅", None)
 	assert "bind_point" not in atomic_pool
 	assert "bind_point" not in STATES["MANAGE_PAGES"].allowed_tools

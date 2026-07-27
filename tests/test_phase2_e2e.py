@@ -195,6 +195,33 @@ def test_resources_separation_emits_resource_reads(tmp_path: Path):
 
 
 @pytest.mark.mock_only
+def test_resources_separation_never_strips_state_to_zero_tools(tmp_path: Path):
+    """§4.5 read-strip must never empty a state's tool surface.
+
+    A state whose whitelist is *entirely* read-only (ANALYZE_INTENT) must keep
+    its read atomics — stripping them all strands the LLM with nothing to call
+    (observed as cases collapsing to 0 visible tools and failing). A *mixed*
+    state must still have its read atomics pruned, so the strip is not disabled.
+    """
+    arch = ArchitectureConfig(
+        hierarchical_tools=True,
+        resources_separation=True,
+        state_machine=StateMachineConfig(enabled=True),
+    )
+    agent = _agent(arch, tmp_path, with_index=False, with_workflows=False, force_mock=True)
+
+    # ANALYZE_INTENT's whitelist is all read-only → the guard must keep them.
+    analyze = agent._allowed_atomics("ANALYZE_INTENT", None)
+    assert analyze, "read-only-only state must not be stripped to an empty tool surface"
+    assert "list_pages" in analyze
+
+    # MANAGE_PAGES is mixed → read atomics are still pruned, write tools remain.
+    pages = agent._allowed_atomics("MANAGE_PAGES", None)
+    assert "create_page" in pages
+    assert "list_pages" not in pages
+
+
+@pytest.mark.mock_only
 def test_resources_disabled_falls_back_to_error(tmp_path: Path):
     """If resources_separation is OFF but the LLM still tries read_resource, the
     orchestrator must record a non-found resource_read instead of crashing."""

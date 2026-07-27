@@ -921,6 +921,13 @@ def evaluate_trace(
         "final_state_report": final_state_report,
         "expected_error_code": golden.expected_error_code,
         **errors,
+        # A single representative error code for the failure taxonomy. The
+        # parquet schema and make_report.py both expect a top-level ``error_code``
+        # but ``_error_metrics`` only ever emitted ``observed_error_codes`` /
+        # ``error_code_distribution``, so the column was always null and every
+        # failure rendered as "错误码: UNKNOWN". We surface the last non-OK code
+        # (typically the one that ended the run), or "OK" when nothing failed.
+        "error_code": (errors["observed_error_codes"][-1] if errors["observed_error_codes"] else "OK"),
         **trajectory,
         "order_distance": selection["order_distance"],
         "order_correctness": selection["order_correctness"],

@@ -69,6 +69,28 @@ class DeterministicStep(StepBase):
 Step = LLMStep | DeterministicStep
 
 
+# Characters that mean a trigger keyword is really a regex pattern. Several
+# workflow YAMLs author entries like ``新建.*点位`` directly in the ``keywords``
+# list, but the matcher historically did literal substring containment, so
+# ``.*`` was searched for verbatim and every such Chinese query silently missed
+# its workflow (English ``create point`` still matched). Rather than migrate the
+# YAMLs and risk missing one, we detect metacharacters and match those entries
+# as regexes; a keyword with no metacharacters still matches by containment,
+# which is byte-for-byte the old behaviour.
+_REGEX_METACHARS = frozenset(r".*+?[](){}|^$\\")
+
+
+def _keyword_matches(keyword: str, query_lower: str, query_raw: str) -> bool:
+    if any(ch in _REGEX_METACHARS for ch in keyword):
+        try:
+            return re.search(keyword, query_raw, re.IGNORECASE) is not None
+        except re.error:
+            # Malformed pattern — fall back to literal containment rather than
+            # crash the whole catalogue on one bad YAML entry.
+            return keyword.lower() in query_lower
+    return keyword.lower() in query_lower
+
+
 class WorkflowTrigger(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -166,7 +188,7 @@ class WorkflowEngine:
     def matches(self, query: str) -> bool:
         t = self.wf.trigger
         q_lower = query.lower()
-        kw_hits = [k.lower() in q_lower for k in t.keywords]
+        kw_hits = [_keyword_matches(k, q_lower, query) for k in t.keywords]
         if t.keywords:
             if t.require_all_keywords and not all(kw_hits):
                 return False

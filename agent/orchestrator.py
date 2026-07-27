@@ -30,7 +30,7 @@ from typing import Any, Protocol
 from agent.config import ExperimentConfig, load_config
 from agent.dispatcher import dispatch_atomic, dispatch_domain
 from agent.llm import LLMProvider, LLMResponse, build_llm
-from agent.policy import SafetyPolicy, build_policy
+from agent.policy import SafetyPolicy, build_policy, is_read_only
 from agent.state_machine import INITIAL_STATE, STATES, StateMachine
 from agent.tool_rag import (
     ScoredTool,
@@ -214,6 +214,7 @@ class Agent:
         else:
             allowed = all_atomics
 
+        step_tools: frozenset[str] | list[str] | None = None
         if (
             arch.workflow.enabled
             and self.workflow_catalogue is not None
@@ -231,6 +232,34 @@ class Agent:
                 step_tools = engine.step_allowed_tools(wf_state)
                 if step_tools is not None:
                     allowed = [t for t in allowed if t in step_tools]
+
+        # §4.5 Resources / Tools separation. When on, read-only queries are
+        # served through the ``read_resource`` pseudo-tool, so they must not
+        # also occupy slots in the Tool catalogue — that is the whole point of
+        # the lever (§4.5.2 "Tool 列表污染"). Previously ``resources_separation``
+        # exposed the Resource URIs *without* removing the list/read atomics, so
+        # the visible-tool count never actually dropped and H5's "tool
+        # reduction" was measuring nothing. Now the read atomics are physically
+        # removed from the visible surface (they remain dispatchable if somehow
+        # called, but the LLM no longer sees them as tools).
+        #
+        # Exception: a live Workflow step's ``allowed_tools`` are a hard §4.3
+        # requirement — the engine routes the task *through* them, and the
+        # ``read_resource`` pseudo-tool cannot satisfy a step that *requires* a
+        # read atomic (e.g. HistoryQuery's ``query_history``). Stripping those
+        # would let §4.5 silently sabotage §4.3, so tools the active step allows
+        # are exempt from the pollution strip.
+        if arch.resources_separation and self.resource_registry is not None:
+            step_keep = set(step_tools) if step_tools is not None else set()
+            stripped = [t for t in allowed if not is_read_only(t) or t in step_keep]
+            # Never strip a state down to an empty tool surface. When the current
+            # whitelist is *entirely* read-only (e.g. ANALYZE_INTENT, or a
+            # query-only state), removing every read atomic would strand the LLM
+            # with nothing to call and no way to progress — observed as cases
+            # collapsing to 0 visible tools and failing. The pollution-reduction
+            # benefit of §4.5 only makes sense when write tools remain, so fall
+            # back to the un-stripped set in that degenerate case.
+            allowed = stripped if stripped else allowed
         return allowed
 
     def _rank_with_rag(self, query: str, allowed_atomics: list[str]) -> list[str]:

@@ -15,8 +15,8 @@
   "expected_final_state_diff": {
     "match_mode": "subset",
     "added_or_modified": {
-      "history_configs.PT101.storage_mode": "on_change",
-      "history_configs.PT101.enabled": true
+      "histories.PT101.storage_mode": "on_change",
+      "histories.PT101.enabled": true
     },
     "removed": [],
     "unchanged_keys_must_remain": []

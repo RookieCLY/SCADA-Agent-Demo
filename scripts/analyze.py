@@ -126,6 +126,46 @@ def two_way_anova(df: pd.DataFrame, factor_a: str, factor_b: str, response: str)
     }
 
 
+def bootstrap_mean_diff_ci(
+    x: pd.Series,
+    y: pd.Series,
+    n_boot: int = 10000,
+    alpha: float = 0.05,
+    seed: int = 42,
+) -> dict | None:
+    """Bootstrap CI for mean(x) - mean(y), plus a two-sided bootstrap p-value.
+
+    H2 (Tool RAG) and H5 (Resources) were reported with bare descriptive means
+    and no test at all — H2 in particular is the paper's one clean positive
+    result. A nonparametric bootstrap is the right tool here: the success/latency
+    metrics are not normal (successes are Bernoulli, latency is right-skewed) and
+    the group sizes differ. The two-sided p-value is the fraction of resampled
+    differences on the opposite side of zero from the observed difference,
+    doubled — i.e. a test of H0: mean(x) == mean(y).
+    """
+    x_arr = np.asarray(x.dropna(), dtype=float)
+    y_arr = np.asarray(y.dropna(), dtype=float)
+    if len(x_arr) < 2 or len(y_arr) < 2:
+        return None
+    rng = np.random.default_rng(seed)
+    obs = float(x_arr.mean() - y_arr.mean())
+    bx = rng.choice(x_arr, size=(n_boot, len(x_arr)), replace=True).mean(axis=1)
+    by = rng.choice(y_arr, size=(n_boot, len(y_arr)), replace=True).mean(axis=1)
+    diffs = bx - by
+    lo, hi = np.percentile(diffs, [100 * alpha / 2, 100 * (1 - alpha / 2)])
+    # Two-sided bootstrap p-value against H0: diff == 0.
+    p_side = np.mean(diffs <= 0) if obs > 0 else np.mean(diffs >= 0)
+    p_value = min(1.0, 2.0 * float(p_side))
+    return {
+        "observed_diff": obs,
+        "ci_low": float(lo),
+        "ci_high": float(hi),
+        "p_value": p_value,
+        "n_x": len(x_arr),
+        "n_y": len(y_arr),
+    }
+
+
 def write_diagnostic_plot(filename: str, title: str, message: str) -> None:
     fig, ax = plt.subplots(figsize=(7, 5))
     ax.axis("off")
@@ -209,7 +249,12 @@ def _run_analysis_and_plot(df: pd.DataFrame, model_name: str | None = None) -> N
     flat_grp = df_main[df_main["config_name"] == "A_flat_baseline"]
     hier_grp = df_main[df_main["config_name"] == "B_hierarchical_only"]
     c_grp = df_main[df_main["config_name"].isin(["C_hier_rag", "C_hier_rag_workflow"])]
-    grp_d = df_main[df_main["config_name"].isin(["D_hier_rag_workflow", "D_minimal"])]
+    # D is the "+Workflow" cell (C + Workflow). D_minimal is a *different*
+    # config — hierarchical + state machine, NO workflow and NO RAG — so folding
+    # it into D contaminated the very layer D is meant to isolate. D is the
+    # baseline for both H4 (workflow) and H5, so this leaked into two
+    # hypotheses. D_minimal is not part of the phase4 ablation run anyway.
+    grp_d = df_main[df_main["config_name"] == "D_hier_rag_workflow"]
     grp_e = df_main[df_main["config_name"] == "E_with_state_machine"]
     grp_f = df_main[df_main["config_name"] == "F_full_four_in_one"]
 
@@ -280,6 +325,29 @@ def _run_analysis_and_plot(df: pd.DataFrame, model_name: str | None = None) -> N
 
         print(f"Config B: Strict Success={strict_b:.2%}, Functional Success={func_b:.2%}, Weighted Success={weighted_b:.2%}, Latency={latency_b/1000:.2f}s")
         print(f"Config C: Strict Success={strict_c:.2%}, Functional Success={func_c:.2%}, Weighted Success={weighted_c:.2%}, Latency={latency_c/1000:.2f}s")
+
+        # H2's claim is two-part: RAG cuts latency/cost *without* hurting
+        # success. So it needs (a) a test that the latency drop is real, and
+        # (b) evidence the success rate did NOT drop. Bootstrap CIs give both:
+        # a latency CI that excludes zero, and a success CI centred near zero.
+        lat_ci = bootstrap_mean_diff_ci(c_grp["e2e_latency_ms"], hier_grp["e2e_latency_ms"])
+        succ_ci = bootstrap_mean_diff_ci(
+            c_grp["strict_success"].astype(float), hier_grp["strict_success"].astype(float)
+        )
+        if lat_ci:
+            print(
+                f"H2 latency Δ(C−B): {lat_ci['observed_diff']/1000:.2f}s "
+                f"[95% CI {lat_ci['ci_low']/1000:.2f}, {lat_ci['ci_high']/1000:.2f}], "
+                f"bootstrap p={lat_ci['p_value']:.4f}"
+            )
+        if succ_ci:
+            no_harm = succ_ci["ci_low"] > -0.05
+            print(
+                f"H2 strict-success Δ(C−B): {succ_ci['observed_diff']:+.4f} "
+                f"[95% CI {succ_ci['ci_low']:+.4f}, {succ_ci['ci_high']:+.4f}], "
+                f"bootstrap p={succ_ci['p_value']:.4f} "
+                f"→ success preserved (CI low > −5pp): {no_harm}"
+            )
 
         fig, ax1 = plt.subplots(figsize=(7, 5))
         labels = ["Config B\n(No RAG)", "Config C\n(With RAG)"]
@@ -364,38 +432,61 @@ def _run_analysis_and_plot(df: pd.DataFrame, model_name: str | None = None) -> N
         write_diagnostic_plot("h4_step_count_boxplot.png", "H4 data incomplete", "Observed no-workflow and workflow groups are required.")
 
     print("\n--- H5 Analysis (Resources Separation) ---")
-    if len(grp_d) > 0 and len(grp_f) > 0:
-        strict_d = grp_d["strict_success"].mean()
+    # H5 isolates Resources/Tools separation, which is the ONLY lever that
+    # differs between E and F. The previous code compared D vs F, so it bundled
+    # the StateMachine (D→E) and Workflow effects into what it attributed to
+    # Resources. The config YAML itself documents the comparison as E vs F.
+    if len(grp_e) > 0 and len(grp_f) > 0:
+        strict_e = grp_e["strict_success"].mean()
         strict_f = grp_f["strict_success"].mean()
-        func_d = grp_d["functional_success"].mean()
+        func_e = grp_e["functional_success"].mean()
         func_f = grp_f["functional_success"].mean()
-        weighted_d = grp_d["weighted_success"].mean()
+        weighted_e = grp_e["weighted_success"].mean()
         weighted_f = grp_f["weighted_success"].mean()
-        tools_d = grp_d["visible_count_mean"].mean()
+        tools_e = grp_e["visible_count_mean"].mean()
         tools_f = grp_f["visible_count_mean"].mean()
-        reduction_pct = (tools_d - tools_f) / tools_d if tools_d > 0 else np.nan
-        print(f"Config D Visible Tools: {tools_d:.2f}, Strict Success: {strict_d:.2%}, Functional Success: {func_d:.2%}, Weighted Success: {weighted_d:.2%}")
+        reduction_pct = (tools_e - tools_f) / tools_e if tools_e > 0 else np.nan
+        print(f"Config E Visible Tools: {tools_e:.2f}, Strict Success: {strict_e:.2%}, Functional Success: {func_e:.2%}, Weighted Success: {weighted_e:.2%}")
         print(f"Config F Visible Tools: {tools_f:.2f}, Strict Success: {strict_f:.2%}, Functional Success: {func_f:.2%}, Weighted Success: {weighted_f:.2%}")
-        print(f"Visible Tool Count Reduction: {reduction_pct:.2%}")
+        print(f"Visible Tool Count Reduction (E→F): {reduction_pct:.2%}")
+        # Same two-part claim as H2: fewer visible tools, no loss of success.
+        tools_ci = bootstrap_mean_diff_ci(grp_e["visible_count_mean"], grp_f["visible_count_mean"])
+        succ_ci = bootstrap_mean_diff_ci(
+            grp_f["strict_success"].astype(float), grp_e["strict_success"].astype(float)
+        )
+        if tools_ci:
+            print(
+                f"H5 visible-tools Δ(E−F): {tools_ci['observed_diff']:.2f} "
+                f"[95% CI {tools_ci['ci_low']:.2f}, {tools_ci['ci_high']:.2f}], "
+                f"bootstrap p={tools_ci['p_value']:.4f}"
+            )
+        if succ_ci:
+            no_harm = succ_ci["ci_low"] > -0.05
+            print(
+                f"H5 strict-success Δ(F−E): {succ_ci['observed_diff']:+.4f} "
+                f"[95% CI {succ_ci['ci_low']:+.4f}, {succ_ci['ci_high']:+.4f}], "
+                f"bootstrap p={succ_ci['p_value']:.4f} "
+                f"→ success preserved (CI low > −5pp): {no_harm}"
+            )
         plt.figure(figsize=(7, 5))
-        plt.scatter([tools_d], [strict_d * 100], color="#d95f02", s=150, marker="o", zorder=5, label="Config D (Strict Success)")
+        plt.scatter([tools_e], [strict_e * 100], color="#d95f02", s=150, marker="o", zorder=5, label="Config E (Strict Success)")
         plt.scatter([tools_f], [strict_f * 100], color="#2b5c8f", s=150, marker="o", zorder=5, label="Config F (Strict Success)")
-        plt.scatter([tools_d], [func_d * 100], color="#d95f02", s=150, marker="^", zorder=5, label="Config D (Functional Success)")
+        plt.scatter([tools_e], [func_e * 100], color="#d95f02", s=150, marker="^", zorder=5, label="Config E (Functional Success)")
         plt.scatter([tools_f], [func_f * 100], color="#2b5c8f", s=150, marker="^", zorder=5, label="Config F (Functional Success)")
-        plt.scatter([tools_d], [weighted_d * 100], color="#d95f02", s=150, marker="s", zorder=5, label="Config D (Weighted Success)")
+        plt.scatter([tools_e], [weighted_e * 100], color="#d95f02", s=150, marker="s", zorder=5, label="Config E (Weighted Success)")
         plt.scatter([tools_f], [weighted_f * 100], color="#2b5c8f", s=150, marker="s", zorder=5, label="Config F (Weighted Success)")
-        plt.title("Impact of Resources Separation on Visible Tools and Success")
+        plt.title("Impact of Resources Separation on Visible Tools and Success (E vs F)")
         plt.xlabel("Average Visible Tools per Turn")
         plt.ylabel("Success Rate (%)")
-        plt.xlim(0, max(tools_d, tools_f) * 1.2 if max(tools_d, tools_f) > 0 else 1)
+        plt.xlim(0, max(tools_e, tools_f) * 1.2 if max(tools_e, tools_f) > 0 else 1)
         plt.ylim(0, 100)
         plt.grid(True, linestyle=":", alpha=0.6)
         plt.legend(loc="best")
         plt.savefig(ASSETS_DIR / "h5_tool_reduction_vs_success.png")
         plt.close()
     else:
-        print("Skipping H5 statistics: Config D and Config F are both required.")
-        write_diagnostic_plot("h5_tool_reduction_vs_success.png", "H5 data incomplete", "Observed data for Config D and Config F is required.")
+        print("Skipping H5 statistics: Config E and Config F are both required.")
+        write_diagnostic_plot("h5_tool_reduction_vs_success.png", "H5 data incomplete", "Observed data for Config E and Config F is required.")
 
     print("\n--- H6 Analysis (Interaction Effects - Two-way ANOVA) ---")
     anova_strict = two_way_anova(df_main, "hierarchical", "workflow", "strict_success")

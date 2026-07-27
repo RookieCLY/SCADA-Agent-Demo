@@ -233,11 +233,24 @@ def main():
                     row["judge_tool"] = jr.get("tool_correctness")
                     row["judge_param"] = jr.get("parameter_correctness")
                     row["judge_efficiency"] = jr.get("step_efficiency")
+                    # Previously the judge's holistic verdict — overall score,
+                    # pass/fail, communication quality, and failure category —
+                    # was dropped at aggregation, so the four dimension scores
+                    # were all that survived. Carry the verdict through so the
+                    # ~2k already-judged traces contribute their full signal.
+                    row["judge_overall"] = jr.get("overall")
+                    row["judge_communication"] = jr.get("communication_quality")
+                    row["judge_passed"] = jr.get("passed")
+                    row["judge_failure_category"] = jr.get("failure_category")
                 else:
                     row["judge_completion"] = None
                     row["judge_tool"] = None
                     row["judge_param"] = None
                     row["judge_efficiency"] = None
+                    row["judge_overall"] = None
+                    row["judge_communication"] = None
+                    row["judge_passed"] = None
+                    row["judge_failure_category"] = None
 
                 all_rows.append(row)
             except Exception as e:
@@ -282,6 +295,10 @@ def main():
             "judge_tool": safe_float(row.get("judge_tool")),
             "judge_param": safe_float(row.get("judge_param")),
             "judge_efficiency": safe_float(row.get("judge_efficiency")),
+            "judge_overall": safe_float(row.get("judge_overall")),
+            "judge_communication": safe_float(row.get("judge_communication")),
+            "judge_passed": safe_bool(row.get("judge_passed")),
+            "judge_failure_category": safe_str(row.get("judge_failure_category")),
             "trace_id": safe_str(row.get("trace_id")),
             "loop_stuck": safe_bool(row.get("loop_stuck")) or False,
             "error_code": safe_str(row.get("error_code")),
@@ -322,6 +339,10 @@ def main():
         "judge_tool": pl.Float64,
         "judge_param": pl.Float64,
         "judge_efficiency": pl.Float64,
+        "judge_overall": pl.Float64,
+        "judge_communication": pl.Float64,
+        "judge_passed": pl.Boolean,
+        "judge_failure_category": pl.String,
         "trace_id": pl.String,
         "loop_stuck": pl.Boolean,
         "error_code": pl.String,

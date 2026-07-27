@@ -760,6 +760,25 @@ def build_llm(
             registry=registry,
             hierarchical=hierarchical,
         )
+    if cfg.provider == "docode":
+        _load_dotenv_into_environ()
+        api_key = _env("DOCODE_API_KEY")
+        base_url = _env("DOCODE_API_URL") or "https://docode.cc/v1"
+        model_name = cfg.name or _env("DOCODE_MODEL") or "gpt-5.6-terra"
+        if not api_key:
+            raise RuntimeError(
+                "docode: missing DOCODE_API_KEY (set it in .env or env)."
+            )
+        hierarchical = arch.hierarchical_tools if arch is not None else False
+        return OpenAICompatibleLLM(
+            model=model_name,
+            api_key=api_key,
+            base_url=base_url,
+            temperature=cfg.temperature,
+            max_tokens=cfg.max_tokens,
+            registry=registry,
+            hierarchical=hierarchical,
+        )
     raise NotImplementedError(
         f"Provider {cfg.provider!r} is not wired yet."
     )

@@ -174,7 +174,9 @@ def main(model_name: str | None = None) -> None:
     flat_grp = df_main[df_main["config_name"] == "A_flat_baseline"]
     hier_grp = df_main[df_main["config_name"] == "B_hierarchical_only"]
     c_grp = df_main[df_main["config_name"].isin(["C_hier_rag", "C_hier_rag_workflow"])]
-    grp_d = df_main[df_main["config_name"].isin(["D_hier_rag_workflow", "D_minimal"])]
+    # D is C + Workflow. D_minimal (hierarchical + state machine, no workflow,
+    # no RAG) is a different config and was contaminating the H4/H5 baseline.
+    grp_d = df_main[df_main["config_name"] == "D_hier_rag_workflow"]
     grp_e = df_main[df_main["config_name"] == "E_with_state_machine"]
     grp_f = df_main[df_main["config_name"] == "F_full_four_in_one"]
 
@@ -218,15 +220,17 @@ def main(model_name: str | None = None) -> None:
         if len(steps_no_wf) >= 2 and len(steps_wf) >= 2 and steps_no_wf.var() != 0.0 and steps_wf.var() != 0.0:
             h4_bartlett, h4_p = stats.bartlett(steps_no_wf, steps_wf)
 
-    success_d = success_f = func_success_d = func_success_f = tools_d = tools_f = tool_reduction = None
-    if len(grp_d) > 0 and len(grp_f) > 0:
-        success_d = grp_d["strict_success"].mean()
+    # H5 isolates Resources separation — the only lever differing between E and
+    # F. The previous report compared D vs F, folding in StateMachine + Workflow.
+    success_e = success_f = func_success_e = func_success_f = tools_e = tools_f = tool_reduction = None
+    if len(grp_e) > 0 and len(grp_f) > 0:
+        success_e = grp_e["strict_success"].mean()
         success_f = grp_f["strict_success"].mean()
-        func_success_d = grp_d["functional_success"].mean()
+        func_success_e = grp_e["functional_success"].mean()
         func_success_f = grp_f["functional_success"].mean()
-        tools_d = grp_d["visible_count_mean"].mean()
+        tools_e = grp_e["visible_count_mean"].mean()
         tools_f = grp_f["visible_count_mean"].mean()
-        tool_reduction = (tools_d - tools_f) / tools_d if tools_d > 0 else None
+        tool_reduction = (tools_e - tools_f) / tools_e if tools_e > 0 else None
 
     anova_res = two_way_anova(df_main, "hierarchical", "workflow", "strict_success")
     anova_func_res = two_way_anova(df_main, "hierarchical", "workflow", "functional_success")
@@ -324,16 +328,17 @@ def main(model_name: str | None = None) -> None:
 
 ### H4: 工作流方差降低
 - **状态**: {"已接受" if h4_p is not None and h4_p < 0.05 else "差异不显著或方差不足"}
-- **对比组**: {no_workflow_label} 对比 D_hier_rag_workflow/D_minimal。
+- **对比组**: {no_workflow_label} 对比 D_hier_rag_workflow。
 - **结果**: Bartlett 检验 p 值 = **{fmt_num(h4_p)}** (统计量 = **{fmt_num(h4_bartlett)}**)。步骤数标准差: 无工作流 = **{fmt_num(steps_no_wf_std, 2)}** vs 有工作流 = **{fmt_num(steps_wf_std, 2)}**。
 - **图表**: ![H4 步骤数箱线图]({get_img("h4_step_count_boxplot.png")})
 
-### H5: 资源隔离
-- **状态**: {"已接受" if success_f is not None and success_d is not None and tool_reduction is not None and abs(success_f - success_d) < 0.05 and tool_reduction > 0.3 else "当前数据不支持"}
+### H5: 资源隔离 (E vs F)
+- **状态**: {"已接受" if success_f is not None and success_e is not None and tool_reduction is not None and abs(success_f - success_e) < 0.05 and tool_reduction > 0.3 else "当前数据不支持"}
+- **对比组**: E_with_state_machine 对比 F_full_four_in_one (资源隔离是二者唯一差异)。
 - **结果**:
-  - **严格轨迹成功率**: D = **{fmt_pct(success_d)}** vs F = **{fmt_pct(success_f)}**
-  - **主要功能成功率**: D = **{fmt_pct(func_success_d)}** vs F = **{fmt_pct(func_success_f)}**
-  - **可见工具数**: D = **{fmt_num(tools_d, 1)}** vs F = **{fmt_num(tools_f, 1)}** (变化比例: **{fmt_pct(-tool_reduction) if tool_reduction is not None else "N/A"}**)。
+  - **严格轨迹成功率**: E = **{fmt_pct(success_e)}** vs F = **{fmt_pct(success_f)}**
+  - **主要功能成功率**: E = **{fmt_pct(func_success_e)}** vs F = **{fmt_pct(func_success_f)}**
+  - **可见工具数**: E = **{fmt_num(tools_e, 1)}** vs F = **{fmt_num(tools_f, 1)}** (变化比例: **{fmt_pct(-tool_reduction) if tool_reduction is not None else "N/A"}**)。
 - **图表**: ![H5 工具减少与成功率散点图]({get_img("h5_tool_reduction_vs_success.png")})
 
 ### H6: 交互作用效应 (双因素方差分析 / Two-way ANOVA)
