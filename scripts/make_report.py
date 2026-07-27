@@ -311,7 +311,8 @@ def main(model_name: str | None = None) -> None:
 ### H1: 分层与扁平(Flat)架构
 - **状态**: {"已接受" if h1_p is not None and h1_p < 0.05 and h1_cliffs and h1_cliffs > 0 else "当前数据不支持"}
 - **结果**: T 检验 (Hier > Flat) p 值 = **{fmt_num(h1_p)}** (t = **{fmt_num(h1_t)}**), Cliff's delta = **{fmt_num(h1_cliffs)}**。
-- **图表**: ![H1 工具扩展图]({get_img("h1_tool_count_vs_f1.png")})
+- **准确率图**: ![H1 工具扩展图]({get_img("h1_tool_count_vs_f1.png")})
+- **效率图 (随工具规模的可见工具/Token/延迟/成本)**: ![H1 效率随工具规模扩展图]({get_img("h1_efficiency_vs_tool_count.png")})
 
 ### H2: 工具 RAG 性能
 - **状态**: {"已评估" if h2_available else "未评估: 缺少 Config C_hier_rag 数据"}

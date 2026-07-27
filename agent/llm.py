@@ -423,6 +423,11 @@ class OpenAICompatibleLLM:
         self._messages: list[dict[str, Any]] = []
         self._pending_tool_ids: list[tuple[str, str]] = []
         self._first_call = True
+        # Assembled domain-tool schemas are static per (domain, allowed-actions)
+        # set but were rebuilt (oneOf branches + doc string) on every turn.
+        # Cache them; callers treat the result as read-only (same contract as
+        # _cached_json_schema).
+        self._domain_schema_cache: dict[tuple[str, tuple[str, ...]], dict[str, Any]] = {}
 
     def reset(self) -> None:
         """Discard cross-turn state so the next ``call()`` starts a fresh chat.
@@ -522,6 +527,11 @@ class OpenAICompatibleLLM:
             ]
             if not allowed:
                 allowed = list(d.actions.keys())
+            cache_key = (name, tuple(allowed))
+            cached = self._domain_schema_cache.get(cache_key)
+            if cached is not None:
+                out.append(cached)
+                continue
             actions_doc = "\n".join(
                 f"- {action}: {d.actions[action].description}" for action in allowed
             )
@@ -564,16 +574,16 @@ class OpenAICompatibleLLM:
                     },
                     "required": ["action"],
                 }
-            out.append(
-                {
-                    "type": "function",
-                    "function": {
-                        "name": d.name,
-                        "description": f"{d.description}\nCurrently allowed actions:\n{actions_doc}",
-                        "parameters": params,
-                    },
-                }
-            )
+            func_schema = {
+                "type": "function",
+                "function": {
+                    "name": d.name,
+                    "description": f"{d.description}\nCurrently allowed actions:\n{actions_doc}",
+                    "parameters": params,
+                },
+            }
+            self._domain_schema_cache[cache_key] = func_schema
+            out.append(func_schema)
         return out
 
     # ----------------------------------------- LLMProvider impl

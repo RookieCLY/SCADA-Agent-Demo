@@ -175,6 +175,117 @@ def write_diagnostic_plot(filename: str, title: str, message: str) -> None:
     plt.close(fig)
 
 
+# Configs used as the "caged" arms of the tool-count sweep, in preference order.
+_CAGED_SWEEP_CONFIGS = ["F_full_four_in_one", "D_hier_rag_workflow"]
+_CONFIG_LABELS = {
+    "A_flat_baseline": "Flat (A)",
+    "D_hier_rag_workflow": "Caged (D: Hier+RAG+WF)",
+    "F_full_four_in_one": "Four-in-one (F)",
+}
+_CONFIG_COLORS = {
+    "A_flat_baseline": "#d95f02",
+    "D_hier_rag_workflow": "#2b5c8f",
+    "F_full_four_in_one": "#1b7837",
+}
+
+
+def plot_h1_efficiency_scaling(df: pd.DataFrame) -> None:
+    """H1 efficiency curves — the paper's central cost claim.
+
+    As the tool corpus grows (50 → 1000+), the caged four-in-one architecture
+    should keep per-turn *visible tools*, *input tokens*, *latency* and *cost*
+    roughly flat, while the flat baseline scales up with N. The existing H1 plot
+    shows only accuracy (F1) vs tool_count; this plots the efficiency datapoints
+    the paper actually argues about. One line per config, faceted 2×2.
+    """
+    filename = "h1_efficiency_vs_tool_count.png"
+    if "tool_count" not in df.columns or not df["tool_count"].notna().any():
+        write_diagnostic_plot(
+            filename, "H1 efficiency data missing",
+            "Tool-count sweep traces (rows carrying tool_count) are required.\n"
+            "Run configs/sweep_tool_count.yaml, then scripts/aggregate.py.",
+        )
+        return
+
+    present_caged = [c for c in _CAGED_SWEEP_CONFIGS if (df["config_name"] == c).any()]
+    keep = ["A_flat_baseline", *present_caged]
+    subset = df[df["config_name"].isin(keep)].dropna(subset=["tool_count"])
+    if subset.empty:
+        write_diagnostic_plot(
+            filename, "H1 efficiency data missing",
+            "No A_flat_baseline / caged sweep rows with a tool_count were found.",
+        )
+        return
+
+    panels = [
+        ("visible_count_mean", "Visible tools / turn", 1.0),
+        ("input_tokens", "Input tokens / run", 1.0),
+        ("e2e_latency_ms", "E2E latency (s)", 1.0 / 1000.0),
+        ("cost_usd", "Cost (USD) / run", 1.0),
+    ]
+    fig, axes = plt.subplots(2, 2, figsize=(11, 8))
+    any_plotted = False
+    for ax, (col, ylabel, scale) in zip(axes.ravel(), panels, strict=False):
+        if col not in subset.columns or not subset[col].notna().any():
+            ax.axis("off")
+            ax.set_title(f"{ylabel}: no data")
+            continue
+        grouped = (
+            subset.dropna(subset=[col])
+            .groupby(["config_name", "tool_count"])[col]
+            .mean()
+            .reset_index()
+            .sort_values("tool_count")
+        )
+        for cfg, g in grouped.groupby("config_name"):
+            ax.plot(
+                g["tool_count"], g[col] * scale, marker="o",
+                label=_CONFIG_LABELS.get(cfg, cfg), color=_CONFIG_COLORS.get(cfg),
+            )
+            any_plotted = True
+        ax.set_xlabel("Total tool count")
+        ax.set_ylabel(ylabel)
+        ax.grid(True, linestyle=":", alpha=0.6)
+        ax.legend(loc="best", fontsize=9)
+
+    if not any_plotted:
+        plt.close(fig)
+        write_diagnostic_plot(
+            filename, "H1 efficiency data missing",
+            "None of visible_count/input_tokens/latency/cost had observed values.",
+        )
+        return
+
+    fig.suptitle(
+        "Efficiency vs. tool count — the cage holds per-turn cost ~flat as the corpus grows",
+        fontsize=13,
+    )
+    fig.tight_layout()
+    plt.savefig(ASSETS_DIR / filename)
+    plt.close(fig)
+
+    # Console summary: Flat-vs-caged blow-up factor at the largest tool_count.
+    try:
+        max_tc = int(subset["tool_count"].max())
+        at_max = subset[subset["tool_count"] == max_tc]
+        flat = at_max[at_max["config_name"] == "A_flat_baseline"]
+        for cfg in present_caged:
+            caged = at_max[at_max["config_name"] == cfg]
+            if flat.empty or caged.empty:
+                continue
+            for col, ylabel, _ in panels:
+                if col not in at_max.columns:
+                    continue
+                fv, cv = flat[col].mean(), caged[col].mean()
+                if pd.notna(fv) and pd.notna(cv) and cv:
+                    print(
+                        f"H1 efficiency @tool_count={max_tc}: {ylabel} "
+                        f"Flat={fv:.1f} vs {cfg}={cv:.1f} ({fv / cv:.1f}× )"
+                    )
+    except Exception:
+        pass
+
+
 def load_dataframe(path: Path) -> pd.DataFrame:
     df = pd.DataFrame(pl.read_parquet(path).to_dicts())
     optional_columns = {
@@ -310,6 +421,10 @@ def _run_analysis_and_plot(df: pd.DataFrame, model_name: str | None = None) -> N
         plt.close()
     else:
         write_diagnostic_plot("h1_tool_count_vs_f1.png", "H1 data missing", "Config A and Config B traces are required.")
+
+    # B1: the paper's central efficiency claim — cost/tokens/latency/visible
+    # tools vs tool_count (accuracy alone, above, does not show it).
+    plot_h1_efficiency_scaling(df)
 
     print("\n--- H2 Analysis (Tool RAG) ---")
     if len(hier_grp) > 0 and len(c_grp) > 0:

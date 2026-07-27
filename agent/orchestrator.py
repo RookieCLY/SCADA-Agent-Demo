@@ -1264,7 +1264,8 @@ class Agent:
                 early_terminated=early,
                 termination_reason=reason,
             )
-            _emit_event(event_sink, "on_run_finish", record, deep_copy_world(world))
+            if event_sink is not None:
+                _emit_event(event_sink, "on_run_finish", record, deep_copy_world(world))
             return record
 
     # ------------------------------------------------------------------ engine-native step glue
