@@ -1,0 +1,41 @@
+{
+  "id": "golden-101",
+  "query": "把点位 TEMP_101 的工程单位改成摄氏度 °C",
+  "domain": "point",
+  "complexity": "simple",
+  "initial_world": {
+    "points": {
+      "TEMP_101": {
+        "tag": "TEMP_101",
+        "type": "analog"
+      }
+    }
+  },
+  "expected_behavior": "success",
+  "expected_final_state_diff": {
+    "match_mode": "key_fields",
+    "added_or_modified": {
+      "points.TEMP_101.unit": "°C"
+    },
+    "removed": [],
+    "unchanged_keys_must_remain": []
+  },
+  "expected_trajectory": {
+    "min_steps": 1,
+    "max_steps": 4,
+    "required_tools": [
+      "manage_points"
+    ],
+    "required_actions": [
+      "set_point_unit"
+    ],
+    "forbidden_tools": [],
+    "terminal_state": "DONE"
+  },
+  "expected_error_code": null,
+  "expected_workflow_id": null,
+  "expected_alternative": null,
+  "rubric_hints": [
+    "应调用 manage_points.set_point_unit 完成任务，终态 DONE"
+  ]
+}

@@ -219,3 +219,276 @@ __all__ = [
     "CreateRecipe", "AddRecipeStep", "SetRecipeParameter",
     "ValidateRecipe", "ActivateRecipe", "CloneRecipe", "ListRecipes",
 ]
+
+
+# ============================================================ extension tools
+class DeleteRecipeArgs(BaseModel):
+    action: Literal["delete_recipe"] = "delete_recipe"
+    recipe_id: str
+
+
+class DeleteRecipe(MockTool):
+    name = "delete_recipe"
+    domain = DOMAIN; action = "delete_recipe"
+    description = "Delete a batch recipe."
+    args_model = DeleteRecipeArgs
+    examples = ["删除一个配方", "delete the old product recipe", "移除这个批次配方"]
+
+    @staticmethod
+    def intended_entities(args: BaseModel) -> list[str]:  # pyright: ignore[reportArgumentType]
+        return [f"recipes.{args.recipe_id}"]
+    @staticmethod
+    def referenced_entities(args: BaseModel) -> list[str]:  # pyright: ignore[reportArgumentType]
+        return [f"recipes.{args.recipe_id}"]
+
+    def run(self, args: DeleteRecipeArgs, world: object) -> ToolResult:
+        return ok(data={"recipe_id": args.recipe_id, "deleted": True})
+
+
+class DeactivateRecipeArgs(BaseModel):
+    action: Literal["deactivate_recipe"] = "deactivate_recipe"
+    recipe_id: str
+
+
+class DeactivateRecipe(MockTool):
+    name = "deactivate_recipe"
+    domain = DOMAIN; action = "deactivate_recipe"
+    description = "Deactivate a recipe so it can no longer be downloaded to a batch."
+    args_model = DeactivateRecipeArgs
+    examples = ["停用这个配方", "deactivate the recipe before editing", "先把配方置为非激活"]
+
+    @staticmethod
+    def intended_entities(args: BaseModel) -> list[str]:  # pyright: ignore[reportArgumentType]
+        return [f"recipes.{args.recipe_id}.active"]
+    @staticmethod
+    def referenced_entities(args: BaseModel) -> list[str]:  # pyright: ignore[reportArgumentType]
+        return [f"recipes.{args.recipe_id}"]
+
+    def run(self, args: DeactivateRecipeArgs, world: object) -> ToolResult:
+        return ok(data={"recipe_id": args.recipe_id, "active": False})
+
+
+class RemoveRecipeStepArgs(BaseModel):
+    action: Literal["remove_recipe_step"] = "remove_recipe_step"
+    recipe_id: str
+    step_id: str
+
+
+class RemoveRecipeStep(MockTool):
+    name = "remove_recipe_step"
+    domain = DOMAIN; action = "remove_recipe_step"
+    description = "Remove a step from a batch recipe."
+    args_model = RemoveRecipeStepArgs
+    examples = ["删掉配方里的一个步骤", "remove the heating step from the recipe", "去掉这一步"]
+
+    @staticmethod
+    def intended_entities(args: BaseModel) -> list[str]:  # pyright: ignore[reportArgumentType]
+        return [f"recipes.{args.recipe_id}.steps.{args.step_id}"]
+    @staticmethod
+    def referenced_entities(args: BaseModel) -> list[str]:  # pyright: ignore[reportArgumentType]
+        return [f"recipes.{args.recipe_id}"]
+
+    def run(self, args: RemoveRecipeStepArgs, world: object) -> ToolResult:
+        return ok(data={"recipe_id": args.recipe_id, "step_id": args.step_id, "removed": True})
+
+
+class ReorderRecipeStepsArgs(BaseModel):
+    action: Literal["reorder_recipe_steps"] = "reorder_recipe_steps"
+    recipe_id: str
+    ordered_step_ids: list[str] = Field(min_length=1)
+
+
+class ReorderRecipeSteps(MockTool):
+    name = "reorder_recipe_steps"
+    domain = DOMAIN; action = "reorder_recipe_steps"
+    description = "Change the execution order of the steps in a recipe."
+    args_model = ReorderRecipeStepsArgs
+    examples = ["调整配方步骤的顺序", "run the mixing step before heating", "重新排列配方步骤"]
+
+    @staticmethod
+    def intended_entities(args: BaseModel) -> list[str]:  # pyright: ignore[reportArgumentType]
+        return [f"recipes.{args.recipe_id}.step_order"]
+    @staticmethod
+    def referenced_entities(args: BaseModel) -> list[str]:  # pyright: ignore[reportArgumentType]
+        return [f"recipes.{args.recipe_id}"]
+
+    def run(self, args: ReorderRecipeStepsArgs, world: object) -> ToolResult:
+        return ok(data={"recipe_id": args.recipe_id, "steps": len(args.ordered_step_ids)})
+
+
+class SetRecipeVersionArgs(BaseModel):
+    action: Literal["set_recipe_version"] = "set_recipe_version"
+    recipe_id: str
+    version: str = Field(description="Semantic version, e.g. '2.1.0'")
+
+
+class SetRecipeVersion(MockTool):
+    name = "set_recipe_version"
+    domain = DOMAIN; action = "set_recipe_version"
+    description = "Stamp a recipe with a new version label for change control."
+    args_model = SetRecipeVersionArgs
+    examples = ["给配方打一个版本号", "bump the recipe version to 2.1", "更新配方版本"]
+
+    @staticmethod
+    def intended_entities(args: BaseModel) -> list[str]:  # pyright: ignore[reportArgumentType]
+        return [f"recipes.{args.recipe_id}.version"]
+    @staticmethod
+    def referenced_entities(args: BaseModel) -> list[str]:  # pyright: ignore[reportArgumentType]
+        return [f"recipes.{args.recipe_id}"]
+
+    def run(self, args: SetRecipeVersionArgs, world: object) -> ToolResult:
+        return ok(data={"recipe_id": args.recipe_id, "version": args.version})
+
+
+class CompareRecipesArgs(BaseModel):
+    action: Literal["compare_recipes"] = "compare_recipes"
+    recipe_id_a: str
+    recipe_id_b: str
+
+
+class CompareRecipes(MockTool):
+    name = "compare_recipes"
+    domain = DOMAIN; action = "compare_recipes"
+    description = "Diff two recipes (steps + parameters) and report the differences."
+    args_model = CompareRecipesArgs
+    examples = ["对比两个配方的差异", "compare the v1 and v2 recipes", "看看两个配方哪里不一样"]
+
+    @staticmethod
+    def intended_entities(args: BaseModel) -> list[str]:  # pyright: ignore[reportArgumentType]
+        return []
+    @staticmethod
+    def referenced_entities(args: BaseModel) -> list[str]:  # pyright: ignore[reportArgumentType]
+        return [f"recipes.{args.recipe_id_a}", f"recipes.{args.recipe_id_b}"]
+
+    def run(self, args: CompareRecipesArgs, world: object) -> ToolResult:
+        return ok(data={"differences": [], "count": 0})
+
+
+class ExportRecipeArgs(BaseModel):
+    action: Literal["export_recipe"] = "export_recipe"
+    recipe_id: str
+    format: Literal["json", "xml", "isa88"] = "json"
+
+
+class ExportRecipe(MockTool):
+    name = "export_recipe"
+    domain = DOMAIN; action = "export_recipe"
+    description = "Export a recipe to a portable file (JSON / XML / ISA-88)."
+    args_model = ExportRecipeArgs
+    examples = ["导出这个配方", "export the recipe as ISA-88", "把配方导出成文件"]
+
+    @staticmethod
+    def intended_entities(args: BaseModel) -> list[str]:  # pyright: ignore[reportArgumentType]
+        return []
+    @staticmethod
+    def referenced_entities(args: BaseModel) -> list[str]:  # pyright: ignore[reportArgumentType]
+        return [f"recipes.{args.recipe_id}"]
+
+    def run(self, args: ExportRecipeArgs, world: object) -> ToolResult:
+        return ok(data={"recipe_id": args.recipe_id, "format": args.format})
+
+
+class ImportRecipeArgs(BaseModel):
+    action: Literal["import_recipe"] = "import_recipe"
+    source_file: str
+    new_recipe_id: str
+
+
+class ImportRecipe(MockTool):
+    name = "import_recipe"
+    domain = DOMAIN; action = "import_recipe"
+    description = "Import a recipe definition from a file into the recipe library."
+    args_model = ImportRecipeArgs
+    examples = ["从文件导入一个配方", "import the recipe supplied by the vendor", "把配方文件导进来"]
+
+    @staticmethod
+    def intended_entities(args: BaseModel) -> list[str]:  # pyright: ignore[reportArgumentType]
+        return [f"recipes.{args.new_recipe_id}"]
+    @staticmethod
+    def referenced_entities(args: BaseModel) -> list[str]:  # pyright: ignore[reportArgumentType]
+        return []
+
+    def run(self, args: ImportRecipeArgs, world: object) -> ToolResult:
+        return ok(data={"new_recipe_id": args.new_recipe_id, "imported": True})
+
+
+class DownloadRecipeToBatchArgs(BaseModel):
+    action: Literal["download_recipe_to_batch"] = "download_recipe_to_batch"
+    recipe_id: str
+    batch_id: str
+
+
+class DownloadRecipeToBatch(MockTool):
+    name = "download_recipe_to_batch"
+    domain = DOMAIN; action = "download_recipe_to_batch"
+    description = "Download an active recipe's setpoints to a running batch/unit."
+    args_model = DownloadRecipeToBatchArgs
+    examples = ["把配方下发到批次", "load this recipe into batch B-204", "下发配方参数到设备"]
+
+    @staticmethod
+    def intended_entities(args: BaseModel) -> list[str]:  # pyright: ignore[reportArgumentType]
+        return [f"batches.{args.batch_id}.recipe"]
+    @staticmethod
+    def referenced_entities(args: BaseModel) -> list[str]:  # pyright: ignore[reportArgumentType]
+        return [f"recipes.{args.recipe_id}"]
+
+    def run(self, args: DownloadRecipeToBatchArgs, world: object) -> ToolResult:
+        return ok(data={"recipe_id": args.recipe_id, "batch_id": args.batch_id})
+
+
+class GetRecipeStatusArgs(BaseModel):
+    action: Literal["get_recipe_status"] = "get_recipe_status"
+    recipe_id: str
+
+
+class GetRecipeStatus(MockTool):
+    name = "get_recipe_status"
+    domain = DOMAIN; action = "get_recipe_status"
+    description = "Get a recipe's state (draft / validated / active) and last-used info."
+    args_model = GetRecipeStatusArgs
+    examples = ["查看配方的状态", "is this recipe validated and active", "配方现在是什么状态"]
+
+    @staticmethod
+    def intended_entities(args: BaseModel) -> list[str]:  # pyright: ignore[reportArgumentType]
+        return []
+    @staticmethod
+    def referenced_entities(args: BaseModel) -> list[str]:  # pyright: ignore[reportArgumentType]
+        return [f"recipes.{args.recipe_id}"]
+
+    def run(self, args: GetRecipeStatusArgs, world: object) -> ToolResult:
+        return ok(data={"recipe_id": args.recipe_id, "status": "draft"})
+
+
+class SetRecipeScalingArgs(BaseModel):
+    action: Literal["set_recipe_scaling"] = "set_recipe_scaling"
+    recipe_id: str
+    batch_size: float = Field(gt=0)
+    unit: str = "kg"
+
+
+class SetRecipeScaling(MockTool):
+    name = "set_recipe_scaling"
+    domain = DOMAIN; action = "set_recipe_scaling"
+    description = "Scale a recipe's quantities to a target batch size."
+    args_model = SetRecipeScalingArgs
+    examples = ["按批量缩放配方用量", "scale the recipe to a 500kg batch", "把配方放大到目标产量"]
+
+    @staticmethod
+    def intended_entities(args: BaseModel) -> list[str]:  # pyright: ignore[reportArgumentType]
+        return [f"recipes.{args.recipe_id}.scaling"]
+    @staticmethod
+    def referenced_entities(args: BaseModel) -> list[str]:  # pyright: ignore[reportArgumentType]
+        return [f"recipes.{args.recipe_id}"]
+
+    def run(self, args: SetRecipeScalingArgs, world: object) -> ToolResult:
+        return ok(data={"recipe_id": args.recipe_id, "batch_size": args.batch_size})
+
+
+RECIPE_ACTIONS.update({
+    cls.action: cls
+    for cls in (
+        DeleteRecipe, DeactivateRecipe, RemoveRecipeStep, ReorderRecipeSteps,
+        SetRecipeVersion, CompareRecipes, ExportRecipe, ImportRecipe,
+        DownloadRecipeToBatch, GetRecipeStatus, SetRecipeScaling,
+    )
+})

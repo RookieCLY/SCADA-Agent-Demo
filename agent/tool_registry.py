@@ -86,14 +86,16 @@ class ToolRegistry:
         description: str = "",
     ) -> None:
         from typing import Annotated, Union
+
         from pydantic import Field
         args_models = [cls.args_model for cls in actions.values()]
         if len(args_models) > 1:
             # Subscript form rather than ``Union.__getitem__(...)``: on Python
             # 3.14 ``Union`` is ``types.UnionType`` and its ``__getitem__`` is a
             # descriptor that rejects a bare tuple. ``Union[tuple(...)]`` builds
-            # the identical type on 3.11–3.14.
-            union_model = Annotated[Union[tuple(args_models)], Field(discriminator="action")]
+            # the identical type on 3.11–3.14. (ruff UP007 must not "simplify"
+            # this to ``Annotated[tuple(...)]`` — that is not a valid type.)
+            union_model = Annotated[Union[tuple(args_models)], Field(discriminator="action")]  # noqa: UP007
         elif len(args_models) == 1:
             union_model = args_models[0]
         else:
@@ -204,7 +206,7 @@ class ToolRegistry:
             if name not in self._reverse:
                 raise RuntimeError(f"reverse-lookup missing entry for atomic {name!r}")
         # 2. every (domain, action) referenced by reverse-lookup must exist
-        for atomic_name, (d, a) in self._reverse.items():
+        for _atomic_name, (d, a) in self._reverse.items():
             if d not in self._domains:
                 raise RuntimeError(f"reverse-lookup references unknown domain {d!r}")
             if a not in self._domains[d].actions:
@@ -265,8 +267,8 @@ DEFAULT_GENERATED_EXAMPLES = Path("indices/generated_examples.json")
 def build_default_registry(tool_count: int | None = None) -> ToolRegistry:
     """Construct the canonical registry covering the registered domains, restricted by tool_count."""
     # ── dynamic tool expansion to target_count total tools ──────────────────────────
-    import typing
     from typing import Literal
+
     from pydantic import BaseModel
     
     # 1. Define core and extra domains with their action definitions
@@ -305,10 +307,17 @@ def build_default_registry(tool_count: int | None = None) -> ToolRegistry:
     for dname, (_, actions_dict, _) in extra_domains.items():
         for aname, acls in actions_dict.items():
             extra_actions_list.append((dname, aname, acls))
-            
+
+    # Core-domain actions are always fully included, so the number of *extra*
+    # + synthesized-filler tools is measured against the real core count — not
+    # a hardcoded constant. (The core domains now ship ~120 hand-written tools,
+    # so the old literal 39 over-counted the free slots and blew past
+    # target_count once the tool library grew.)
+    core_count = sum(len(actions) for _, (_, actions, _) in core_domains.items())
+
     # Calculate how many extra tools we can add
-    if target_count > 39:
-        remaining_slots = target_count - 39
+    if target_count > core_count:
+        remaining_slots = target_count - core_count
         num_extra_to_add = min(remaining_slots, len(extra_actions_list))
         
         # Add selected extra tools

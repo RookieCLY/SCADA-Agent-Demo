@@ -202,26 +202,22 @@ def test_build_default_registry_with_tool_counts():
         'update_point', 'update_script_body', 'validate_project'
     }
     
-    # 1. tool_count=30: must still retain all 39 core tools
+    # The core domains are always fully included, so they form a floor below
+    # which tool_count cannot shrink the registry. That floor is the real core
+    # count (computed here rather than hardcoded, so growing the tool library
+    # doesn't silently break this test).
+    core_floor = len(build_default_registry(tool_count=1).all_atomics())
+    assert core_floor >= len(core_tool_names)
+
+    # 1. tool_count below the floor: clamped up to the full core set.
     reg30 = build_default_registry(tool_count=30)
     all_names30 = {t.name for t in reg30.all_atomics()}
-    assert len(all_names30) == 39
+    assert len(all_names30) == core_floor
     assert core_tool_names.issubset(all_names30)
-    
-    # 2. tool_count=100: exactly 100 tools
-    reg100 = build_default_registry(tool_count=100)
-    all_names100 = {t.name for t in reg100.all_atomics()}
-    assert len(all_names100) == 100
-    assert core_tool_names.issubset(all_names100)
-    
-    # 3. tool_count=300: exactly 300 tools
-    reg300 = build_default_registry(tool_count=300)
-    all_names300 = {t.name for t in reg300.all_atomics()}
-    assert len(all_names300) == 300
-    assert core_tool_names.issubset(all_names300)
-    
-    # 4. tool_count=500: exactly 500 tools
-    reg500 = build_default_registry(tool_count=500)
-    all_names500 = {t.name for t in reg500.all_atomics()}
-    assert len(all_names500) == 500
-    assert core_tool_names.issubset(all_names500)
+
+    # 2. tool_count at/above the floor: exactly tool_count, core always present.
+    for tc in (core_floor, core_floor + 50, 300, 500, 1000):
+        reg = build_default_registry(tool_count=tc)
+        names = {t.name for t in reg.all_atomics()}
+        assert len(names) == tc, f"tool_count={tc} -> {len(names)}"
+        assert core_tool_names.issubset(names)

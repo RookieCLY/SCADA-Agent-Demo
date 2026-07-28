@@ -260,3 +260,330 @@ __all__ = [
     "SetRetention",
     "SetRetentionArgs",
 ]
+
+
+# ============================================================ extension tools
+def _hist_diff(tag, cfg):
+    return {"added_or_modified": {f"histories.{tag}": cfg.model_dump()}, "removed": []}
+
+
+def _need_history(world, tag):
+    if tag not in world.histories:
+        return fail(ErrorCode.BUSINESS_RULE, f"history not enabled for tag {tag}")
+    return None
+
+
+class SetSampleIntervalArgs(BaseModel):
+    action: Literal["set_sample_interval"] = "set_sample_interval"
+    tag: str
+    sample_interval_s: float = Field(gt=0, le=3600)
+
+
+class SetSampleInterval(MockTool):
+    name = "set_sample_interval"
+    domain = DOMAIN; action = "set_sample_interval"
+    description = "Set the historian sampling interval (seconds) for a tag."
+    args_model = SetSampleIntervalArgs
+    examples = ["把历史采样周期设成1秒", "sample this tag every 5 seconds", "调整历史记录频率"]
+
+    @staticmethod
+    def intended_entities(args: BaseModel) -> list[str]:  # pyright: ignore[reportArgumentType]
+        return [f"histories.{args.tag}"]
+    @staticmethod
+    def referenced_entities(args: BaseModel) -> list[str]:  # pyright: ignore[reportArgumentType]
+        return [f"histories.{args.tag}"]
+
+    def run(self, args: SetSampleIntervalArgs, world: MockWorld) -> ToolResult:
+        err = _need_history(world, args.tag)
+        if err: return err
+        c = world.histories[args.tag]; c.sample_interval_s = args.sample_interval_s
+        return ok(data={"tag": args.tag}, world_diff=_hist_diff(args.tag, c))
+
+
+class SetHistoryDeadbandArgs(BaseModel):
+    action: Literal["set_history_deadband"] = "set_history_deadband"
+    tag: str
+    deadband: float = Field(ge=0)
+
+
+class SetHistoryDeadband(MockTool):
+    name = "set_history_deadband"
+    domain = DOMAIN; action = "set_history_deadband"
+    description = "Set the archive deadband so only meaningful changes are stored."
+    args_model = SetHistoryDeadbandArgs
+    examples = ["给历史记录设置死区", "only archive changes bigger than 0.5", "减少历史存储量用死区"]
+
+    @staticmethod
+    def intended_entities(args: BaseModel) -> list[str]:  # pyright: ignore[reportArgumentType]
+        return [f"histories.{args.tag}"]
+    @staticmethod
+    def referenced_entities(args: BaseModel) -> list[str]:  # pyright: ignore[reportArgumentType]
+        return [f"histories.{args.tag}"]
+
+    def run(self, args: SetHistoryDeadbandArgs, world: MockWorld) -> ToolResult:
+        err = _need_history(world, args.tag)
+        if err: return err
+        c = world.histories[args.tag]; c.deadband = args.deadband
+        return ok(data={"tag": args.tag}, world_diff=_hist_diff(args.tag, c))
+
+
+class DeleteHistoryArgs(BaseModel):
+    action: Literal["delete_history"] = "delete_history"
+    tag: str
+
+
+class DeleteHistory(MockTool):
+    name = "delete_history"
+    domain = DOMAIN; action = "delete_history"
+    description = "Remove the historian configuration for a tag (stops archiving)."
+    args_model = DeleteHistoryArgs
+    examples = ["删除这个点位的历史配置", "stop archiving this tag entirely", "移除历史记录设置"]
+
+    @staticmethod
+    def intended_entities(args: BaseModel) -> list[str]:  # pyright: ignore[reportArgumentType]
+        return [f"histories.{args.tag}"]
+    @staticmethod
+    def referenced_entities(args: BaseModel) -> list[str]:  # pyright: ignore[reportArgumentType]
+        return [f"histories.{args.tag}"]
+
+    def run(self, args: DeleteHistoryArgs, world: MockWorld) -> ToolResult:
+        err = _need_history(world, args.tag)
+        if err: return err
+        del world.histories[args.tag]
+        return ok(data={"tag": args.tag}, world_diff={"added_or_modified": {}, "removed": [f"histories.{args.tag}"]})
+
+
+class GetHistoryStatsArgs(BaseModel):
+    action: Literal["get_history_stats"] = "get_history_stats"
+    tag: str
+
+
+class GetHistoryStats(MockTool):
+    name = "get_history_stats"
+    domain = DOMAIN; action = "get_history_stats"
+    description = "Get min/max/avg/count statistics of a tag's stored history."
+    args_model = GetHistoryStatsArgs
+    examples = ["查看历史数据的统计", "what's the average of TEMP_101 today", "统计一下历史数据"]
+
+    @staticmethod
+    def intended_entities(args: BaseModel) -> list[str]:  # pyright: ignore[reportArgumentType]
+        return []
+    @staticmethod
+    def referenced_entities(args: BaseModel) -> list[str]:  # pyright: ignore[reportArgumentType]
+        return [f"histories.{args.tag}"]
+
+    def run(self, args: GetHistoryStatsArgs, world: MockWorld) -> ToolResult:
+        return ok(data={"tag": args.tag, "stats": {}})
+
+
+class ExportHistoryArgs(BaseModel):
+    action: Literal["export_history"] = "export_history"
+    tag: str
+    format: Literal["csv", "parquet"] = "csv"
+
+
+class ExportHistory(MockTool):
+    name = "export_history"
+    domain = DOMAIN; action = "export_history"
+    description = "Export a tag's historical data to a file."
+    args_model = ExportHistoryArgs
+    examples = ["导出历史数据", "export TEMP_101 history to CSV", "把历史曲线数据导出来"]
+
+    @staticmethod
+    def intended_entities(args: BaseModel) -> list[str]:  # pyright: ignore[reportArgumentType]
+        return []
+    @staticmethod
+    def referenced_entities(args: BaseModel) -> list[str]:  # pyright: ignore[reportArgumentType]
+        return [f"histories.{args.tag}"]
+
+    def run(self, args: ExportHistoryArgs, world: MockWorld) -> ToolResult:
+        return ok(data={"tag": args.tag, "format": args.format})
+
+
+class SetStoragePolicyArgs(BaseModel):
+    action: Literal["set_storage_policy"] = "set_storage_policy"
+    tag: str
+    policy: Literal["raw", "compressed", "aggregated"] = "compressed"
+
+
+class SetStoragePolicy(MockTool):
+    name = "set_storage_policy"
+    domain = DOMAIN; action = "set_storage_policy"
+    description = "Choose how a tag's history is stored (raw / compressed / aggregated)."
+    args_model = SetStoragePolicyArgs
+    examples = ["设置历史存储策略", "store this tag compressed", "配置历史数据的存储方式"]
+
+    @staticmethod
+    def intended_entities(args: BaseModel) -> list[str]:  # pyright: ignore[reportArgumentType]
+        return [f"histories.{args.tag}.storage_policy"]
+    @staticmethod
+    def referenced_entities(args: BaseModel) -> list[str]:  # pyright: ignore[reportArgumentType]
+        return [f"histories.{args.tag}"]
+
+    def run(self, args: SetStoragePolicyArgs, world: MockWorld) -> ToolResult:
+        err = _need_history(world, args.tag)
+        if err: return err
+        return ok(data={"tag": args.tag, "policy": args.policy})
+
+
+class SetHistoryAggregationArgs(BaseModel):
+    action: Literal["set_history_aggregation"] = "set_history_aggregation"
+    tag: str
+    method: Literal["average", "min", "max", "sum", "last"] = "average"
+    window_s: int = Field(default=60, ge=1, le=86400)
+
+
+class SetHistoryAggregation(MockTool):
+    name = "set_history_aggregation"
+    domain = DOMAIN; action = "set_history_aggregation"
+    description = "Configure server-side aggregation (rollups) for a tag's history."
+    args_model = SetHistoryAggregationArgs
+    examples = ["设置历史数据的聚合方式", "roll up this tag to 1-minute averages", "配置历史数据的降采样"]
+
+    @staticmethod
+    def intended_entities(args: BaseModel) -> list[str]:  # pyright: ignore[reportArgumentType]
+        return [f"histories.{args.tag}.aggregation"]
+    @staticmethod
+    def referenced_entities(args: BaseModel) -> list[str]:  # pyright: ignore[reportArgumentType]
+        return [f"histories.{args.tag}"]
+
+    def run(self, args: SetHistoryAggregationArgs, world: MockWorld) -> ToolResult:
+        err = _need_history(world, args.tag)
+        if err: return err
+        return ok(data={"tag": args.tag, "method": args.method})
+
+
+class PurgeHistoryArgs(BaseModel):
+    action: Literal["purge_history"] = "purge_history"
+    tag: str
+    before_days: int = Field(ge=1, le=3650)
+
+
+class PurgeHistory(MockTool):
+    name = "purge_history"
+    domain = DOMAIN; action = "purge_history"
+    description = "Purge stored history older than N days for a tag (destructive)."
+    args_model = PurgeHistoryArgs
+    examples = ["清理旧的历史数据", "purge history older than 365 days", "删掉一年前的历史"]
+
+    @staticmethod
+    def intended_entities(args: BaseModel) -> list[str]:  # pyright: ignore[reportArgumentType]
+        return [f"histories.{args.tag}.data"]
+    @staticmethod
+    def referenced_entities(args: BaseModel) -> list[str]:  # pyright: ignore[reportArgumentType]
+        return [f"histories.{args.tag}"]
+
+    def run(self, args: PurgeHistoryArgs, world: MockWorld) -> ToolResult:
+        err = _need_history(world, args.tag)
+        if err: return err
+        return ok(data={"tag": args.tag, "purged_before_days": args.before_days})
+
+
+class BackfillHistoryArgs(BaseModel):
+    action: Literal["backfill_history"] = "backfill_history"
+    tag: str
+    source_file: str
+
+
+class BackfillHistory(MockTool):
+    name = "backfill_history"
+    domain = DOMAIN; action = "backfill_history"
+    description = "Backfill a tag's history from an external data file."
+    args_model = BackfillHistoryArgs
+    examples = ["回填历史数据", "backfill this tag from the lab CSV", "把缺失的历史补上"]
+
+    @staticmethod
+    def intended_entities(args: BaseModel) -> list[str]:  # pyright: ignore[reportArgumentType]
+        return [f"histories.{args.tag}.data"]
+    @staticmethod
+    def referenced_entities(args: BaseModel) -> list[str]:  # pyright: ignore[reportArgumentType]
+        return [f"histories.{args.tag}"]
+
+    def run(self, args: BackfillHistoryArgs, world: MockWorld) -> ToolResult:
+        err = _need_history(world, args.tag)
+        if err: return err
+        return ok(data={"tag": args.tag, "backfilled": True})
+
+
+class GetHistoryGapsArgs(BaseModel):
+    action: Literal["get_history_gaps"] = "get_history_gaps"
+    tag: str
+    last_n_days: int = Field(default=7, ge=1, le=365)
+
+
+class GetHistoryGaps(MockTool):
+    name = "get_history_gaps"
+    domain = DOMAIN; action = "get_history_gaps"
+    description = "Find gaps (missing intervals) in a tag's stored history."
+    args_model = GetHistoryGapsArgs
+    examples = ["查看历史数据的缺口", "are there gaps in this tag's history", "历史数据有没有断档"]
+
+    @staticmethod
+    def intended_entities(args: BaseModel) -> list[str]:  # pyright: ignore[reportArgumentType]
+        return []
+    @staticmethod
+    def referenced_entities(args: BaseModel) -> list[str]:  # pyright: ignore[reportArgumentType]
+        return [f"histories.{args.tag}"]
+
+    def run(self, args: GetHistoryGapsArgs, world: MockWorld) -> ToolResult:
+        return ok(data={"tag": args.tag, "gaps": []})
+
+
+class ConfigureHistorianConnectionArgs(BaseModel):
+    action: Literal["configure_historian_connection"] = "configure_historian_connection"
+    endpoint: str
+    kind: Literal["influxdb", "pi", "timescale", "internal"] = "internal"
+
+
+class ConfigureHistorianConnection(MockTool):
+    name = "configure_historian_connection"
+    domain = DOMAIN; action = "configure_historian_connection"
+    description = "Configure the backing historian datastore connection."
+    args_model = ConfigureHistorianConnectionArgs
+    examples = ["配置历史库连接", "point the historian at our InfluxDB", "设置历史数据库地址"]
+
+    @staticmethod
+    def intended_entities(args: BaseModel) -> list[str]:  # pyright: ignore[reportArgumentType]
+        return ["project_meta.historian.connection"]
+    @staticmethod
+    def referenced_entities(args: BaseModel) -> list[str]:  # pyright: ignore[reportArgumentType]
+        return []
+
+    def run(self, args: ConfigureHistorianConnectionArgs, world: MockWorld) -> ToolResult:
+        return ok(data={"kind": args.kind, "configured": True})
+
+
+class SetHistoryPrecisionArgs(BaseModel):
+    action: Literal["set_history_precision"] = "set_history_precision"
+    tag: str
+    decimals: int = Field(ge=0, le=10)
+
+
+class SetHistoryPrecision(MockTool):
+    name = "set_history_precision"
+    domain = DOMAIN; action = "set_history_precision"
+    description = "Set the stored decimal precision for a tag's history values."
+    args_model = SetHistoryPrecisionArgs
+    examples = ["设置历史值的小数位数", "store this tag with 2 decimals", "调整历史数据精度"]
+
+    @staticmethod
+    def intended_entities(args: BaseModel) -> list[str]:  # pyright: ignore[reportArgumentType]
+        return [f"histories.{args.tag}.precision"]
+    @staticmethod
+    def referenced_entities(args: BaseModel) -> list[str]:  # pyright: ignore[reportArgumentType]
+        return [f"histories.{args.tag}"]
+
+    def run(self, args: SetHistoryPrecisionArgs, world: MockWorld) -> ToolResult:
+        err = _need_history(world, args.tag)
+        if err: return err
+        return ok(data={"tag": args.tag, "decimals": args.decimals})
+
+
+HISTORY_ACTIONS.update({
+    cls.action: cls
+    for cls in (
+        SetSampleInterval, SetHistoryDeadband, DeleteHistory, GetHistoryStats,
+        ExportHistory, SetStoragePolicy, SetHistoryAggregation, PurgeHistory,
+        BackfillHistory, GetHistoryGaps, ConfigureHistorianConnection, SetHistoryPrecision,
+    )
+})

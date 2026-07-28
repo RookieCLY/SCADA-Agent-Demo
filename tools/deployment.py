@@ -271,3 +271,199 @@ __all__ = [
     "ValidateProject",
     "ValidateProjectArgs",
 ]
+
+
+# ============================================================ extension tools
+class DryRunDeployArgs(BaseModel):
+    action: Literal["dry_run_deploy"] = "dry_run_deploy"
+    target: Literal["staging", "production"] = "staging"
+
+
+class DryRunDeploy(MockTool):
+    name = "dry_run_deploy"
+    domain = DOMAIN; action = "dry_run_deploy"
+    description = "Simulate a deployment and report what would change, without applying it."
+    args_model = DryRunDeployArgs
+    examples = ["试运行一下部署", "dry-run the deployment to staging", "先模拟部署看看影响"]
+
+    @staticmethod
+    def intended_entities(args: BaseModel) -> list[str]:  # pyright: ignore[reportArgumentType]
+        return []
+    @staticmethod
+    def referenced_entities(args: BaseModel) -> list[str]:  # pyright: ignore[reportArgumentType]
+        return []
+
+    def run(self, args: DryRunDeployArgs, world: object) -> ToolResult:
+        return ok(data={"target": args.target, "would_change": 0})
+
+
+class DiffDeploymentArgs(BaseModel):
+    action: Literal["diff_deployment"] = "diff_deployment"
+    against: Literal["running", "last_deployed"] = "running"
+
+
+class DiffDeployment(MockTool):
+    name = "diff_deployment"
+    domain = DOMAIN; action = "diff_deployment"
+    description = "Show the difference between the current config and the running/last-deployed version."
+    args_model = DiffDeploymentArgs
+    examples = ["看看和线上版本的差异", "diff the project against what's running", "对比当前配置和已部署版本"]
+
+    @staticmethod
+    def intended_entities(args: BaseModel) -> list[str]:  # pyright: ignore[reportArgumentType]
+        return []
+    @staticmethod
+    def referenced_entities(args: BaseModel) -> list[str]:  # pyright: ignore[reportArgumentType]
+        return []
+
+    def run(self, args: DiffDeploymentArgs, world: object) -> ToolResult:
+        return ok(data={"against": args.against, "changes": []})
+
+
+class PromoteToEnvironmentArgs(BaseModel):
+    action: Literal["promote_to_environment"] = "promote_to_environment"
+    from_env: Literal["dev", "staging"] = "staging"
+    to_env: Literal["staging", "production"] = "production"
+
+
+class PromoteToEnvironment(MockTool):
+    name = "promote_to_environment"
+    domain = DOMAIN; action = "promote_to_environment"
+    description = "Promote a validated build from one environment to the next."
+    args_model = PromoteToEnvironmentArgs
+    examples = ["把测试环境的配置提升到生产", "promote staging to production", "推到正式环境"]
+
+    @staticmethod
+    def intended_entities(args: BaseModel) -> list[str]:  # pyright: ignore[reportArgumentType]
+        return [f"deployments.{args.to_env}"]
+    @staticmethod
+    def referenced_entities(args: BaseModel) -> list[str]:  # pyright: ignore[reportArgumentType]
+        return []
+
+    def run(self, args: PromoteToEnvironmentArgs, world: object) -> ToolResult:
+        return ok(data={"from": args.from_env, "to": args.to_env, "promoted": True})
+
+
+class CreateDeploymentSnapshotArgs(BaseModel):
+    action: Literal["create_deployment_snapshot"] = "create_deployment_snapshot"
+    label: str
+
+
+class CreateDeploymentSnapshot(MockTool):
+    name = "create_deployment_snapshot"
+    domain = DOMAIN; action = "create_deployment_snapshot"
+    description = "Capture a labeled snapshot of the current project for later rollback."
+    args_model = CreateDeploymentSnapshotArgs
+    examples = ["给当前项目打一个快照", "snapshot the project before deploying", "部署前先存个还原点"]
+
+    @staticmethod
+    def intended_entities(args: BaseModel) -> list[str]:  # pyright: ignore[reportArgumentType]
+        return [f"deployments.snapshots.{args.label}"]
+    @staticmethod
+    def referenced_entities(args: BaseModel) -> list[str]:  # pyright: ignore[reportArgumentType]
+        return []
+
+    def run(self, args: CreateDeploymentSnapshotArgs, world: object) -> ToolResult:
+        return ok(data={"label": args.label, "snapshot_created": True})
+
+
+class ListDeploymentHistoryArgs(BaseModel):
+    action: Literal["list_deployment_history"] = "list_deployment_history"
+    last_n: int = Field(default=20, ge=1, le=1000)
+
+
+class ListDeploymentHistory(MockTool):
+    name = "list_deployment_history"
+    domain = DOMAIN; action = "list_deployment_history"
+    description = "List past deployments with timestamps and outcomes."
+    args_model = ListDeploymentHistoryArgs
+    examples = ["查看部署历史", "show the last 10 deployments", "看看之前都部署过哪些版本"]
+
+    @staticmethod
+    def intended_entities(args: BaseModel) -> list[str]:  # pyright: ignore[reportArgumentType]
+        return []
+    @staticmethod
+    def referenced_entities(args: BaseModel) -> list[str]:  # pyright: ignore[reportArgumentType]
+        return []
+
+    def run(self, args: ListDeploymentHistoryArgs, world: object) -> ToolResult:
+        return ok(data={"deployments": [], "count": 0})
+
+
+class AbortDeploymentArgs(BaseModel):
+    action: Literal["abort_deployment"] = "abort_deployment"
+    reason: str | None = None
+
+
+class AbortDeployment(MockTool):
+    name = "abort_deployment"
+    domain = DOMAIN; action = "abort_deployment"
+    description = "Abort an in-progress deployment and leave the running system untouched."
+    args_model = AbortDeploymentArgs
+    examples = ["中止当前的部署", "abort the ongoing deployment", "取消这次部署"]
+
+    @staticmethod
+    def intended_entities(args: BaseModel) -> list[str]:  # pyright: ignore[reportArgumentType]
+        return []
+    @staticmethod
+    def referenced_entities(args: BaseModel) -> list[str]:  # pyright: ignore[reportArgumentType]
+        return []
+
+    def run(self, args: AbortDeploymentArgs, world: object) -> ToolResult:
+        return ok(data={"aborted": True})
+
+
+class LockProjectArgs(BaseModel):
+    action: Literal["lock_project"] = "lock_project"
+    locked: bool = True
+
+
+class LockProject(MockTool):
+    name = "lock_project"
+    domain = DOMAIN; action = "lock_project"
+    description = "Lock the whole project against configuration changes (change-freeze)."
+    args_model = LockProjectArgs
+    examples = ["锁定整个项目防止改动", "freeze the project before go-live", "上线前锁定工程"]
+
+    @staticmethod
+    def intended_entities(args: BaseModel) -> list[str]:  # pyright: ignore[reportArgumentType]
+        return ["project_meta.locked"]
+    @staticmethod
+    def referenced_entities(args: BaseModel) -> list[str]:  # pyright: ignore[reportArgumentType]
+        return []
+
+    def run(self, args: LockProjectArgs, world: object) -> ToolResult:
+        return ok(data={"locked": args.locked})
+
+
+class CompareVersionsArgs(BaseModel):
+    action: Literal["compare_versions"] = "compare_versions"
+    version_a: str
+    version_b: str
+
+
+class CompareVersions(MockTool):
+    name = "compare_versions"
+    domain = DOMAIN; action = "compare_versions"
+    description = "Compare two deployed project versions and report the differences."
+    args_model = CompareVersionsArgs
+    examples = ["对比两个部署版本", "compare version 1.2 and 1.3", "看看两个版本差在哪"]
+
+    @staticmethod
+    def intended_entities(args: BaseModel) -> list[str]:  # pyright: ignore[reportArgumentType]
+        return []
+    @staticmethod
+    def referenced_entities(args: BaseModel) -> list[str]:  # pyright: ignore[reportArgumentType]
+        return []
+
+    def run(self, args: CompareVersionsArgs, world: object) -> ToolResult:
+        return ok(data={"version_a": args.version_a, "version_b": args.version_b, "differences": []})
+
+
+DEPLOYMENT_ACTIONS.update({
+    cls.action: cls
+    for cls in (
+        DryRunDeploy, DiffDeployment, PromoteToEnvironment, CreateDeploymentSnapshot,
+        ListDeploymentHistory, AbortDeployment, LockProject, CompareVersions,
+    )
+})

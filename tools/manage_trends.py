@@ -223,3 +223,285 @@ __all__ = [
     "CreateTrendGroup", "AddTrendPen", "ConfigureTrendAxis",
     "SetTrendSampling", "EnableTrendScroll", "DeleteTrendGroup", "ListTrendGroups",
 ]
+
+
+# ============================================================ extension tools
+class RemoveTrendPenArgs(BaseModel):
+    action: Literal["remove_trend_pen"] = "remove_trend_pen"
+    group_id: str
+    tag: str
+
+
+class RemoveTrendPen(MockTool):
+    name = "remove_trend_pen"
+    domain = DOMAIN; action = "remove_trend_pen"
+    description = "Remove a pen (tag curve) from a trend group."
+    args_model = RemoveTrendPenArgs
+    examples = ["从趋势图里删掉一条曲线", "remove the pressure pen from the trend", "去掉这条趋势线"]
+
+    @staticmethod
+    def intended_entities(args: BaseModel) -> list[str]:  # pyright: ignore[reportArgumentType]
+        return [f"trends.{args.group_id}.pens.{args.tag}"]
+    @staticmethod
+    def referenced_entities(args: BaseModel) -> list[str]:  # pyright: ignore[reportArgumentType]
+        return [f"trends.{args.group_id}"]
+
+    def run(self, args: RemoveTrendPenArgs, world: object) -> ToolResult:
+        return ok(data={"group_id": args.group_id, "tag": args.tag, "removed": True})
+
+
+class SetTrendTimeRangeArgs(BaseModel):
+    action: Literal["set_trend_time_range"] = "set_trend_time_range"
+    group_id: str
+    minutes: int = Field(ge=1, le=525600)
+
+
+class SetTrendTimeRange(MockTool):
+    name = "set_trend_time_range"
+    domain = DOMAIN; action = "set_trend_time_range"
+    description = "Set the visible time window (minutes) of a trend group."
+    args_model = SetTrendTimeRangeArgs
+    examples = ["设置趋势图的时间范围", "show the last 60 minutes on this trend", "把趋势窗口设为一天"]
+
+    @staticmethod
+    def intended_entities(args: BaseModel) -> list[str]:  # pyright: ignore[reportArgumentType]
+        return [f"trends.{args.group_id}.time_range"]
+    @staticmethod
+    def referenced_entities(args: BaseModel) -> list[str]:  # pyright: ignore[reportArgumentType]
+        return [f"trends.{args.group_id}"]
+
+    def run(self, args: SetTrendTimeRangeArgs, world: object) -> ToolResult:
+        return ok(data={"group_id": args.group_id, "minutes": args.minutes})
+
+
+class SetTrendPenColorArgs(BaseModel):
+    action: Literal["set_trend_pen_color"] = "set_trend_pen_color"
+    group_id: str
+    tag: str
+    color: str = Field(description="Hex or named color, e.g. '#ff0000' or 'red'")
+
+
+class SetTrendPenColor(MockTool):
+    name = "set_trend_pen_color"
+    domain = DOMAIN; action = "set_trend_pen_color"
+    description = "Set the line color of a trend pen."
+    args_model = SetTrendPenColorArgs
+    examples = ["把这条趋势线改成红色", "set the temperature pen to red", "调整曲线颜色"]
+
+    @staticmethod
+    def intended_entities(args: BaseModel) -> list[str]:  # pyright: ignore[reportArgumentType]
+        return [f"trends.{args.group_id}.pens.{args.tag}.color"]
+    @staticmethod
+    def referenced_entities(args: BaseModel) -> list[str]:  # pyright: ignore[reportArgumentType]
+        return [f"trends.{args.group_id}"]
+
+    def run(self, args: SetTrendPenColorArgs, world: object) -> ToolResult:
+        return ok(data={"tag": args.tag, "color": args.color})
+
+
+class SetTrendPenScaleArgs(BaseModel):
+    action: Literal["set_trend_pen_scale"] = "set_trend_pen_scale"
+    group_id: str
+    tag: str
+    min_value: float
+    max_value: float
+
+
+class SetTrendPenScale(MockTool):
+    name = "set_trend_pen_scale"
+    domain = DOMAIN; action = "set_trend_pen_scale"
+    description = "Set the vertical scale (min/max) of a trend pen."
+    args_model = SetTrendPenScaleArgs
+    examples = ["设置曲线的纵轴范围", "scale this pen from 0 to 100", "调整趋势线的量程"]
+
+    @staticmethod
+    def intended_entities(args: BaseModel) -> list[str]:  # pyright: ignore[reportArgumentType]
+        return [f"trends.{args.group_id}.pens.{args.tag}.scale"]
+    @staticmethod
+    def referenced_entities(args: BaseModel) -> list[str]:  # pyright: ignore[reportArgumentType]
+        return [f"trends.{args.group_id}"]
+
+    def run(self, args: SetTrendPenScaleArgs, world: object) -> ToolResult:
+        return ok(data={"tag": args.tag, "min": args.min_value, "max": args.max_value})
+
+
+class ExportTrendDataArgs(BaseModel):
+    action: Literal["export_trend_data"] = "export_trend_data"
+    group_id: str
+    format: Literal["csv", "excel"] = "csv"
+
+
+class ExportTrendData(MockTool):
+    name = "export_trend_data"
+    domain = DOMAIN; action = "export_trend_data"
+    description = "Export the data currently shown in a trend group to a file."
+    args_model = ExportTrendDataArgs
+    examples = ["导出趋势图的数据", "export this trend to Excel", "把曲线数据存成 CSV"]
+
+    @staticmethod
+    def intended_entities(args: BaseModel) -> list[str]:  # pyright: ignore[reportArgumentType]
+        return []
+    @staticmethod
+    def referenced_entities(args: BaseModel) -> list[str]:  # pyright: ignore[reportArgumentType]
+        return [f"trends.{args.group_id}"]
+
+    def run(self, args: ExportTrendDataArgs, world: object) -> ToolResult:
+        return ok(data={"group_id": args.group_id, "format": args.format})
+
+
+class AddTrendMarkerArgs(BaseModel):
+    action: Literal["add_trend_marker"] = "add_trend_marker"
+    group_id: str
+    marker_id: str
+    label: str
+
+
+class AddTrendMarker(MockTool):
+    name = "add_trend_marker"
+    domain = DOMAIN; action = "add_trend_marker"
+    description = "Add an annotation marker (e.g. batch start) to a trend group."
+    args_model = AddTrendMarkerArgs
+    examples = ["在趋势图上加一个标注", "mark the batch start on the trend", "给曲线加个事件标记"]
+
+    @staticmethod
+    def intended_entities(args: BaseModel) -> list[str]:  # pyright: ignore[reportArgumentType]
+        return [f"trends.{args.group_id}.markers.{args.marker_id}"]
+    @staticmethod
+    def referenced_entities(args: BaseModel) -> list[str]:  # pyright: ignore[reportArgumentType]
+        return [f"trends.{args.group_id}"]
+
+    def run(self, args: AddTrendMarkerArgs, world: object) -> ToolResult:
+        return ok(data={"marker_id": args.marker_id, "label": args.label})
+
+
+class SetTrendRefreshRateArgs(BaseModel):
+    action: Literal["set_trend_refresh_rate"] = "set_trend_refresh_rate"
+    group_id: str
+    interval_ms: int = Field(ge=100, le=60000)
+
+
+class SetTrendRefreshRate(MockTool):
+    name = "set_trend_refresh_rate"
+    domain = DOMAIN; action = "set_trend_refresh_rate"
+    description = "Set how often a live trend redraws."
+    args_model = SetTrendRefreshRateArgs
+    examples = ["设置趋势图刷新频率", "refresh this trend every second", "调整曲线的刷新速度"]
+
+    @staticmethod
+    def intended_entities(args: BaseModel) -> list[str]:  # pyright: ignore[reportArgumentType]
+        return [f"trends.{args.group_id}.refresh_rate"]
+    @staticmethod
+    def referenced_entities(args: BaseModel) -> list[str]:  # pyright: ignore[reportArgumentType]
+        return [f"trends.{args.group_id}"]
+
+    def run(self, args: SetTrendRefreshRateArgs, world: object) -> ToolResult:
+        return ok(data={"group_id": args.group_id, "interval_ms": args.interval_ms})
+
+
+class FreezeTrendArgs(BaseModel):
+    action: Literal["freeze_trend"] = "freeze_trend"
+    group_id: str
+    frozen: bool = True
+
+
+class FreezeTrend(MockTool):
+    name = "freeze_trend"
+    domain = DOMAIN; action = "freeze_trend"
+    description = "Freeze (pause) or unfreeze a live trend for inspection."
+    args_model = FreezeTrendArgs
+    examples = ["冻结趋势图", "pause the live trend to look closely", "暂停一下曲线刷新"]
+
+    @staticmethod
+    def intended_entities(args: BaseModel) -> list[str]:  # pyright: ignore[reportArgumentType]
+        return [f"trends.{args.group_id}.frozen"]
+    @staticmethod
+    def referenced_entities(args: BaseModel) -> list[str]:  # pyright: ignore[reportArgumentType]
+        return [f"trends.{args.group_id}"]
+
+    def run(self, args: FreezeTrendArgs, world: object) -> ToolResult:
+        return ok(data={"group_id": args.group_id, "frozen": args.frozen})
+
+
+class CompareTrendPeriodsArgs(BaseModel):
+    action: Literal["compare_trend_periods"] = "compare_trend_periods"
+    group_id: str
+    period_a_start: str
+    period_b_start: str
+    duration_minutes: int = Field(default=60, ge=1, le=10080)
+
+
+class CompareTrendPeriods(MockTool):
+    name = "compare_trend_periods"
+    domain = DOMAIN; action = "compare_trend_periods"
+    description = "Overlay two time periods of the same trend for comparison."
+    args_model = CompareTrendPeriodsArgs
+    examples = ["对比两个时间段的趋势", "compare today's curve with yesterday's", "把两班的曲线叠起来看"]
+
+    @staticmethod
+    def intended_entities(args: BaseModel) -> list[str]:  # pyright: ignore[reportArgumentType]
+        return []
+    @staticmethod
+    def referenced_entities(args: BaseModel) -> list[str]:  # pyright: ignore[reportArgumentType]
+        return [f"trends.{args.group_id}"]
+
+    def run(self, args: CompareTrendPeriodsArgs, world: object) -> ToolResult:
+        return ok(data={"group_id": args.group_id})
+
+
+class SetTrendLegendArgs(BaseModel):
+    action: Literal["set_trend_legend"] = "set_trend_legend"
+    group_id: str
+    show: bool = True
+    position: Literal["top", "bottom", "left", "right"] = "bottom"
+
+
+class SetTrendLegend(MockTool):
+    name = "set_trend_legend"
+    domain = DOMAIN; action = "set_trend_legend"
+    description = "Show/hide and position the legend of a trend group."
+    args_model = SetTrendLegendArgs
+    examples = ["显示趋势图的图例", "put the legend at the top", "隐藏曲线图例"]
+
+    @staticmethod
+    def intended_entities(args: BaseModel) -> list[str]:  # pyright: ignore[reportArgumentType]
+        return [f"trends.{args.group_id}.legend"]
+    @staticmethod
+    def referenced_entities(args: BaseModel) -> list[str]:  # pyright: ignore[reportArgumentType]
+        return [f"trends.{args.group_id}"]
+
+    def run(self, args: SetTrendLegendArgs, world: object) -> ToolResult:
+        return ok(data={"group_id": args.group_id, "legend_shown": args.show})
+
+
+class CloneTrendGroupArgs(BaseModel):
+    action: Literal["clone_trend_group"] = "clone_trend_group"
+    source_group_id: str
+    new_group_id: str
+
+
+class CloneTrendGroup(MockTool):
+    name = "clone_trend_group"
+    domain = DOMAIN; action = "clone_trend_group"
+    description = "Duplicate a trend group (pens + axes) under a new id."
+    args_model = CloneTrendGroupArgs
+    examples = ["复制一个趋势组", "clone this trend for the other reactor", "基于现有趋势新建一个"]
+
+    @staticmethod
+    def intended_entities(args: BaseModel) -> list[str]:  # pyright: ignore[reportArgumentType]
+        return [f"trends.{args.new_group_id}"]
+    @staticmethod
+    def referenced_entities(args: BaseModel) -> list[str]:  # pyright: ignore[reportArgumentType]
+        return [f"trends.{args.source_group_id}"]
+
+    def run(self, args: CloneTrendGroupArgs, world: object) -> ToolResult:
+        return ok(data={"new_group_id": args.new_group_id})
+
+
+TREND_ACTIONS.update({
+    cls.action: cls
+    for cls in (
+        RemoveTrendPen, SetTrendTimeRange, SetTrendPenColor, SetTrendPenScale,
+        ExportTrendData, AddTrendMarker, SetTrendRefreshRate, FreezeTrend,
+        CompareTrendPeriods, SetTrendLegend, CloneTrendGroup,
+    )
+})

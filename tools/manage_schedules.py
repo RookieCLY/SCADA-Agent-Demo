@@ -199,3 +199,251 @@ __all__ = [
     "CreateSchedule", "SetScheduleTrigger", "AddScheduleAction",
     "EnableSchedule", "GetScheduleStatus", "ListSchedules",
 ]
+
+
+# ============================================================ extension tools
+class DisableScheduleArgs(BaseModel):
+    action: Literal["disable_schedule"] = "disable_schedule"
+    schedule_id: str
+
+
+class DisableSchedule(MockTool):
+    name = "disable_schedule"
+    domain = DOMAIN; action = "disable_schedule"
+    description = "Disable a scheduled job so it stops firing."
+    args_model = DisableScheduleArgs
+    examples = ["停用这个定时任务", "disable the nightly backup schedule", "先关掉那个计划任务"]
+
+    @staticmethod
+    def intended_entities(args: BaseModel) -> list[str]:  # pyright: ignore[reportArgumentType]
+        return [f"schedules.{args.schedule_id}.enabled"]
+    @staticmethod
+    def referenced_entities(args: BaseModel) -> list[str]:  # pyright: ignore[reportArgumentType]
+        return [f"schedules.{args.schedule_id}"]
+
+    def run(self, args: DisableScheduleArgs, world: object) -> ToolResult:
+        return ok(data={"schedule_id": args.schedule_id, "enabled": False})
+
+
+class DeleteScheduleArgs(BaseModel):
+    action: Literal["delete_schedule"] = "delete_schedule"
+    schedule_id: str
+
+
+class DeleteSchedule(MockTool):
+    name = "delete_schedule"
+    domain = DOMAIN; action = "delete_schedule"
+    description = "Delete a scheduled job."
+    args_model = DeleteScheduleArgs
+    examples = ["删除定时任务", "delete the obsolete report schedule", "把这个计划任务移除"]
+
+    @staticmethod
+    def intended_entities(args: BaseModel) -> list[str]:  # pyright: ignore[reportArgumentType]
+        return [f"schedules.{args.schedule_id}"]
+    @staticmethod
+    def referenced_entities(args: BaseModel) -> list[str]:  # pyright: ignore[reportArgumentType]
+        return [f"schedules.{args.schedule_id}"]
+
+    def run(self, args: DeleteScheduleArgs, world: object) -> ToolResult:
+        return ok(data={"schedule_id": args.schedule_id, "deleted": True})
+
+
+class RunScheduleNowArgs(BaseModel):
+    action: Literal["run_schedule_now"] = "run_schedule_now"
+    schedule_id: str
+
+
+class RunScheduleNow(MockTool):
+    name = "run_schedule_now"
+    domain = DOMAIN; action = "run_schedule_now"
+    description = "Trigger a scheduled job immediately, out of band."
+    args_model = RunScheduleNowArgs
+    examples = ["立刻运行一次这个任务", "run the backup job now", "手动触发定时任务"]
+
+    @staticmethod
+    def intended_entities(args: BaseModel) -> list[str]:  # pyright: ignore[reportArgumentType]
+        return []
+    @staticmethod
+    def referenced_entities(args: BaseModel) -> list[str]:  # pyright: ignore[reportArgumentType]
+        return [f"schedules.{args.schedule_id}"]
+
+    def run(self, args: RunScheduleNowArgs, world: object) -> ToolResult:
+        return ok(data={"schedule_id": args.schedule_id, "triggered": True})
+
+
+class PauseScheduleArgs(BaseModel):
+    action: Literal["pause_schedule"] = "pause_schedule"
+    schedule_id: str
+    until: str | None = Field(default=None, description="Optional ISO timestamp to auto-resume")
+
+
+class PauseSchedule(MockTool):
+    name = "pause_schedule"
+    domain = DOMAIN; action = "pause_schedule"
+    description = "Temporarily pause a schedule without deleting it."
+    args_model = PauseScheduleArgs
+    examples = ["暂停这个定时任务", "pause the schedule during maintenance", "临时挂起计划任务"]
+
+    @staticmethod
+    def intended_entities(args: BaseModel) -> list[str]:  # pyright: ignore[reportArgumentType]
+        return [f"schedules.{args.schedule_id}.state"]
+    @staticmethod
+    def referenced_entities(args: BaseModel) -> list[str]:  # pyright: ignore[reportArgumentType]
+        return [f"schedules.{args.schedule_id}"]
+
+    def run(self, args: PauseScheduleArgs, world: object) -> ToolResult:
+        return ok(data={"schedule_id": args.schedule_id, "paused": True})
+
+
+class ResumeScheduleArgs(BaseModel):
+    action: Literal["resume_schedule"] = "resume_schedule"
+    schedule_id: str
+
+
+class ResumeSchedule(MockTool):
+    name = "resume_schedule"
+    domain = DOMAIN; action = "resume_schedule"
+    description = "Resume a previously paused schedule."
+    args_model = ResumeScheduleArgs
+    examples = ["恢复这个定时任务", "resume the paused schedule", "让计划任务继续跑"]
+
+    @staticmethod
+    def intended_entities(args: BaseModel) -> list[str]:  # pyright: ignore[reportArgumentType]
+        return [f"schedules.{args.schedule_id}.state"]
+    @staticmethod
+    def referenced_entities(args: BaseModel) -> list[str]:  # pyright: ignore[reportArgumentType]
+        return [f"schedules.{args.schedule_id}"]
+
+    def run(self, args: ResumeScheduleArgs, world: object) -> ToolResult:
+        return ok(data={"schedule_id": args.schedule_id, "paused": False})
+
+
+class SetScheduleTimezoneArgs(BaseModel):
+    action: Literal["set_schedule_timezone"] = "set_schedule_timezone"
+    schedule_id: str
+    timezone: str = Field(description="IANA timezone, e.g. 'Asia/Shanghai'")
+
+
+class SetScheduleTimezone(MockTool):
+    name = "set_schedule_timezone"
+    domain = DOMAIN; action = "set_schedule_timezone"
+    description = "Set the timezone a schedule's cron/interval trigger is evaluated in."
+    args_model = SetScheduleTimezoneArgs
+    examples = ["设置定时任务的时区", "run this schedule in Asia/Shanghai time", "把计划任务改成本地时区"]
+
+    @staticmethod
+    def intended_entities(args: BaseModel) -> list[str]:  # pyright: ignore[reportArgumentType]
+        return [f"schedules.{args.schedule_id}.timezone"]
+    @staticmethod
+    def referenced_entities(args: BaseModel) -> list[str]:  # pyright: ignore[reportArgumentType]
+        return [f"schedules.{args.schedule_id}"]
+
+    def run(self, args: SetScheduleTimezoneArgs, world: object) -> ToolResult:
+        return ok(data={"schedule_id": args.schedule_id, "timezone": args.timezone})
+
+
+class GetScheduleHistoryArgs(BaseModel):
+    action: Literal["get_schedule_history"] = "get_schedule_history"
+    schedule_id: str
+    last_n_runs: int = Field(default=20, ge=1, le=1000)
+
+
+class GetScheduleHistory(MockTool):
+    name = "get_schedule_history"
+    domain = DOMAIN; action = "get_schedule_history"
+    description = "Retrieve the recent execution history (success/failure) of a schedule."
+    args_model = GetScheduleHistoryArgs
+    examples = ["查看定时任务的执行历史", "show the last 10 runs of this schedule", "看看这个任务跑得成不成功"]
+
+    @staticmethod
+    def intended_entities(args: BaseModel) -> list[str]:  # pyright: ignore[reportArgumentType]
+        return []
+    @staticmethod
+    def referenced_entities(args: BaseModel) -> list[str]:  # pyright: ignore[reportArgumentType]
+        return [f"schedules.{args.schedule_id}"]
+
+    def run(self, args: GetScheduleHistoryArgs, world: object) -> ToolResult:
+        return ok(data={"schedule_id": args.schedule_id, "runs": [], "count": 0})
+
+
+class CloneScheduleArgs(BaseModel):
+    action: Literal["clone_schedule"] = "clone_schedule"
+    source_schedule_id: str
+    new_schedule_id: str
+
+
+class CloneSchedule(MockTool):
+    name = "clone_schedule"
+    domain = DOMAIN; action = "clone_schedule"
+    description = "Duplicate a schedule (triggers + actions) under a new id."
+    args_model = CloneScheduleArgs
+    examples = ["复制一个定时任务", "clone this schedule for the other line", "基于现有计划新建一个"]
+
+    @staticmethod
+    def intended_entities(args: BaseModel) -> list[str]:  # pyright: ignore[reportArgumentType]
+        return [f"schedules.{args.new_schedule_id}"]
+    @staticmethod
+    def referenced_entities(args: BaseModel) -> list[str]:  # pyright: ignore[reportArgumentType]
+        return [f"schedules.{args.source_schedule_id}"]
+
+    def run(self, args: CloneScheduleArgs, world: object) -> ToolResult:
+        return ok(data={"new_schedule_id": args.new_schedule_id})
+
+
+class SetScheduleRetryPolicyArgs(BaseModel):
+    action: Literal["set_schedule_retry_policy"] = "set_schedule_retry_policy"
+    schedule_id: str
+    max_retries: int = Field(default=3, ge=0, le=10)
+    backoff: Literal["fixed", "exponential"] = "exponential"
+
+
+class SetScheduleRetryPolicy(MockTool):
+    name = "set_schedule_retry_policy"
+    domain = DOMAIN; action = "set_schedule_retry_policy"
+    description = "Configure how a failed scheduled job is retried."
+    args_model = SetScheduleRetryPolicyArgs
+    examples = ["设置定时任务失败重试策略", "retry this job 3 times with backoff", "任务失败了自动重试"]
+
+    @staticmethod
+    def intended_entities(args: BaseModel) -> list[str]:  # pyright: ignore[reportArgumentType]
+        return [f"schedules.{args.schedule_id}.retry_policy"]
+    @staticmethod
+    def referenced_entities(args: BaseModel) -> list[str]:  # pyright: ignore[reportArgumentType]
+        return [f"schedules.{args.schedule_id}"]
+
+    def run(self, args: SetScheduleRetryPolicyArgs, world: object) -> ToolResult:
+        return ok(data={"schedule_id": args.schedule_id, "max_retries": args.max_retries})
+
+
+class SetScheduleDependencyArgs(BaseModel):
+    action: Literal["set_schedule_dependency"] = "set_schedule_dependency"
+    schedule_id: str
+    depends_on_schedule_id: str
+
+
+class SetScheduleDependency(MockTool):
+    name = "set_schedule_dependency"
+    domain = DOMAIN; action = "set_schedule_dependency"
+    description = "Make a schedule run only after another schedule completes successfully."
+    args_model = SetScheduleDependencyArgs
+    examples = ["设置任务之间的依赖", "run this job only after the ETL job finishes", "让报表任务等备份任务先跑完"]
+
+    @staticmethod
+    def intended_entities(args: BaseModel) -> list[str]:  # pyright: ignore[reportArgumentType]
+        return [f"schedules.{args.schedule_id}.depends_on"]
+    @staticmethod
+    def referenced_entities(args: BaseModel) -> list[str]:  # pyright: ignore[reportArgumentType]
+        return [f"schedules.{args.schedule_id}", f"schedules.{args.depends_on_schedule_id}"]
+
+    def run(self, args: SetScheduleDependencyArgs, world: object) -> ToolResult:
+        return ok(data={"schedule_id": args.schedule_id, "depends_on": args.depends_on_schedule_id})
+
+
+SCHEDULE_ACTIONS.update({
+    cls.action: cls
+    for cls in (
+        DisableSchedule, DeleteSchedule, RunScheduleNow, PauseSchedule, ResumeSchedule,
+        SetScheduleTimezone, GetScheduleHistory, CloneSchedule, SetScheduleRetryPolicy,
+        SetScheduleDependency,
+    )
+})

@@ -16,6 +16,29 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field, replace
 
+# Per-domain action dicts (name -> tool class). Imported so the per-state
+# whitelists below can be derived from the *live* tool library instead of
+# hand-maintained name lists — as the library grows (now ~300 tools), each
+# state automatically exposes its whole domain. tools/* never import agent/*,
+# so this introduces no import cycle.
+from tools.deployment import DEPLOYMENT_ACTIONS
+from tools.manage_alarms import ALARM_ACTIONS
+from tools.manage_communication import COMM_ACTIONS
+from tools.manage_databases import DATABASE_ACTIONS
+from tools.manage_devices import DEVICE_ACTIONS
+from tools.manage_graphics import GRAPHICS_ACTIONS
+from tools.manage_history import HISTORY_ACTIONS
+from tools.manage_notifications import NOTIFICATION_ACTIONS
+from tools.manage_pages import PAGE_ACTIONS
+from tools.manage_points import POINT_ACTIONS
+from tools.manage_recipes import RECIPE_ACTIONS
+from tools.manage_reports import REPORT_ACTIONS
+from tools.manage_schedules import SCHEDULE_ACTIONS
+from tools.manage_scripts import SCRIPT_ACTIONS
+from tools.manage_security import SECURITY_ACTIONS
+from tools.manage_trends import TREND_ACTIONS
+from tools.manage_users import USER_ACTIONS
+
 
 @dataclass(frozen=True)
 class StateSpec:
@@ -240,6 +263,81 @@ STATES = {
     )
     for name, spec in STATES.items()
 }
+
+
+# ---- categorize the full tool library into per-state whitelists -------------
+# Each core state exposes its whole domain (so the tools added to the library
+# are reachable under the state machine, not just the original handful), and
+# each "extra" domain gets its own configuration state reachable from
+# ANALYZE_INTENT. Whitelists are derived from the live *_ACTIONS dicts so future
+# tools are categorized automatically.
+def _names(*action_dicts: dict) -> frozenset[str]:
+    out: set[str] = set()
+    for d in action_dicts:
+        out.update(d.keys())
+    return frozenset(out)
+
+
+# domain tools that belong on an existing core state
+_CORE_STATE_DOMAINS: dict[str, tuple[dict, ...]] = {
+    "CONFIG_POINT": (POINT_ACTIONS,),
+    "CONFIG_ALARM": (ALARM_ACTIONS,),
+    "MANAGE_PAGES": (PAGE_ACTIONS,),
+    "GENERATE_LAYOUT": (GRAPHICS_ACTIONS,),
+    "CONFIG_HISTORY": (HISTORY_ACTIONS,),
+    "CONFIG_SCRIPT": (SCRIPT_ACTIONS,),
+    "DEPLOY": (DEPLOYMENT_ACTIONS,),
+}
+
+# one new configuration state per extra domain: (state, description, actions)
+_EXTRA_STATE_DOMAINS: dict[str, tuple[str, dict]] = {
+    "CONFIG_DEVICE": ("Create / configure field devices and equipment.", DEVICE_ACTIONS),
+    "CONFIG_TREND": ("Build and configure trend curves.", TREND_ACTIONS),
+    "MANAGE_RECIPE": ("Author and manage batch recipes.", RECIPE_ACTIONS),
+    "MANAGE_USERS": ("Manage user accounts, roles and permissions.", USER_ACTIONS),
+    "CONFIG_COMM": ("Configure communication drivers and mappings.", COMM_ACTIONS),
+    "MANAGE_REPORT": ("Design and schedule reports.", REPORT_ACTIONS),
+    "CONFIG_SCHEDULE": ("Create and manage scheduled jobs.", SCHEDULE_ACTIONS),
+    "CONFIG_SECURITY": ("Configure security, audit and backup policy.", SECURITY_ACTIONS),
+    "CONFIG_DATABASE": ("Configure external database connections.", DATABASE_ACTIONS),
+    "CONFIG_NOTIFICATION": ("Configure alarm notification rules.", NOTIFICATION_ACTIONS),
+}
+
+_EXTRA_COMMON_NEXT = frozenset(
+    {"VALIDATE", "DEPLOY", "DONE", "ANALYZE_INTENT", "ASK_USER"}
+)
+
+
+def _categorize_tools(states: dict[str, StateSpec]) -> dict[str, StateSpec]:
+    states = dict(states)
+    # Tools deliberately placed by the hand-written tables above (e.g.
+    # ``bind_point`` lives in BIND_POINTS, not MANAGE_PAGES) keep their
+    # placement — only *unplaced* domain tools are folded into the domain's
+    # primary state, so the intentional cross-state split is preserved.
+    already_placed = {t for s in states.values() for t in s.allowed_tools}
+    # 1. add each core domain's not-yet-placed tools to its primary state
+    for st, dicts in _CORE_STATE_DOMAINS.items():
+        if st in states:
+            spec = states[st]
+            new_tools = _names(*dicts) - already_placed
+            states[st] = replace(spec, allowed_tools=spec.allowed_tools | new_tools)
+    # 2. add one state per extra domain
+    for st, (desc, actions) in _EXTRA_STATE_DOMAINS.items():
+        states[st] = StateSpec(
+            name=st,
+            description=desc,
+            allowed_tools=_names(actions) | {"list_points"},
+            next_states=_EXTRA_COMMON_NEXT,
+        )
+    # 3. make the new states reachable from intent analysis
+    ai = states["ANALYZE_INTENT"]
+    states["ANALYZE_INTENT"] = replace(
+        ai, next_states=ai.next_states | frozenset(_EXTRA_STATE_DOMAINS.keys())
+    )
+    return states
+
+
+STATES = _categorize_tools(STATES)
 
 INITIAL_STATE = "ANALYZE_INTENT"
 

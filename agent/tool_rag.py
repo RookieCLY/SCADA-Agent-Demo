@@ -231,6 +231,16 @@ class ToolIndex:
         dn, sn = self._normalised_channels(query)
         hybrid = alpha * dn + (1.0 - alpha) * sn
 
+        # §4.2.4: an exact whole tool-name mention in the query must be recalled,
+        # not diluted out by a large corpus. Both channels are min-max
+        # normalised to [0, 1], so a +1.0 bump guarantees such a tool clears the
+        # noise floor and survives Top-N truncation (the reranker then pins it).
+        q_tokens = set(tokenise(query))
+        if q_tokens:
+            for i, name in enumerate(self.names):
+                if name in q_tokens:
+                    hybrid[i] += 1.0
+
         keep = set(self.names) if candidates is None else set(candidates)
         scored: list[ScoredTool] = []
         for i, name in enumerate(self.names):

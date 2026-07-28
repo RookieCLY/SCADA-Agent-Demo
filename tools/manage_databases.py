@@ -170,3 +170,255 @@ __all__ = [
     "CreateDatabaseTable", "ConfigureDatabaseConnection",
     "ExecuteSqlQuery", "SetRetentionPolicy", "ListDatabases",
 ]
+
+
+# ============================================================ extension tools
+class TestDbConnectionArgs(BaseModel):
+    action: Literal["test_db_connection"] = "test_db_connection"
+    connection_id: str
+
+
+class TestDbConnection(MockTool):
+    name = "test_db_connection"
+    domain = DOMAIN; action = "test_db_connection"
+    description = "Test an external database connection and report reachability/latency."
+    args_model = TestDbConnectionArgs
+    examples = ["测试一下数据库连接", "check if the historian DB is reachable", "数据库连得上吗"]
+
+    @staticmethod
+    def intended_entities(args: BaseModel) -> list[str]:  # pyright: ignore[reportArgumentType]
+        return []
+    @staticmethod
+    def referenced_entities(args: BaseModel) -> list[str]:  # pyright: ignore[reportArgumentType]
+        return [f"databases.{args.connection_id}"]
+
+    def run(self, args: TestDbConnectionArgs, world: object) -> ToolResult:
+        return ok(data={"connection_id": args.connection_id, "reachable": True})
+
+
+class CloseDbConnectionArgs(BaseModel):
+    action: Literal["close_db_connection"] = "close_db_connection"
+    connection_id: str
+
+
+class CloseDbConnection(MockTool):
+    name = "close_db_connection"
+    domain = DOMAIN; action = "close_db_connection"
+    description = "Close and release an external database connection."
+    args_model = CloseDbConnectionArgs
+    examples = ["关闭数据库连接", "close the reporting DB connection", "断开外部数据库"]
+
+    @staticmethod
+    def intended_entities(args: BaseModel) -> list[str]:  # pyright: ignore[reportArgumentType]
+        return [f"databases.{args.connection_id}.state"]
+    @staticmethod
+    def referenced_entities(args: BaseModel) -> list[str]:  # pyright: ignore[reportArgumentType]
+        return [f"databases.{args.connection_id}"]
+
+    def run(self, args: CloseDbConnectionArgs, world: object) -> ToolResult:
+        return ok(data={"connection_id": args.connection_id, "closed": True})
+
+
+class ListDbTablesArgs(BaseModel):
+    action: Literal["list_db_tables"] = "list_db_tables"
+    connection_id: str
+    schema_name: str | None = None
+
+
+class ListDbTables(MockTool):
+    name = "list_db_tables"
+    domain = DOMAIN; action = "list_db_tables"
+    description = "List the tables available on an external database connection."
+    args_model = ListDbTablesArgs
+    examples = ["列出数据库里的表", "show tables in the historian database", "看看这个库有哪些表"]
+
+    @staticmethod
+    def intended_entities(args: BaseModel) -> list[str]:  # pyright: ignore[reportArgumentType]
+        return []
+    @staticmethod
+    def referenced_entities(args: BaseModel) -> list[str]:  # pyright: ignore[reportArgumentType]
+        return [f"databases.{args.connection_id}"]
+
+    def run(self, args: ListDbTablesArgs, world: object) -> ToolResult:
+        return ok(data={"connection_id": args.connection_id, "tables": [], "count": 0})
+
+
+class DropDbTableArgs(BaseModel):
+    action: Literal["drop_db_table"] = "drop_db_table"
+    connection_id: str
+    table_name: str
+
+
+class DropDbTable(MockTool):
+    name = "drop_db_table"
+    domain = DOMAIN; action = "drop_db_table"
+    description = "Drop a table from an external database (destructive)."
+    args_model = DropDbTableArgs
+    examples = ["删除数据库中的一张表", "drop the temporary staging table", "把这张表删掉"]
+
+    @staticmethod
+    def intended_entities(args: BaseModel) -> list[str]:  # pyright: ignore[reportArgumentType]
+        return [f"databases.{args.connection_id}.tables.{args.table_name}"]
+    @staticmethod
+    def referenced_entities(args: BaseModel) -> list[str]:  # pyright: ignore[reportArgumentType]
+        return [f"databases.{args.connection_id}"]
+
+    def run(self, args: DropDbTableArgs, world: object) -> ToolResult:
+        return ok(data={"table_name": args.table_name, "dropped": True})
+
+
+class CreateDbIndexArgs(BaseModel):
+    action: Literal["create_db_index"] = "create_db_index"
+    connection_id: str
+    table_name: str
+    columns: list[str] = Field(min_length=1)
+    unique: bool = False
+
+
+class CreateDbIndex(MockTool):
+    name = "create_db_index"
+    domain = DOMAIN; action = "create_db_index"
+    description = "Create an index on a database table to speed up queries."
+    args_model = CreateDbIndexArgs
+    examples = ["给这张表建个索引", "create an index on the timestamp column", "加个索引加速查询"]
+
+    @staticmethod
+    def intended_entities(args: BaseModel) -> list[str]:  # pyright: ignore[reportArgumentType]
+        return [f"databases.{args.connection_id}.tables.{args.table_name}.index"]
+    @staticmethod
+    def referenced_entities(args: BaseModel) -> list[str]:  # pyright: ignore[reportArgumentType]
+        return [f"databases.{args.connection_id}"]
+
+    def run(self, args: CreateDbIndexArgs, world: object) -> ToolResult:
+        return ok(data={"table_name": args.table_name, "columns": len(args.columns)})
+
+
+class SetDbRetentionDaysArgs(BaseModel):
+    action: Literal["set_db_retention_days"] = "set_db_retention_days"
+    connection_id: str
+    table_name: str
+    days: int = Field(ge=1, le=3650)
+
+
+class SetDbRetentionDays(MockTool):
+    name = "set_db_retention_days"
+    domain = DOMAIN; action = "set_db_retention_days"
+    description = "Set the row-retention window (days) for a database table's data purge job."
+    args_model = SetDbRetentionDaysArgs
+    examples = ["设置这张表的数据保留天数", "keep only 90 days of rows in this table", "超过保留期的数据自动清理"]
+
+    @staticmethod
+    def intended_entities(args: BaseModel) -> list[str]:  # pyright: ignore[reportArgumentType]
+        return [f"databases.{args.connection_id}.tables.{args.table_name}.retention"]
+    @staticmethod
+    def referenced_entities(args: BaseModel) -> list[str]:  # pyright: ignore[reportArgumentType]
+        return [f"databases.{args.connection_id}"]
+
+    def run(self, args: SetDbRetentionDaysArgs, world: object) -> ToolResult:
+        return ok(data={"table_name": args.table_name, "days": args.days})
+
+
+class ExportDbTableArgs(BaseModel):
+    action: Literal["export_db_table"] = "export_db_table"
+    connection_id: str
+    table_name: str
+    format: Literal["csv", "parquet", "json"] = "csv"
+
+
+class ExportDbTable(MockTool):
+    name = "export_db_table"
+    domain = DOMAIN; action = "export_db_table"
+    description = "Export a database table's rows to a file in the given format."
+    args_model = ExportDbTableArgs
+    examples = ["把这张表导出成 CSV", "export the alarm history table to parquet", "导出数据库表数据"]
+
+    @staticmethod
+    def intended_entities(args: BaseModel) -> list[str]:  # pyright: ignore[reportArgumentType]
+        return []
+    @staticmethod
+    def referenced_entities(args: BaseModel) -> list[str]:  # pyright: ignore[reportArgumentType]
+        return [f"databases.{args.connection_id}"]
+
+    def run(self, args: ExportDbTableArgs, world: object) -> ToolResult:
+        return ok(data={"table_name": args.table_name, "format": args.format})
+
+
+class ImportDbDataArgs(BaseModel):
+    action: Literal["import_db_data"] = "import_db_data"
+    connection_id: str
+    table_name: str
+    source_file: str
+
+
+class ImportDbData(MockTool):
+    name = "import_db_data"
+    domain = DOMAIN; action = "import_db_data"
+    description = "Bulk-import rows from a file into a database table."
+    args_model = ImportDbDataArgs
+    examples = ["把 CSV 导入到数据库表", "load this file into the staging table", "批量导入数据到库里"]
+
+    @staticmethod
+    def intended_entities(args: BaseModel) -> list[str]:  # pyright: ignore[reportArgumentType]
+        return [f"databases.{args.connection_id}.tables.{args.table_name}"]
+    @staticmethod
+    def referenced_entities(args: BaseModel) -> list[str]:  # pyright: ignore[reportArgumentType]
+        return [f"databases.{args.connection_id}"]
+
+    def run(self, args: ImportDbDataArgs, world: object) -> ToolResult:
+        return ok(data={"table_name": args.table_name, "imported": True})
+
+
+class RunDbMaintenanceArgs(BaseModel):
+    action: Literal["run_db_maintenance"] = "run_db_maintenance"
+    connection_id: str
+    task: Literal["vacuum", "reindex", "analyze"] = "vacuum"
+
+
+class RunDbMaintenance(MockTool):
+    name = "run_db_maintenance"
+    domain = DOMAIN; action = "run_db_maintenance"
+    description = "Run a maintenance task (vacuum / reindex / analyze) on a database."
+    args_model = RunDbMaintenanceArgs
+    examples = ["对数据库做一次维护", "vacuum the historian database", "重建索引优化数据库"]
+
+    @staticmethod
+    def intended_entities(args: BaseModel) -> list[str]:  # pyright: ignore[reportArgumentType]
+        return []
+    @staticmethod
+    def referenced_entities(args: BaseModel) -> list[str]:  # pyright: ignore[reportArgumentType]
+        return [f"databases.{args.connection_id}"]
+
+    def run(self, args: RunDbMaintenanceArgs, world: object) -> ToolResult:
+        return ok(data={"connection_id": args.connection_id, "task": args.task})
+
+
+class GetDbStatsArgs(BaseModel):
+    action: Literal["get_db_stats"] = "get_db_stats"
+    connection_id: str
+
+
+class GetDbStats(MockTool):
+    name = "get_db_stats"
+    domain = DOMAIN; action = "get_db_stats"
+    description = "Retrieve size / row-count / connection statistics for a database."
+    args_model = GetDbStatsArgs
+    examples = ["查看数据库的统计信息", "how big is the historian database", "数据库有多少行数据"]
+
+    @staticmethod
+    def intended_entities(args: BaseModel) -> list[str]:  # pyright: ignore[reportArgumentType]
+        return []
+    @staticmethod
+    def referenced_entities(args: BaseModel) -> list[str]:  # pyright: ignore[reportArgumentType]
+        return [f"databases.{args.connection_id}"]
+
+    def run(self, args: GetDbStatsArgs, world: object) -> ToolResult:
+        return ok(data={"connection_id": args.connection_id, "stats": {}})
+
+
+DATABASE_ACTIONS.update({
+    cls.action: cls
+    for cls in (
+        TestDbConnection, CloseDbConnection, ListDbTables, DropDbTable, CreateDbIndex,
+        SetDbRetentionDays, ExportDbTable, ImportDbData, RunDbMaintenance, GetDbStats,
+    )
+})

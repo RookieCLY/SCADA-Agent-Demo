@@ -221,3 +221,257 @@ __all__ = [
     "CreateReportTemplate", "AddReportSection", "ConfigureReportSchedule",
     "GenerateReport", "SetReportFormat", "ExportReport", "ListReportTemplates",
 ]
+
+
+# ============================================================ extension tools
+class DeleteReportTemplateArgs(BaseModel):
+    action: Literal["delete_report_template"] = "delete_report_template"
+    template_id: str
+
+
+class DeleteReportTemplate(MockTool):
+    name = "delete_report_template"
+    domain = DOMAIN; action = "delete_report_template"
+    description = "Delete a report template."
+    args_model = DeleteReportTemplateArgs
+    examples = ["删除一个报表模板", "delete the monthly report template", "移除旧的报表定义"]
+
+    @staticmethod
+    def intended_entities(args: BaseModel) -> list[str]:  # pyright: ignore[reportArgumentType]
+        return [f"reports.{args.template_id}"]
+    @staticmethod
+    def referenced_entities(args: BaseModel) -> list[str]:  # pyright: ignore[reportArgumentType]
+        return [f"reports.{args.template_id}"]
+
+    def run(self, args: DeleteReportTemplateArgs, world: object) -> ToolResult:
+        return ok(data={"template_id": args.template_id, "deleted": True})
+
+
+class CloneReportTemplateArgs(BaseModel):
+    action: Literal["clone_report_template"] = "clone_report_template"
+    source_template_id: str
+    new_template_id: str
+
+
+class CloneReportTemplate(MockTool):
+    name = "clone_report_template"
+    domain = DOMAIN; action = "clone_report_template"
+    description = "Duplicate an existing report template under a new id."
+    args_model = CloneReportTemplateArgs
+    examples = ["复制一个报表模板", "clone the shift report as a daily report", "基于现有模板新建一个"]
+
+    @staticmethod
+    def intended_entities(args: BaseModel) -> list[str]:  # pyright: ignore[reportArgumentType]
+        return [f"reports.{args.new_template_id}"]
+    @staticmethod
+    def referenced_entities(args: BaseModel) -> list[str]:  # pyright: ignore[reportArgumentType]
+        return [f"reports.{args.source_template_id}"]
+
+    def run(self, args: CloneReportTemplateArgs, world: object) -> ToolResult:
+        return ok(data={"new_template_id": args.new_template_id})
+
+
+class PreviewReportArgs(BaseModel):
+    action: Literal["preview_report"] = "preview_report"
+    template_id: str
+
+
+class PreviewReport(MockTool):
+    name = "preview_report"
+    domain = DOMAIN; action = "preview_report"
+    description = "Render a preview of a report without persisting or delivering it."
+    args_model = PreviewReportArgs
+    examples = ["预览一下这个报表", "preview the production report", "先看看报表长什么样"]
+
+    @staticmethod
+    def intended_entities(args: BaseModel) -> list[str]:  # pyright: ignore[reportArgumentType]
+        return []
+    @staticmethod
+    def referenced_entities(args: BaseModel) -> list[str]:  # pyright: ignore[reportArgumentType]
+        return [f"reports.{args.template_id}"]
+
+    def run(self, args: PreviewReportArgs, world: object) -> ToolResult:
+        return ok(data={"template_id": args.template_id, "preview": "<rendered>"})
+
+
+class EmailReportArgs(BaseModel):
+    action: Literal["email_report"] = "email_report"
+    template_id: str
+    recipients: list[str] = Field(min_length=1)
+
+
+class EmailReport(MockTool):
+    name = "email_report"
+    domain = DOMAIN; action = "email_report"
+    description = "Generate a report and email it to a list of recipients."
+    args_model = EmailReportArgs
+    examples = ["把报表邮件发给主管", "email the daily report to the shift leads", "生成报表并发邮件"]
+
+    @staticmethod
+    def intended_entities(args: BaseModel) -> list[str]:  # pyright: ignore[reportArgumentType]
+        return []
+    @staticmethod
+    def referenced_entities(args: BaseModel) -> list[str]:  # pyright: ignore[reportArgumentType]
+        return [f"reports.{args.template_id}"]
+
+    def run(self, args: EmailReportArgs, world: object) -> ToolResult:
+        return ok(data={"template_id": args.template_id, "sent_to": len(args.recipients)})
+
+
+class ArchiveReportArgs(BaseModel):
+    action: Literal["archive_report"] = "archive_report"
+    report_id: str
+    retention_days: int = Field(default=365, ge=1, le=3650)
+
+
+class ArchiveReport(MockTool):
+    name = "archive_report"
+    domain = DOMAIN; action = "archive_report"
+    description = "Archive a generated report instance with a retention window."
+    args_model = ArchiveReportArgs
+    examples = ["归档这份报表", "archive the generated report for a year", "把报表存档"]
+
+    @staticmethod
+    def intended_entities(args: BaseModel) -> list[str]:  # pyright: ignore[reportArgumentType]
+        return [f"reports.archive.{args.report_id}"]
+    @staticmethod
+    def referenced_entities(args: BaseModel) -> list[str]:  # pyright: ignore[reportArgumentType]
+        return []
+
+    def run(self, args: ArchiveReportArgs, world: object) -> ToolResult:
+        return ok(data={"report_id": args.report_id, "archived": True})
+
+
+class SetReportHeaderFooterArgs(BaseModel):
+    action: Literal["set_report_header_footer"] = "set_report_header_footer"
+    template_id: str
+    header: str | None = None
+    footer: str | None = None
+
+
+class SetReportHeaderFooter(MockTool):
+    name = "set_report_header_footer"
+    domain = DOMAIN; action = "set_report_header_footer"
+    description = "Set the header and footer text of a report template (e.g. company name, page numbers)."
+    args_model = SetReportHeaderFooterArgs
+    examples = ["设置报表的页眉页脚", "add the company logo text to the report header", "报表底部加页码"]
+
+    @staticmethod
+    def intended_entities(args: BaseModel) -> list[str]:  # pyright: ignore[reportArgumentType]
+        return [f"reports.{args.template_id}.header_footer"]
+    @staticmethod
+    def referenced_entities(args: BaseModel) -> list[str]:  # pyright: ignore[reportArgumentType]
+        return [f"reports.{args.template_id}"]
+
+    def run(self, args: SetReportHeaderFooterArgs, world: object) -> ToolResult:
+        return ok(data={"template_id": args.template_id, "updated": True})
+
+
+class AddReportChartArgs(BaseModel):
+    action: Literal["add_report_chart"] = "add_report_chart"
+    template_id: str
+    chart_id: str
+    chart_type: Literal["line", "bar", "pie"] = "line"
+    tags: list[str] = Field(default_factory=list)
+
+
+class AddReportChart(MockTool):
+    name = "add_report_chart"
+    domain = DOMAIN; action = "add_report_chart"
+    description = "Add a chart element (line/bar/pie over tag data) to a report template."
+    args_model = AddReportChartArgs
+    examples = ["在报表里加一张趋势图", "add a bar chart of daily output to the report", "报表插入一个饼图"]
+
+    @staticmethod
+    def intended_entities(args: BaseModel) -> list[str]:  # pyright: ignore[reportArgumentType]
+        return [f"reports.{args.template_id}.charts.{args.chart_id}"]
+    @staticmethod
+    def referenced_entities(args: BaseModel) -> list[str]:  # pyright: ignore[reportArgumentType]
+        return [f"reports.{args.template_id}"]
+
+    def run(self, args: AddReportChartArgs, world: object) -> ToolResult:
+        return ok(data={"chart_id": args.chart_id, "chart_type": args.chart_type})
+
+
+class AddReportTableArgs(BaseModel):
+    action: Literal["add_report_table"] = "add_report_table"
+    template_id: str
+    table_id: str
+    columns: list[str] = Field(min_length=1)
+
+
+class AddReportTable(MockTool):
+    name = "add_report_table"
+    domain = DOMAIN; action = "add_report_table"
+    description = "Add a data table element with the given columns to a report template."
+    args_model = AddReportTableArgs
+    examples = ["在报表里加一张数据表", "add a table of alarm counts to the report", "报表插入一个表格"]
+
+    @staticmethod
+    def intended_entities(args: BaseModel) -> list[str]:  # pyright: ignore[reportArgumentType]
+        return [f"reports.{args.template_id}.tables.{args.table_id}"]
+    @staticmethod
+    def referenced_entities(args: BaseModel) -> list[str]:  # pyright: ignore[reportArgumentType]
+        return [f"reports.{args.template_id}"]
+
+    def run(self, args: AddReportTableArgs, world: object) -> ToolResult:
+        return ok(data={"table_id": args.table_id, "columns": len(args.columns)})
+
+
+class SetReportDataSourceArgs(BaseModel):
+    action: Literal["set_report_data_source"] = "set_report_data_source"
+    template_id: str
+    source: Literal["historian", "realtime", "database"] = "historian"
+
+
+class SetReportDataSource(MockTool):
+    name = "set_report_data_source"
+    domain = DOMAIN; action = "set_report_data_source"
+    description = "Choose where a report pulls its data from (historian / realtime / external DB)."
+    args_model = SetReportDataSourceArgs
+    examples = ["设置报表的数据来源", "make the report read from the historian", "报表数据取自实时库"]
+
+    @staticmethod
+    def intended_entities(args: BaseModel) -> list[str]:  # pyright: ignore[reportArgumentType]
+        return [f"reports.{args.template_id}.data_source"]
+    @staticmethod
+    def referenced_entities(args: BaseModel) -> list[str]:  # pyright: ignore[reportArgumentType]
+        return [f"reports.{args.template_id}"]
+
+    def run(self, args: SetReportDataSourceArgs, world: object) -> ToolResult:
+        return ok(data={"template_id": args.template_id, "source": args.source})
+
+
+class ScheduleReportDeliveryArgs(BaseModel):
+    action: Literal["schedule_report_delivery"] = "schedule_report_delivery"
+    template_id: str
+    cron: str = Field(description="Cron expression for automatic delivery")
+    channel: Literal["email", "ftp", "shared_folder"] = "email"
+
+
+class ScheduleReportDelivery(MockTool):
+    name = "schedule_report_delivery"
+    domain = DOMAIN; action = "schedule_report_delivery"
+    description = "Automatically generate and deliver a report on a cron schedule."
+    args_model = ScheduleReportDeliveryArgs
+    examples = ["设置报表自动定时下发", "auto-send the report every Monday 8am", "每天定时把报表发到共享目录"]
+
+    @staticmethod
+    def intended_entities(args: BaseModel) -> list[str]:  # pyright: ignore[reportArgumentType]
+        return [f"reports.{args.template_id}.delivery"]
+    @staticmethod
+    def referenced_entities(args: BaseModel) -> list[str]:  # pyright: ignore[reportArgumentType]
+        return [f"reports.{args.template_id}"]
+
+    def run(self, args: ScheduleReportDeliveryArgs, world: object) -> ToolResult:
+        return ok(data={"template_id": args.template_id, "cron": args.cron, "channel": args.channel})
+
+
+REPORT_ACTIONS.update({
+    cls.action: cls
+    for cls in (
+        DeleteReportTemplate, CloneReportTemplate, PreviewReport, EmailReport,
+        ArchiveReport, SetReportHeaderFooter, AddReportChart, AddReportTable,
+        SetReportDataSource, ScheduleReportDelivery,
+    )
+})
