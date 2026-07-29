@@ -87,7 +87,14 @@ class ArchitectureConfig(BaseModel):
 
 
 class ModelConfig(BaseModel):
-    provider: Literal["mock", "anthropic", "openai", "deepseek", "xiaomi-mimo", "openrouter", "glm", "docode"] = "mock"
+    #: ``nvidia`` is a single OpenAI-compatible endpoint that serves several
+    #: model families (GLM, DeepSeek, …) — pick the family with ``name``, e.g.
+    #: ``z-ai/glm-5.2`` or ``deepseek-ai/deepseek-v4-pro``. Keeping it as one
+    #: provider avoids a near-duplicate branch per hosted family.
+    provider: Literal[
+        "mock", "anthropic", "openai", "deepseek", "xiaomi-mimo", "openrouter",
+        "glm", "docode", "nvidia", "longcat",
+    ] = "mock"
     name: str = "mock"
     temperature: float = 0.0
     max_tokens: int = 4096

@@ -820,7 +820,22 @@ def _is_call_out_of_scope(call: dict[str, Any]) -> bool:
         if not isinstance(vt, dict):
             continue
         if vt.get("name") == selected:
-            allowed_actions = vt.get("allowed_actions", [])
+            # A descriptor with **no** ``allowed_actions`` key is a *flat* tool
+            # surface entry: it names the atomic itself, and there are no
+            # sub-actions to restrict — so visibility is the entire check.
+            #
+            # Distinguishing that from "``allowed_actions`` present but the
+            # action is not in it" matters a great deal. Previously the missing
+            # key defaulted to ``[]``, and since the dispatcher fills in
+            # ``action`` for flat calls too (from the registry reverse table),
+            # *every* flat-mode call fell through and was scored out-of-scope.
+            # That is why config A reported an out_of_scope_tool_rate of 0.786
+            # while its runtime recorded zero OUT_OF_SCOPE errors across 557
+            # calls. The inflation hits exactly the flat baseline the paper
+            # compares the hierarchical configs against.
+            if "allowed_actions" not in vt:
+                return False
+            allowed_actions = vt.get("allowed_actions") or []
             if action:
                 if action in allowed_actions:
                     return False
