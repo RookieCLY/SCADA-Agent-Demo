@@ -31,6 +31,7 @@ from agent.config import ExperimentConfig, load_config
 from agent.dispatcher import dispatch_atomic, dispatch_domain
 from agent.llm import LLMProvider, LLMResponse, build_llm
 from agent.policy import SafetyPolicy, build_policy, is_read_only
+from agent.react import REACT_PROMPT_BLOCK, ReActScratchpad, action_signature
 from agent.state_machine import INITIAL_STATE, STATES, StateMachine
 from agent.tool_rag import (
     ScoredTool,
@@ -121,7 +122,7 @@ DEFAULT_SYSTEM_PROMPT = """\
 【可切换的下一阶段】{allowed_transitions}
 【当前可用工具】(仅以下工具可被调用)
 {tool_list}
-{resource_block}{workflow_block}
+{resource_block}{workflow_block}{react_block}
 【行为准则】
 1. 必须从可用工具列表中选择;禁止编造工具名
 2. 调用工具前先思考该工具是否真的匹配用户意图
@@ -442,6 +443,18 @@ class Agent:
             "(next_state 会被忽略);完成本步后系统会自动推进到下一步。\n"
         )
 
+    def _render_react_block(self, scratchpad: ReActScratchpad | None) -> str:
+        """Render the ReAct instructions plus the bounded reasoning trace.
+
+        The instruction block is constant; the trace grows to at most
+        ``scratchpad_window`` triples. Together they *replace* the unbounded
+        raw-payload transcript the act-only loop accumulates — which is why
+        this adds prompt text and still lowers total input tokens.
+        """
+        if scratchpad is None:
+            return ""
+        return REACT_PROMPT_BLOCK + scratchpad.render()
+
     def _render_policy_block(self) -> str:
         """Explain the runtime cage to the model (enforcement is independent)."""
         if not self.config.safety.enabled:
@@ -690,6 +703,18 @@ class Agent:
         self.policy.reset()
         # Out-of-scope repeat tracking for the §4.6.3(6) circuit breaker.
         oos_repeats: dict[tuple[str, str], int] = {}
+        # ReAct scratchpad — per-run, so reasoning never leaks across queries.
+        react_cfg = self.config.architecture.react
+        scratchpad = (
+            ReActScratchpad(
+                window=react_cfg.scratchpad_window,
+                max_observation_chars=react_cfg.max_observation_chars,
+                max_observation_items=react_cfg.max_observation_items,
+                repair_hints=react_cfg.repair_hints,
+            )
+            if react_cfg.enabled
+            else None
+        )
 
         # Some LLM clients (e.g. OpenAICompatibleLLM) keep cross-turn message
         # state on the instance so function-call results can be threaded back
@@ -770,6 +795,7 @@ class Agent:
                     tool_list=tool_list_str,
                     resource_block=self._render_resource_block(),
                     workflow_block=self._render_workflow_block(wf_state),
+                    react_block=self._render_react_block(scratchpad),
                     policy_block=self._render_policy_block(),
                 )
 
@@ -793,6 +819,11 @@ class Agent:
                     reasoning=resp.reasoning,
                 )
                 _emit_event(event_sink, "on_llm_response", turn, sm.current, resp)
+                if scratchpad is not None:
+                    # The "Reasoning" half of ReAct: keep the model's stated
+                    # intent for this turn so later turns can see *why* an
+                    # action was taken, not just that it was.
+                    scratchpad.record_thought(turn, resp.text, resp.reasoning)
 
                 if not resp.tool_calls:
                     history.append({"role": "assistant", "content": resp.text or ""})
@@ -1048,6 +1079,44 @@ class Agent:
                         )
                         continue
 
+                    # ---- ReAct dedupe. Placed *after* the whitelist and the
+                    # §4.7 cage on purpose: a suppressed call is one that would
+                    # have been permitted and would have re-done work already
+                    # observed as done. Answering it from the scratchpad keeps
+                    # step_count at the ideal trajectory length instead of
+                    # inflating it with a no-op repeat.
+                    # The atomic a call resolves to, computed once from the
+                    # request itself so the dedupe key and the observation key
+                    # can never diverge (they are looked up at different points
+                    # in the turn).
+                    react_atomic = (
+                        str(call.arguments.get("action") or call.name)
+                        if call.name in self._domain_names
+                        else call.name
+                    )
+                    if scratchpad is not None and react_cfg.dedupe_repeat_actions:
+                        cached = scratchpad.cached(
+                            action_signature(react_atomic, call.arguments)
+                        )
+                        if cached is not None:
+                            scratchpad.note_suppressed()
+                            history.append(
+                                {
+                                    "role": "tool",
+                                    "name": call.name,
+                                    "tool_call_id": call.call_id,
+                                    "ok": True,
+                                    "error_code": "OK",
+                                    "data": {"react_cached": True},
+                                    "error_msg": (
+                                        "该调用与此前已成功的调用完全相同，世界状态未变，"
+                                        f"直接复用先前观察: {cached.observation}。"
+                                        "请继续下一步，不要重复同一调用。"
+                                    ),
+                                }
+                            )
+                            continue
+
                     # Snapshot the pre-dispatch world only when someone is
                     # listening; the eval runner attaches no sink, so on the
                     # throughput path this avoids a full world deep-copy per call.
@@ -1094,6 +1163,27 @@ class Agent:
                             world_before,
                             deep_copy_world(world),
                         )
+                    # ---- ReAct observation. The raw payload is recorded in the
+                    # trace above (metrics need it verbatim); what goes *back to
+                    # the model* is the compressed observation plus an
+                    # error-code-keyed repair hint. This is where the input-token
+                    # saving comes from: a large payload is summarised once here
+                    # instead of being re-sent whole on every later turn.
+                    thread_data: Any = result.data
+                    thread_msg = result.error_msg
+                    if scratchpad is not None:
+                        _step, thread_data, thread_msg = scratchpad.observe(
+                            turn=turn,
+                            tool=call.name,
+                            action=action,
+                            atomic=react_atomic,
+                            args=call.arguments,
+                            ok=result.ok,
+                            error_code=result.error_code,
+                            error_msg=result.error_msg,
+                            data=result.data,
+                            world_changed=bool(result.ok and result.world_diff),
+                        )
                     history.append(
                         {
                             "role": "tool",
@@ -1101,8 +1191,8 @@ class Agent:
                             "tool_call_id": call.call_id,
                             "ok": result.ok,
                             "error_code": result.error_code,
-                            "data": result.data,
-                            "error_msg": result.error_msg,
+                            "data": thread_data,
+                            "error_msg": thread_msg,
                         }
                     )
 
@@ -1256,6 +1346,8 @@ class Agent:
                 "rolled_back": rolled_back,
             }
             ctx.policy_summary = self.policy.summary()
+            if scratchpad is not None:
+                ctx.react_summary = scratchpad.summary()
 
             ctx.final_world_hash = world.hash()
             terminal = sm.current if not early else terminal

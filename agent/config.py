@@ -55,6 +55,47 @@ class StateMachineConfig(BaseModel):
     oos_repeat_limit: int = 3
 
 
+class ReActConfig(BaseModel):
+    """ReAct (Reasoning + Acting) turn structure — the *agent-loop* lever.
+
+    Orthogonal to the four architecture levers: those all shrink or gate the
+    tool *surface*, none of them change what the model is told about its own
+    previous turns. The A–F loop feeds every raw tool payload back verbatim and
+    keeps no explicit reasoning trace, so the model re-derives the plan from a
+    growing wall of JSON on every turn — which is where the token bill and the
+    repeated-call failures come from.
+
+    ReAct interleaves an explicit Thought → Action → Observation cycle:
+
+    * the model is asked to state a one-line ``思考:`` before acting, and that
+      thought is kept in a bounded scratchpad rendered back into the prompt;
+    * raw tool payloads are **compressed into observations** before they are
+      threaded back, so a ``list_points`` over a large world costs a summary
+      instead of the whole collection on every subsequent turn;
+    * failures come back with an actionable repair hint keyed on the error code
+      rather than a bare code;
+    * an action identical to one already observed as successful (with no
+      intervening world mutation) is answered from the scratchpad instead of
+      being dispatched again.
+
+    Off by default so the archived A–F results stay reproducible.
+    """
+
+    enabled: bool = False
+    #: How many past Thought/Action/Observation triples to render into the
+    #: prompt. Bounded so the scratchpad cannot itself become the token bill.
+    scratchpad_window: int = 6
+    #: Per-observation character budget after compression.
+    max_observation_chars: int = 320
+    #: Max list elements kept per field when compressing a tool payload.
+    max_observation_items: int = 5
+    #: Answer a repeated identical action from the scratchpad instead of
+    #: re-dispatching it (only while no successful world mutation intervened).
+    dedupe_repeat_actions: bool = True
+    #: Append an error-code-keyed repair hint to failed observations.
+    repair_hints: bool = True
+
+
 class SafetyPolicyConfig(BaseModel):
     """The §4.7 functional-safety cage — enforced in the runtime, not the prompt.
 
@@ -84,6 +125,9 @@ class ArchitectureConfig(BaseModel):
     workflow: WorkflowConfig = Field(default_factory=WorkflowConfig)
     state_machine: StateMachineConfig = Field(default_factory=StateMachineConfig)
     resources_separation: bool = False
+    #: ReAct turn structure. Composes with every other lever — it changes how a
+    #: turn is *conducted*, not which tools are visible.
+    react: ReActConfig = Field(default_factory=ReActConfig)
 
 
 class ModelConfig(BaseModel):
