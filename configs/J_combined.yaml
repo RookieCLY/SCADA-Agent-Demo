@@ -73,6 +73,18 @@ architecture:
     critic_retry: true
     min_domains: 2               # crew only for genuinely multi-domain plans
 
+# §4.7 runtime cage. Measured finding: with this OFF, every reject case is
+# prompt-only, and the crew tier (which had no refusal concept) wrote to the
+# world on 3 of 5 escalated reject cases. The cage is the paper's own answer to
+# exactly that failure mode, so J measures it rather than leaving it dormant.
+# NOTE: this makes J differ from F on a fifth dimension — keep G_safety_runtime
+# (= F + cage) as the control when attributing the delta.
+safety:
+  enabled: true
+  runtime_mode: design_time
+  max_destructive_ops: 3
+  rules: null
+
 model:
   provider: mock
   name: mock

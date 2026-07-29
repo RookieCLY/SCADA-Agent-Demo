@@ -1001,6 +1001,53 @@ def build_llm(
             registry=registry,
             hierarchical=hierarchical,
         )
+    if cfg.provider == "nvidia":
+        _load_dotenv_into_environ()
+        api_key = _env("NVIDIA_API_KEY", "NVIDIA_NIM_API_KEY")
+        base_url = _env("NVIDIA_API_URL") or "https://integrate.api.nvidia.com/v1"
+        # One endpoint, many families — the config's ``name`` selects it
+        # (e.g. ``z-ai/glm-5.2``, ``deepseek-ai/deepseek-v4-pro``). No default
+        # model: silently picking one would make a mis-typed config look like a
+        # successful run of a different model than the trace claims.
+        model_name = cfg.name
+        if not api_key:
+            raise RuntimeError(
+                "nvidia: missing NVIDIA_API_KEY (set it in .env or env)."
+            )
+        if not model_name or model_name == "mock":
+            raise RuntimeError(
+                "nvidia: set `model.name` to the hosted model id, "
+                "e.g. 'z-ai/glm-5.2' or 'deepseek-ai/deepseek-v4-pro'."
+            )
+        hierarchical = arch.hierarchical_tools if arch is not None else False
+        return OpenAICompatibleLLM(
+            model=model_name,
+            api_key=api_key,
+            base_url=base_url,
+            temperature=cfg.temperature,
+            max_tokens=cfg.max_tokens,
+            registry=registry,
+            hierarchical=hierarchical,
+        )
+    if cfg.provider == "longcat":
+        _load_dotenv_into_environ()
+        api_key = _env("LONGCAT_API_KEY")
+        base_url = _env("LONGCAT_API_URL") or "https://api.longcat.chat/openai/v1"
+        model_name = cfg.name or _env("LONGCAT_MODEL") or "LongCat-Flash-Chat"
+        if not api_key:
+            raise RuntimeError(
+                "longcat: missing LONGCAT_API_KEY (set it in .env or env)."
+            )
+        hierarchical = arch.hierarchical_tools if arch is not None else False
+        return OpenAICompatibleLLM(
+            model=model_name,
+            api_key=api_key,
+            base_url=base_url,
+            temperature=cfg.temperature,
+            max_tokens=cfg.max_tokens,
+            registry=registry,
+            hierarchical=hierarchical,
+        )
     raise NotImplementedError(
         f"Provider {cfg.provider!r} is not wired yet."
     )

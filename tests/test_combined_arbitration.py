@@ -595,6 +595,102 @@ def test_plan_guided_routing_keeps_every_state():
     assert states == ["CONFIG_POINT", "MANAGE_PAGES", "BIND_POINTS", "DEPLOY"]
 
 
+# ============================================================ P1-P4 follow-ups
+def test_p1_double_encoded_arrays_are_repaired_not_dropped():
+    """P1: every top-10 compile drop on the 106-case run was schema_invalid, and
+    that one mode caused 81% of crew escalations. A double-encoded array is a
+    shape defect, not an intent error — repair it."""
+    from agent.planner import compile_plan
+
+    plan = compile_plan(
+        [{"tool": "create_rect", "arguments": {
+            "page_id": "p1", "widget_id": "r1",
+            "position": "[50, 50]", "size": "[120, 80]"}}],
+        REGISTRY, MockWorld(),
+    )
+    assert plan.diagnostics.dropped_schema_invalid == []
+    assert len(plan.steps) == 1
+    assert plan.steps[0].arguments["position"] in ([50, 50], (50, 50))
+
+
+def test_p1_nulls_and_unknown_keys_are_repaired():
+    from agent.planner import compile_plan
+
+    plan = compile_plan(
+        [{"tool": "create_point", "arguments": {
+            "tag": "T1", "type": "analog", "unit": None, "invented_field": 1}}],
+        REGISTRY, MockWorld(),
+    )
+    assert len(plan.steps) == 1 and not plan.diagnostics.dropped_schema_invalid
+
+
+def test_p1_genuinely_invalid_steps_still_drop():
+    """Repair must not become "accept anything" — a missing required field is a
+    real defect and must still surface as a drop (and so trigger the replan)."""
+    from agent.planner import compile_plan
+
+    plan = compile_plan(
+        [{"tool": "create_point", "arguments": {"tag": "T1"}}], REGISTRY, MockWorld()
+    )
+    assert plan.steps == [] and plan.diagnostics.dropped_schema_invalid == ["create_point"]
+
+
+def test_p1_catalogue_names_argument_types():
+    """The drops clustered on nested-argument tools: the planner knew the field
+    was required but not its shape."""
+    from agent.planner import describe_tools_for_planner
+
+    text = describe_tools_for_planner(REGISTRY, ["create_rect", "create_point"], max_tools=2)
+    assert "position:array" in text
+    assert "type:analog|digital" in text
+
+
+@pytest.mark.mock_only
+def test_p3_refusal_reaches_the_specialists(tmp_path: Path):
+    """P3: a safety concern raised while planning used to evaporate at the tier
+    boundary — the crew received a worklist and executed it (3 of 5 escalated
+    reject cases wrote to the world, 20% behavior_success). It must be handed
+    across.
+
+    Uses the domain-gate escalation because that is the reachable carrier: a
+    compile-drop escalation is guarded by `not refusal` (a refusal is a result,
+    not a drop), so a refusal can only cross the boundary on the gate or on a
+    plan-execution failure.
+    """
+    llm = _HybridLLM(
+        plans=[{"steps": [
+            _step("create_point", tag="TEMP_901", type="analog"),
+            _step("create_analog_alarm", id="a1", tag="TEMP_901", high_limit=80.0),
+        ], "refusal": "该操作会跳过安全校验"}],
+        script={
+            "CONFIG_POINT": [_text("同意上游判断，拒绝执行")],
+            "CONFIG_ALARM": [_text("同意上游判断，拒绝执行")],
+        },
+    )
+    agent = _agent(tmp_path, llm)
+    record = agent.run("强制建点并加报警", golden_id="cb-refusal-handoff", initial_world=_world())
+
+    assert record["loop"]["trigger"] == "domain_gate"
+    assert record["crew"]["refusal_handoff"] is True
+    prompts = "\n".join(llm.prompts.get("CONFIG_POINT", []))
+    assert "上游安全提示" in prompts and "跳过安全校验" in prompts
+    assert record["world_snapshots"]["initial_hash"] == record["world_snapshots"]["final_hash"]
+
+
+def test_p3_specialists_are_told_refusal_outranks_execution():
+    from agent.multi_agent import SPECIALIST_PROMPT_BLOCK
+
+    block = SPECIALIST_PROMPT_BLOCK.format(role="X", blackboard="")
+    assert "拒绝优先于执行" in block
+    assert "并不代表这个任务已经通过安全审查" in block
+
+
+def test_p4_config_J_enables_the_runtime_cage():
+    cfg = load_config(CONFIGS_DIR / "J_combined.yaml")
+    assert cfg.safety.enabled is True
+    assert cfg.safety.runtime_mode == "design_time"
+
+
 def test_blackboard_records_widget_entities_with_ids():
     """Rec 2: widget diffs keep their 4-segment identity — truncating to
     `pages.p1` hid every widget ID from the binding specialist."""

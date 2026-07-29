@@ -220,13 +220,20 @@ def describe_tools_for_planner(
         except KeyError:
             continue
         schema = meta.args_model.model_json_schema()
+        props = schema.get("properties") or {}
         required = [f for f in (schema.get("required") or []) if f != "action"]
-        optional = [
-            f for f in (schema.get("properties") or {}) if f != "action" and f not in required
-        ]
+        optional = [f for f in props if f != "action" and f not in required]
         parts = [f"- {name}: {meta.description}"]
+        # Required fields carry their *type*, not just their name. The drops
+        # measured on the 106-case run clustered entirely on tools with nested
+        # arguments (create_widget x28, create_pump x19, create_page x16,
+        # create_tank x14) — the planner knew the field was needed but not what
+        # shape it took, and guessed. Naming the shape is far cheaper than
+        # dropping the step and escalating to the crew.
         if required:
-            parts.append(f"必填: {', '.join(required)}")
+            parts.append(
+                "必填: " + ", ".join(f"{f}:{_type_hint(props.get(f, {}))}" for f in required)
+            )
         if optional:
             parts.append(f"可选: {', '.join(optional[:8])}")
         lines.append("; ".join(parts))
@@ -256,6 +263,33 @@ def describe_tools_for_planner(
         for domain in sorted(by_domain):
             lines.append(f"- {domain}: {', '.join(sorted(by_domain[domain]))}")
     return "\n".join(lines)
+
+
+def _type_hint(prop: dict[str, Any]) -> str:
+    """One-token shape hint for a JSON-Schema property.
+
+    Deliberately terse — this goes on every catalogue line, so it must cost a
+    few tokens, not a nested schema dump. Arrays render their item shape
+    (``array[number]``) because that is exactly the distinction the planner was
+    getting wrong: emitting ``"[50, 50]"`` as a string instead of ``[50, 50]``.
+    """
+    if "enum" in prop:
+        vals = [str(v) for v in prop["enum"][:4]]
+        return "|".join(vals)
+    if "const" in prop:
+        return str(prop["const"])
+    for key in ("anyOf", "oneOf"):
+        if key in prop:
+            inner = [b for b in prop[key] if b.get("type") != "null"]
+            if inner:
+                return _type_hint(inner[0])
+    t = prop.get("type")
+    if t == "array":
+        items = prop.get("items") or {}
+        return f"array[{_type_hint(items)}]" if items else "array"
+    if t == "object":
+        return "object"
+    return str(t or "any")
 
 
 def summarize_world_for_planner(world: Any, *, max_items: int = 25) -> str:
@@ -294,6 +328,64 @@ def summarize_world_for_planner(world: Any, *, max_items: int = 25) -> str:
 
 
 # ============================================================ compile
+def _validate_or_repair(meta: Any, arguments: dict[str, Any]) -> Any | None:
+    """Validate a proposed step's arguments, repairing the recoverable cases.
+
+    Measured on the 106-case run: **every** one of the top-10 compile drops was
+    ``schema_invalid`` — zero unknown-tool, zero unreachable-state. The planner
+    picks the right tools and writes the wrong argument *shape*, and that single
+    failure mode caused 81% of all crew escalations (38 of 47), i.e. the
+    difference between a 3.6k-token plan run and an 18.9k-token crew run.
+
+    Dropping such a step was the worst option available: it either amputates the
+    task or forces the expensive tier. The repairs below are all shape fixes
+    that cannot change intent:
+
+    * decode double-encoded JSON (``"position": "[50, 50]"``), the same defect
+      ``agent.llm._coerce_nested_json_strings`` already handles for live tool
+      calls — the planner emits it too, and nothing was undoing it here;
+    * drop explicit ``None`` values, which some models emit for optional fields
+      and which fail non-nullable validation;
+    * drop unknown keys, so one invented field cannot sink an otherwise valid
+      step.
+
+    Returns the validated model, or ``None`` if it is genuinely unusable.
+    """
+    from agent.llm import _coerce_nested_json_strings
+
+    def _try(args: dict[str, Any]) -> Any | None:
+        for candidate in ({**args, "action": meta.action}, args):
+            try:
+                return meta.args_model.model_validate(candidate)
+            except ValidationError:
+                continue
+        return None
+
+    parsed = _try(arguments)
+    if parsed is not None:
+        return parsed
+
+    repaired = _coerce_nested_json_strings(arguments)
+    if not isinstance(repaired, dict):
+        return None
+    parsed = _try(repaired)
+    if parsed is not None:
+        return parsed
+
+    repaired = {k: v for k, v in repaired.items() if v is not None}
+    parsed = _try(repaired)
+    if parsed is not None:
+        return parsed
+
+    known = set(meta.args_model.model_fields)
+    trimmed = {k: v for k, v in repaired.items() if k in known}
+    if trimmed != repaired:
+        parsed = _try(trimmed)
+        if parsed is not None:
+            return parsed
+    return None
+
+
 def _is_atomic(registry: ToolRegistry, name: str) -> bool:
     try:
         registry.atomic(name)
@@ -432,14 +524,14 @@ def compile_plan(
             continue
 
         meta = registry.atomic(name)
-        try:
-            parsed = meta.args_model.model_validate({**arguments, "action": meta.action})
-        except ValidationError:
-            try:
-                parsed = meta.args_model.model_validate(arguments)
-            except ValidationError:
-                diag.dropped_schema_invalid.append(name)
-                continue
+        parsed = _validate_or_repair(meta, arguments)
+        if parsed is None:
+            diag.dropped_schema_invalid.append(name)
+            continue
+        # Repair may have rewritten the arguments (e.g. decoded a
+        # double-encoded "[50, 50]"); the step must dispatch what actually
+        # validated, not the raw proposal.
+        arguments = parsed.model_dump(exclude_none=True)
 
         signature = _signature(name, arguments)
         if signature in seen:

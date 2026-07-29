@@ -33,6 +33,7 @@ from agent.config import ExperimentConfig, load_config
 from agent.dispatcher import dispatch_atomic, dispatch_domain
 from agent.llm import LLMProvider, LLMResponse, build_llm
 from agent.multi_agent import (
+    REFUSAL_HANDOFF_BLOCK,
     SPECIALIST_PROMPT_BLOCK,
     Blackboard,
     Subtask,
@@ -109,6 +110,11 @@ class PlanOutcome:
     #: escalated crew must not re-derive from the raw query the work the
     #: planner already decided.
     plan_steps: list[PlanStep] = field(default_factory=list)
+    #: A refusal or safety concern raised by the plan tier. Without carrying
+    #: this across the tier boundary a refusal simply evaporates: the crew
+    #: receives a worklist and executes it, which is why escalated reject
+    #: cases scored 20% behavior_success against the plan tier's 44%.
+    refusal: str | None = None
 
 
 @dataclass
@@ -881,6 +887,7 @@ class Agent:
             crew_reason: str | None = None
             crew_seed: list[str] = []
             crew_steps: list[PlanStep] = []
+            crew_refusal: str | None = None
             crew_start_turn = 0
             arch = self.config.architecture
 
@@ -891,6 +898,7 @@ class Agent:
                     crew_reason = outcome.reason or "domain_gate"
                     crew_seed = outcome.board_entities
                     crew_steps = outcome.plan_steps
+                    crew_refusal = outcome.refusal
                     crew_start_turn = outcome.turns
                 elif outcome.executed:
                     structure_done = True
@@ -908,7 +916,7 @@ class Agent:
                 crew = self._run_multi_agent(
                     query, world, sm, ctx, event_sink,
                     start_turn=crew_start_turn, seed_entities=crew_seed,
-                    plan_steps=crew_steps,
+                    plan_steps=crew_steps, refusal=crew_refusal,
                 )
                 ctx.crew_summary = crew.summary
                 if crew.executed:
@@ -1700,6 +1708,7 @@ class Agent:
                 turns=turns,
                 reason="compile_drop",
                 escalate_to_crew=True,
+                refusal=refusal,
                 # What *did* compile guides the crew; the dropped remainder is
                 # recovered by the Specialists from the query itself (their
                 # worklist is marked as possibly incomplete).
@@ -1724,6 +1733,7 @@ class Agent:
                     turns=turns,
                     reason="domain_gate",
                     escalate_to_crew=True,
+                    refusal=refusal,
                     plan_steps=list(plan.steps),
                     summary={
                         "enabled": True, "supported": True, "executed": False,
@@ -1829,6 +1839,7 @@ class Agent:
                 turns=turns,
                 reason=reason,
                 escalate_to_crew=True,
+                refusal=refusal,
                 board_entities=list(board.entities),
                 plan_steps=remaining,
                 summary={
@@ -1959,6 +1970,16 @@ class Agent:
         the same ranking a single agent would have been shown, so routing costs
         no extra LLM call and stays deterministic. Per-state narrowing happens
         in ``route_subtasks``; per-call enforcement stays with the dispatcher.
+
+        RAG **orders** the pool but must not truncate it, for the same reason
+        the planner pool is untruncated: a Specialist assignment is capped by
+        ``tools_per_specialist`` *after* per-state bucketing, so a top-k cut
+        here removes tools the Supervisor never gets to consider. The measured
+        symptom was a required tool never becoming visible at all (golden-102
+        never saw ``create_tank``, golden-104 never saw ``set_sample_interval``)
+        — which is not the state machine refusing, it is the ranking silently
+        hiding. The per-turn *visible surface* still honours ``top_k``; this is
+        only the routing pool.
         """
         arch = self.config.architecture
         if arch.state_machine.enabled:
@@ -1968,7 +1989,9 @@ class Agent:
             )
         else:
             allowed = list(self._atomic_names)
-        return self._rank_with_rag(query, allowed)
+        ranked = self._rank_with_rag(query, allowed)
+        ranked_set = set(ranked)
+        return ranked + [t for t in allowed if t not in ranked_set]
 
     def _crew_route_to(self, sm: StateMachine, ctx: Any, target: str, event_sink: Any) -> bool:
         """Move the FSM to *target* via legal transitions only (never force_to)."""
@@ -2017,6 +2040,7 @@ class Agent:
         start_turn: int = 0,
         seed_entities: list[str] | None = None,
         plan_steps: list[PlanStep] | None = None,
+        refusal: str | None = None,
     ) -> CrewOutcome:
         """Supervisor → Specialists (+ Blackboard) → Critic.
 
@@ -2066,7 +2090,7 @@ class Agent:
         for subtask in subtasks:
             turn, truncated = self._run_specialist(
                 subtask, query, world, sm, ctx, board, turn, event_sink,
-                turn_budget=turn_budget,
+                turn_budget=turn_budget, refusal=refusal,
             )
             # Exhausting the budget is only a failure if it cut a Specialist
             # off mid-work — a crew whose last Specialist finished cleanly on
@@ -2090,7 +2114,7 @@ class Agent:
                 turn, _truncated = self._run_specialist(
                     subtask, query, world, sm, ctx, board, turn, event_sink,
                     critic_note=critic_feedback(subtask),
-                    turn_budget=turn_budget,
+                    turn_budget=turn_budget, refusal=refusal,
                 )
 
         # Close the run: the crew owns termination the way the workflow engine
@@ -2113,6 +2137,7 @@ class Agent:
             "plan_guided": bool(plan_steps),
             "turn_budget": turn_budget,
             "critic_retries": retried,
+            "refusal_handoff": bool(refusal),
             "assignments": [
                 {
                     "state": s.state,
@@ -2142,6 +2167,7 @@ class Agent:
         *,
         critic_note: str | None = None,
         turn_budget: int | None = None,
+        refusal: str | None = None,
     ) -> tuple[int, bool]:
         """One Specialist's bounded private conversation.
 
@@ -2202,6 +2228,8 @@ class Agent:
                 else subtask.state,
                 blackboard=board.render(),
             )
+            if refusal:
+                role_block += REFUSAL_HANDOFF_BLOCK.format(reason=refusal)
             if worklist_block:
                 role_block += worklist_block
             if critic_note:

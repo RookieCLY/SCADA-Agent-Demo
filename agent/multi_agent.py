@@ -49,6 +49,7 @@ from typing import Any
 from agent.state_machine import STATES
 
 __all__ = [
+    "REFUSAL_HANDOFF_BLOCK",
     "SPECIALIST_PROMPT_BLOCK",
     "Blackboard",
     "Subtask",
@@ -68,7 +69,23 @@ SPECIALIST_PROMPT_BLOCK = """
 1. 只使用上方列出的工具完成你负责的部分;其它部分由别的专家负责，不要越权尝试
 2. 你负责的部分完成后，直接用纯文本说明做了什么并结束本轮，不要切换阶段
 3. 若整体需求中没有属于你的部分，直接用纯文本说明"无需处理"并结束
+4. **拒绝优先于执行**:上级的高危操作准则同样适用于你。若你负责的这一部分本身
+   属于高危操作(跳过校验/强制下装、批量或不可逆的删除或禁用),或需求含糊到无法
+   安全执行,请**不要调用任何工具**,直接用纯文本说明风险并拒绝。协调器把任务分给
+   你,并不代表这个任务已经通过安全审查。
 {blackboard}"""
+
+#: Injected when the plan tier reached the crew on a task it had *refused* or
+#: flagged. Without it a refusal simply evaporates at the tier boundary: the
+#: Specialists receive a worklist and execute it. Measured on the 106-case run
+#: — of the reject-ish cases that escalated, the planner refused 0 and the crew
+#: wrote to the world in 3 of 5, scoring 20% behavior_success against the plan
+#: tier's 44%.
+REFUSAL_HANDOFF_BLOCK = """
+【上游安全提示】规划阶段认为该需求可能不应被执行,理由:{reason}
+请先独立判断这一部分是否安全合规。若同意上述判断,请不要调用任何工具,用纯文本
+向用户说明风险与合规替代方案。
+"""
 
 
 # ============================================================ state routing

@@ -1,0 +1,32 @@
+name: nvidia_deepseek_smoke
+description: |
+  Smoke-test config for DeepSeek-v4-Pro via the NVIDIA-hosted OpenAI-compatible endpoint.
+
+  Same shape as configs/A_flat_baseline.yaml (flat tools, state machine OFF) so
+  the model can emit any atomic tool call directly — this isolates provider
+  wiring and function-calling support from the architecture levers.
+
+architecture:
+  hierarchical_tools: false
+  tool_rag:
+    enabled: false
+  workflow:
+    enabled: false
+  state_machine:
+    enabled: false
+  resources_separation: false
+
+model:
+  provider: nvidia
+  name: deepseek-ai/deepseek-v4-pro
+  temperature: 0.0
+  max_tokens: 1024
+
+trace:
+  record_llm_io: true
+
+world:
+  backend: memory
+
+repetitions: 1
+seed_base: 42
