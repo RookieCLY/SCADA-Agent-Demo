@@ -805,6 +805,20 @@ def _is_call_out_of_scope(call: dict[str, Any]) -> bool:
     if not isinstance(visible_tools, list) or not visible_tools:
         return False
     for vt in visible_tools:
+        # ``visible_tools`` is normally a list of descriptors
+        # (``{"name": ..., "allowed_actions": [...]}``), but some traces record
+        # it as a bare list of tool-name strings — the superseded orchestrator
+        # in ``agent_old/`` does this on two of its three ToolCallRecord sites.
+        # Treat a string entry as a descriptor with no action restriction:
+        # the name being visible is all the information that trace carries, and
+        # crashing here would make those runs unscoreable rather than merely
+        # coarser.
+        if isinstance(vt, str):
+            if vt == selected:
+                return False
+            continue
+        if not isinstance(vt, dict):
+            continue
         if vt.get("name") == selected:
             allowed_actions = vt.get("allowed_actions", [])
             if action:

@@ -32,12 +32,28 @@ from pathlib import Path
 from typing import Any
 
 from agent.config import ExperimentConfig, load_config
-from agent.orchestrator import assemble
+from agent.orchestrator import assemble as assemble_current
 from eval.schema import GoldenRecord, load_golden_dataset
 from world import MockWorld
 
 DEFAULT_DATASET = "eval/golden_dataset.jsonl"
 DEFAULT_JUDGE_MODEL = "claude-opus-4-7"
+
+
+def _resolve_assemble(name: str):
+    """Pick the orchestrator under test.
+
+    ``current`` (default) preserves existing behaviour exactly. ``agent_old``
+    swaps in the superseded orchestrator via ``eval/_baseline_adapter.py`` so a
+    run can measure the *old loop* against today's dataset, tool library, model,
+    and metrics — the only clean code-vs-code baseline available, since the
+    pre-``perf/Kate`` tree has no eval harness at all.
+    """
+    if name == "agent_old":
+        from eval._baseline_adapter import assemble_baseline
+
+        return assemble_baseline
+    return assemble_current
 
 
 class RateLimiter:
@@ -290,7 +306,7 @@ def _run_one_pair(
     """
     if rate_limiter is not None:
         rate_limiter.acquire()
-    agent = assemble(
+    agent = _resolve_assemble(getattr(args, "orchestrator", "current"))(
         config_path,
         model_override=args.model,
         provider_override=args.provider,
@@ -395,7 +411,7 @@ def run_experiment(args: argparse.Namespace) -> int:
     )
 
     # Prime the run directory with one "bootstrap" agent
-    agent = assemble(
+    agent = _resolve_assemble(args.orchestrator)(
         config_path,
         model_override=args.model,
         provider_override=args.provider,
@@ -622,6 +638,16 @@ def build_parser() -> argparse.ArgumentParser:
         "--freeze",
         action="store_true",
         help="Mark result files read-only after completion. Metadata is always marked frozen logically.",
+    )
+    parser.add_argument(
+        "--orchestrator",
+        choices=["current", "agent_old"],
+        default="current",
+        help=(
+            "Which orchestrator to measure. 'agent_old' runs the superseded loop "
+            "through today's harness as a before/after baseline (see "
+            "eval/_baseline_adapter.py)."
+        ),
     )
     parser.add_argument(
         "-w",
