@@ -1,0 +1,89 @@
+name: J_combined
+description: |
+  Config J — F (all four architecture levers) plus **all three agent-loop
+  levers**, arbitrated per task so each tier only runs when the cheaper one
+  declined:
+
+      query → plan (1 LLM call, full catalogue + world snapshot)
+            ├─ compiles cleanly, single domain → execute compiled steps
+            │                                    (cheapest path: ~9× fewer
+            │                                    tokens than F in the trial)
+            ├─ spans ≥ min_domains registry domains, or execution fails with
+            │  the replan budget spent → Supervisor / Specialists / Critic,
+            │  each Specialist running the ReAct loop (accuracy tier; the
+            │  Blackboard is seeded with whatever the aborted plan built)
+            └─ planner abstains → single ReAct interleaved loop (hygiene tier:
+                                  strictly dominated F in the trial)
+
+  The three docode-trial planner fixes are on:
+    * the planner sees the **whole** catalogue — RAG orders it, detailed
+      schemas for the ranked head, name-only (per domain) for the rest — so it
+      can no longer refuse for "missing" tools that merely fell out of top-k;
+    * the planning prompt carries a compact **world snapshot**, so plans are
+      grounded in real identifiers instead of refused for lack of grounding;
+    * a **compile drop triggers one replan** naming exactly what was dropped
+      and why, so a shortened plan is repaired instead of silently executed.
+
+  Cage invariants (all tiers): state changes via legal FSM transitions only,
+  §4.7 policy checked before every dispatch, POLICY_DENIED is final (never
+  replanned around, never escalated around), ReAct dedupe sits after the
+  cages, and the crew spends the same global max_turns budget.
+
+  The trace records which tier ran under `loop` (path + trigger), alongside
+  the per-lever `plan` / `react` / `crew` blocks.
+
+  Ablation arms on this branch: F (all loop levers off), I_react, I_plan_execute,
+  I_multi_agent (one lever each), J_combined (all three + arbitration).
+
+architecture:
+  hierarchical_tools: true
+  tool_rag:
+    enabled: true
+    top_n: 30
+    top_k: 12
+    alpha_dense: 0.6
+    use_reranker: true
+  workflow:
+    enabled: true
+    yaml_path: workflows
+  state_machine:
+    enabled: true
+  resources_separation: true
+  plan_execute:
+    enabled: true
+    max_replans: 2
+    max_steps: 12
+    reorder_by_dependency: true
+    planner_tool_budget: 60      # detailed schemas for the RAG-ranked head
+    fallback_to_interleaved: true
+    include_world_context: true  # docode-trial fix (golden-019)
+    replan_on_compile_drop: true # docode-trial fix (golden-013)
+  react:
+    enabled: true                # loop hygiene for fallback + specialists
+    scratchpad_window: 6
+    max_observation_chars: 320
+    max_observation_items: 5
+    dedupe_repeat_actions: true
+    repair_hints: true
+  multi_agent:
+    enabled: true                # escalation tier, gated
+    max_specialists: 3
+    turns_per_specialist: 4
+    tools_per_specialist: 8
+    critic_retry: true
+    min_domains: 2               # crew only for genuinely multi-domain plans
+
+model:
+  provider: mock
+  name: mock
+  temperature: 0.0
+  max_tokens: 4096
+
+trace:
+  record_llm_io: true
+
+world:
+  backend: memory
+
+repetitions: 5
+seed_base: 42

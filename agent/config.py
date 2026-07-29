@@ -55,6 +55,118 @@ class StateMachineConfig(BaseModel):
     oos_repeat_limit: int = 3
 
 
+class PlanExecuteConfig(BaseModel):
+    """Plan-and-Execute (规划-执行) — the *agent-loop* lever.
+
+    Orthogonal to the four architecture levers: those all gate the tool
+    *surface*, none of them change the fact that the loop is **interleaved**
+    (one LLM call per tool call, each re-reading the whole conversation).
+
+    With this on, ``Agent.run`` first asks the model for the **whole** ordered
+    tool sequence, compiles it deterministically (drop hallucinated tools,
+    validate every argument object against its Pydantic schema, collapse
+    duplicates, topologically repair the order from the
+    ``intended_entities``/``referenced_entities`` contract), then executes the
+    compiled steps with no LLM in the loop — replanning only when a step
+    actually fails.
+
+    Off by default so the archived A–F results stay reproducible.
+    """
+
+    enabled: bool = False
+    #: Replans allowed after a step failure. ``0`` = execute the first plan or
+    #: stop; each replan costs one LLM call, which is the whole budget question.
+    max_replans: int = 2
+    #: Hard ceiling on compiled steps, so a runaway plan cannot outrun the turn
+    #: budget the interleaved loop would have had.
+    max_steps: int = 12
+    #: Apply the dependency-driven topological repair to the proposed order.
+    reorder_by_dependency: bool = True
+    #: Number of atomics shown to the planner (the planning prompt is the one
+    #: place the whole catalogue has to fit).
+    planner_tool_budget: int = 60
+    #: If the planner abstains or every step is dropped, fall back to the
+    #: standard interleaved loop instead of ending the run empty-handed.
+    fallback_to_interleaved: bool = True
+    #: Include a compact world snapshot (existing points/devices/pages/…) in
+    #: the planning prompt. The docode trial showed the planner refusing
+    #: legitimate tasks it could not ground ("无法确定 PumpA 点位类型") because it
+    #: could not see the world it was planning against.
+    include_world_context: bool = True
+    #: When the compiler drops proposed steps (unknown tool / schema-invalid /
+    #: unreachable), spend one replan telling the planner exactly what was
+    #: dropped and why, instead of silently executing the shortened plan. The
+    #: trial's golden-013 failed precisely this way: 2 proposed → 1 compiled →
+    #: half the task silently missing.
+    replan_on_compile_drop: bool = True
+
+
+class ReActConfig(BaseModel):
+    """ReAct (Reasoning + Acting) turn structure — the *agent-loop* lever.
+
+    Persists a bounded Thought → Action → Observation scratchpad rendered into
+    the prompt, compresses tool payloads into observations before threading
+    them back, annotates failures with error-code-keyed repair hints, and
+    answers a repeated identical action from the scratchpad. Dedupe runs
+    *after* the state-machine whitelist and the §4.7 policy check.
+
+    In the combined structure this is the loop hygiene applied to **every**
+    LLM-interleaved path: the fallback loop and each Specialist's private
+    conversation. Off by default so archived results stay reproducible.
+    """
+
+    enabled: bool = False
+    #: How many past Thought/Action/Observation triples to render into the
+    #: prompt. Bounded so the scratchpad cannot itself become the token bill.
+    scratchpad_window: int = 6
+    #: Per-observation character budget after compression.
+    max_observation_chars: int = 320
+    #: Max list elements kept per field when compressing a tool payload.
+    max_observation_items: int = 5
+    #: Answer a repeated identical action from the scratchpad instead of
+    #: re-dispatching it (only while no successful world mutation intervened).
+    dedupe_repeat_actions: bool = True
+    #: Append an error-code-keyed repair hint to failed observations.
+    repair_hints: bool = True
+
+
+class MultiAgentConfig(BaseModel):
+    """Multi-Agent (多智能体协作) — Supervisor / Specialists / Critic.
+
+    A deterministic Supervisor routes the query to per-state Specialists (from
+    the existing Tool-RAG ranking — no extra LLM call), each Specialist runs a
+    bounded private conversation over its own state's tools, a Blackboard hands
+    the actually-created entity IDs forward, and a deterministic Critic re-runs
+    a Specialist once when its slice produced no world change.
+
+    In the combined structure the crew is the **escalation tier**: it takes
+    over when the compiled plan spans ``min_domains``+ registry domains, or
+    when plan execution fails with its replan budget exhausted. It is the
+    highest-accuracy and most expensive path, so it is gated, not default.
+    """
+
+    enabled: bool = False
+    #: Ceiling on Specialists per run (each is a bounded sub-conversation).
+    max_specialists: int = 3
+    #: LLM turns each Specialist may use for its sub-task.
+    turns_per_specialist: int = 4
+    #: Tools handed to one Specialist (its state's whitelist ∩ the ranking).
+    tools_per_specialist: int = 8
+    #: Give an unproductive Specialist one Critic-prompted retry.
+    critic_retry: bool = True
+    #: Escalation gate (combined mode only): the crew takes over when the
+    #: compiled plan spans at least this many distinct registry domains.
+    #: Single-domain tasks stay on the cheap plan path — the docode trial
+    #: showed the crew costing ~13× Plan-Execute tokens, so it must buy
+    #: accuracy only where decomposition can actually help.
+    min_domains: int = 2
+    #: Plan-guided escalations scale the crew's turn budget with the task:
+    #: ``max(max_turns, start + ceil(turns_per_step × plan_steps))``. A 12-step
+    #: plan getting the same 12-turn budget as a 1-step one is why golden-019
+    #: died on ``max_turns exhausted`` mid-crew in the trial.
+    turns_per_step: float = 1.5
+
+
 class SafetyPolicyConfig(BaseModel):
     """The §4.7 functional-safety cage — enforced in the runtime, not the prompt.
 
@@ -84,6 +196,13 @@ class ArchitectureConfig(BaseModel):
     workflow: WorkflowConfig = Field(default_factory=WorkflowConfig)
     state_machine: StateMachineConfig = Field(default_factory=StateMachineConfig)
     resources_separation: bool = False
+    #: The three agent-loop levers. Orthogonal to the four surface levers and
+    #: to each other; when several are on, ``Agent.run`` arbitrates:
+    #: plan (cheap, 1 LLM call) → crew (accurate, gated by ``min_domains`` or
+    #: plan failure) → ReAct interleaved loop (fallback hygiene).
+    plan_execute: PlanExecuteConfig = Field(default_factory=PlanExecuteConfig)
+    react: ReActConfig = Field(default_factory=ReActConfig)
+    multi_agent: MultiAgentConfig = Field(default_factory=MultiAgentConfig)
 
 
 class ModelConfig(BaseModel):

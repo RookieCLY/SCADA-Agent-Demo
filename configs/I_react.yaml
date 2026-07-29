@@ -1,0 +1,75 @@
+name: I_react
+description: |
+  Config I — identical to F (all four architecture levers on), plus the
+  **ReAct (Reasoning + Acting) turn structure** switched on.
+
+  Every A–H config runs an *act-only* loop: the model is prompted, it calls
+  tools, the raw payloads are threaded back verbatim, and its own reasoning is
+  discarded between turns. That shape has two measurable costs the paper's
+  metrics already track but no lever addresses:
+
+    * `input_tokens` grows with the square of the tool-call count, because each
+      raw payload stays in the conversation and is re-sent on every later turn.
+      A single `list_points` over a realistic world dominates the prompt for the
+      rest of the run.
+    * `step_efficiency` (= ideal_steps / step_count) is diluted by repeated
+      calls: with no record of what it already did or why, the model re-issues
+      identical calls, and after a failure it re-derives intent from the bare
+      error code alone.
+
+  ReAct (`architecture.react`) makes the reasoning step a persisted artifact and
+  turns raw results into observations:
+
+    Thought      one line of stated intent, captured from the model's own text
+    Action       the dispatched (tool, action, args) signature
+    Observation  a compressed, repair-hint-annotated result
+
+  The scratchpad is bounded to `scratchpad_window` triples, so it is a
+  fixed-size summary *replacing* an unbounded transcript — which is why it adds
+  prompt text and still lowers total input tokens.
+
+  Compare I vs F to isolate the loop structure; both share every other lever.
+  Expected movement: `input_tokens` / `cost_usd` down, `step_efficiency` up,
+  `schema_violation_rate` and `cascade_failure_rate` down (failures come back
+  with an actionable next move rather than a code), `task_success` up or flat.
+
+  The dedupe rule sits *after* the state-machine whitelist and the §4.7 policy
+  check, so it can never turn a blocked call into an allowed one — it only
+  declines to re-do work already observed as done.
+
+architecture:
+  hierarchical_tools: true
+  tool_rag:
+    enabled: true
+    top_n: 30
+    top_k: 12
+    alpha_dense: 0.6
+    use_reranker: true
+  workflow:
+    enabled: true
+    yaml_path: workflows
+  state_machine:
+    enabled: true
+  resources_separation: true
+  react:
+    enabled: true            # ← the lever under test (F leaves this off)
+    scratchpad_window: 6     # triples rendered back into the prompt
+    max_observation_chars: 320
+    max_observation_items: 5
+    dedupe_repeat_actions: true
+    repair_hints: true
+
+model:
+  provider: mock
+  name: mock
+  temperature: 0.0
+  max_tokens: 4096
+
+trace:
+  record_llm_io: true
+
+world:
+  backend: memory
+
+repetitions: 5
+seed_base: 42

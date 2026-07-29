@@ -21,16 +21,36 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import math
 import sys
 import time
 from contextlib import suppress
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Protocol
 
 from agent.config import ExperimentConfig, load_config
 from agent.dispatcher import dispatch_atomic, dispatch_domain
 from agent.llm import LLMProvider, LLMResponse, build_llm
+from agent.multi_agent import (
+    SPECIALIST_PROMPT_BLOCK,
+    Blackboard,
+    Subtask,
+    critic_feedback,
+    route_subtasks,
+    route_subtasks_from_plan,
+    unsatisfied_subtasks,
+)
+from agent.planner import (
+    PlanStep,
+    compile_plan,
+    describe_tools_for_planner,
+    parse_plan_payload,
+    state_route,
+    summarize_world_for_planner,
+)
 from agent.policy import SafetyPolicy, build_policy, is_read_only
+from agent.react import REACT_PROMPT_BLOCK, ReActScratchpad, action_signature
 from agent.state_machine import INITIAL_STATE, STATES, StateMachine
 from agent.tool_rag import (
     ScoredTool,
@@ -58,6 +78,66 @@ from world import Device, MockWorld, Point
 from world.memory_backend import deep_copy_world
 
 READ_RESOURCE_TOOL = "read_resource"  # synthetic tool name for Resource reads
+
+
+@dataclass
+class PlanOutcome:
+    """Result of the Plan-and-Execute phase.
+
+    ``executed=False`` with ``escalate_to_crew=False`` means the phase declined
+    to take over (backend has no planner, or the plan compiled to nothing and
+    fallback is on) and the interleaved loop should run as if the lever were
+    off. ``escalate_to_crew=True`` hands the task to the Multi-Agent crew —
+    either before execution (the compiled plan spans enough domains that
+    decomposition should win) or after a failure that exhausted the replan
+    budget.
+    """
+
+    executed: bool
+    completed: bool = True
+    turns: int = 0
+    reason: str | None = None
+    summary: dict[str, Any] = field(default_factory=dict)
+    escalate_to_crew: bool = False
+    #: Entities already materialised by executed plan steps (seed for the
+    #: crew's Blackboard on a failure escalation, so Specialists reference the
+    #: partial work instead of redoing or contradicting it).
+    board_entities: list[str] = field(default_factory=list)
+    #: The compiled plan steps the crew should carry out (plan-guided
+    #: escalation). On a failure escalation this is the un-executed remainder;
+    #: pre-execution escalations hand over the whole compiled plan. The
+    #: escalated crew must not re-derive from the raw query the work the
+    #: planner already decided.
+    plan_steps: list[PlanStep] = field(default_factory=list)
+
+
+@dataclass
+class CrewOutcome:
+    """Result of the Multi-Agent phase.
+
+    ``executed=False`` means the Supervisor declined to take over (no ranked
+    tool maps to a working state) and the interleaved loop should run as if
+    the lever were off.
+    """
+
+    executed: bool
+    completed: bool = True
+    turns: int = 0
+    reason: str | None = None
+    summary: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class _DeniedResult:
+    """Stand-in for a ToolResult on a call the §4.7 cage refused before dispatch."""
+
+    rule_id: str
+    reason: str
+    error_code: str = "POLICY_DENIED"
+
+    @property
+    def error_msg(self) -> str:
+        return f"[{self.rule_id}] {self.reason}"
 
 
 class AgentEventSink(Protocol):
@@ -121,7 +201,7 @@ DEFAULT_SYSTEM_PROMPT = """\
 【可切换的下一阶段】{allowed_transitions}
 【当前可用工具】(仅以下工具可被调用)
 {tool_list}
-{resource_block}{workflow_block}
+{resource_block}{workflow_block}{react_block}
 【行为准则】
 1. 必须从可用工具列表中选择;禁止编造工具名
 2. 调用工具前先思考该工具是否真的匹配用户意图
@@ -442,6 +522,35 @@ class Agent:
             "(next_state 会被忽略);完成本步后系统会自动推进到下一步。\n"
         )
 
+    def _render_react_block(self, scratchpad: ReActScratchpad | None) -> str:
+        """Render the ReAct instructions plus the bounded reasoning trace.
+
+        The instruction block is constant; the trace grows to at most
+        ``scratchpad_window`` triples. Together they *replace* the unbounded
+        raw-payload transcript the act-only loop accumulates — which is why
+        this adds prompt text and still lowers total input tokens.
+        """
+        if scratchpad is None:
+            return ""
+        return REACT_PROMPT_BLOCK + scratchpad.render()
+
+    def _new_scratchpad(self) -> ReActScratchpad | None:
+        """A fresh per-conversation scratchpad, or None when ReAct is off.
+
+        Fresh per conversation, not per run: the fallback loop gets one, and
+        each Specialist gets its own — reasoning must not leak between private
+        contexts any more than messages do.
+        """
+        cfg = self.config.architecture.react
+        if not cfg.enabled:
+            return None
+        return ReActScratchpad(
+            window=cfg.scratchpad_window,
+            max_observation_chars=cfg.max_observation_chars,
+            max_observation_items=cfg.max_observation_items,
+            repair_hints=cfg.repair_hints,
+        )
+
     def _render_policy_block(self) -> str:
         """Explain the runtime cage to the model (enforcement is independent)."""
         if not self.config.safety.enabled:
@@ -757,7 +866,75 @@ class Agent:
             early = False
             reason: str | None = None
 
-            while turn < self.max_turns:
+            # ---- Combined agent-loop arbitration.
+            #
+            #   query → plan (1 LLM call, full catalogue + world snapshot)
+            #         ├─ compiles cleanly, single domain → execute compiled steps
+            #         ├─ spans ≥ min_domains domains, or execution fails with
+            #         │  the replan budget spent → Supervisor / Specialists
+            #         │  (each Specialist runs the ReAct loop)
+            #         └─ planner abstains → single ReAct interleaved loop
+            #
+            # Each tier only takes over when the cheaper one above declined, so
+            # the cost order (plan < interleaved < crew) is respected per task.
+            structure_done = False
+            crew_reason: str | None = None
+            crew_seed: list[str] = []
+            crew_steps: list[PlanStep] = []
+            crew_start_turn = 0
+            arch = self.config.architecture
+
+            if arch.plan_execute.enabled:
+                outcome = self._plan_and_execute(query, world, sm, ctx, event_sink)
+                ctx.plan_summary = outcome.summary
+                if outcome.escalate_to_crew and arch.multi_agent.enabled:
+                    crew_reason = outcome.reason or "domain_gate"
+                    crew_seed = outcome.board_entities
+                    crew_steps = outcome.plan_steps
+                    crew_start_turn = outcome.turns
+                elif outcome.executed:
+                    structure_done = True
+                    turn = outcome.turns
+                    terminal = sm.current
+                    early = not outcome.completed
+                    reason = outcome.reason
+                    ctx.loop_summary = {"path": "plan"}
+            elif arch.multi_agent.enabled:
+                # No planner in front — the crew runs standalone (the pure
+                # I_multi_agent arm), Supervisor-routed from the RAG ranking.
+                crew_reason = "standalone"
+
+            if not structure_done and crew_reason is not None and arch.multi_agent.enabled:
+                crew = self._run_multi_agent(
+                    query, world, sm, ctx, event_sink,
+                    start_turn=crew_start_turn, seed_entities=crew_seed,
+                    plan_steps=crew_steps,
+                )
+                ctx.crew_summary = crew.summary
+                if crew.executed:
+                    structure_done = True
+                    turn = crew.turns
+                    terminal = sm.current
+                    early = not crew.completed
+                    reason = crew.reason
+                    ctx.loop_summary = {"path": "crew", "trigger": crew_reason}
+
+            # Fallback tier: the ReAct interleaved loop (plain loop when the
+            # ReAct lever is off). Fresh per-run scratchpad — reasoning must
+            # never leak between queries.
+            scratchpad = None if structure_done else self._new_scratchpad()
+            if not structure_done:
+                ctx.loop_summary = {
+                    "path": "interleaved",
+                    "react": self.config.architecture.react.enabled,
+                }
+
+            while structure_done or turn < self.max_turns:
+                # Leave via ``break`` (not the loop condition) so the ``else:``
+                # arm below — which reports an exhausted turn budget — cannot
+                # fire on a structure that already finished the task.
+                if structure_done:
+                    break
                 turn += 1
                 visible, atomic_pool = self._visible_tools_for(
                     sm.current, query, wf_state
@@ -770,6 +947,7 @@ class Agent:
                     tool_list=tool_list_str,
                     resource_block=self._render_resource_block(),
                     workflow_block=self._render_workflow_block(wf_state),
+                    react_block=self._render_react_block(scratchpad),
                     policy_block=self._render_policy_block(),
                 )
 
@@ -793,6 +971,11 @@ class Agent:
                     reasoning=resp.reasoning,
                 )
                 _emit_event(event_sink, "on_llm_response", turn, sm.current, resp)
+                if scratchpad is not None:
+                    # The "Reasoning" half of ReAct: keep the model's stated
+                    # intent for this turn so later turns can see *why* an
+                    # action was taken, not just that it was.
+                    scratchpad.record_thought(turn, resp.text, resp.reasoning)
 
                 if not resp.tool_calls:
                     history.append({"role": "assistant", "content": resp.text or ""})
@@ -1048,6 +1231,44 @@ class Agent:
                         )
                         continue
 
+                    # The atomic a call resolves to, computed once from the
+                    # request itself so the ReAct dedupe key and the observation
+                    # key can never diverge.
+                    react_atomic = (
+                        str(call.arguments.get("action") or call.name)
+                        if call.name in self._domain_names
+                        else call.name
+                    )
+                    # ---- ReAct dedupe. Placed *after* the whitelist and the
+                    # §4.7 cage on purpose: a suppressed call is one that would
+                    # have been permitted and would have re-done work already
+                    # observed as done.
+                    if (
+                        scratchpad is not None
+                        and self.config.architecture.react.dedupe_repeat_actions
+                    ):
+                        cached = scratchpad.cached(
+                            action_signature(react_atomic, call.arguments)
+                        )
+                        if cached is not None:
+                            scratchpad.note_suppressed()
+                            history.append(
+                                {
+                                    "role": "tool",
+                                    "name": call.name,
+                                    "tool_call_id": call.call_id,
+                                    "ok": True,
+                                    "error_code": "OK",
+                                    "data": {"react_cached": True},
+                                    "error_msg": (
+                                        "该调用与此前已成功的调用完全相同，世界状态未变，"
+                                        f"直接复用先前观察: {cached.observation}。"
+                                        "请继续下一步，不要重复同一调用。"
+                                    ),
+                                }
+                            )
+                            continue
+
                     # Snapshot the pre-dispatch world only when someone is
                     # listening; the eval runner attaches no sink, so on the
                     # throughput path this avoids a full world deep-copy per call.
@@ -1094,6 +1315,25 @@ class Agent:
                             world_before,
                             deep_copy_world(world),
                         )
+                    # ---- ReAct observation. The raw payload is recorded in the
+                    # trace above (metrics need it verbatim); what goes *back to
+                    # the model* is the compressed observation plus an
+                    # error-code-keyed repair hint.
+                    thread_data: Any = result.data
+                    thread_msg = result.error_msg
+                    if scratchpad is not None:
+                        _step, thread_data, thread_msg = scratchpad.observe(
+                            turn=turn,
+                            tool=call.name,
+                            action=action,
+                            atomic=react_atomic,
+                            args=call.arguments,
+                            ok=result.ok,
+                            error_code=result.error_code,
+                            error_msg=result.error_msg,
+                            data=result.data,
+                            world_changed=bool(result.ok and result.world_diff),
+                        )
                     history.append(
                         {
                             "role": "tool",
@@ -1101,8 +1341,8 @@ class Agent:
                             "tool_call_id": call.call_id,
                             "ok": result.ok,
                             "error_code": result.error_code,
-                            "data": result.data,
-                            "error_msg": result.error_msg,
+                            "data": thread_data,
+                            "error_msg": thread_msg,
                         }
                     )
 
@@ -1256,6 +1496,8 @@ class Agent:
                 "rolled_back": rolled_back,
             }
             ctx.policy_summary = self.policy.summary()
+            if scratchpad is not None:
+                ctx.react_summary = scratchpad.summary()
 
             ctx.final_world_hash = world.hash()
             terminal = sm.current if not early else terminal
@@ -1267,6 +1509,902 @@ class Agent:
             if event_sink is not None:
                 _emit_event(event_sink, "on_run_finish", record, deep_copy_world(world))
             return record
+
+    # ------------------------------------------------------------------ plan & execute
+    def _planner_pool(self, query: str) -> list[str]:
+        """Atomics the planner may use: the union of every state's whitelist,
+        soft-ranked by Tool RAG.
+
+        The union — not the *current* state's whitelist — because a plan spans
+        states by construction; restricting the planner to where the FSM happens
+        to be standing would make it plan only the first step. The per-state
+        whitelist is still enforced at *execution* time, so the cage is intact:
+        the planner may propose, only the router may enter a state, and it walks
+        legal transitions only.
+        """
+        arch = self.config.architecture
+        if arch.state_machine.enabled:
+            allowed = sorted(
+                {t for spec in STATES.values() for t in spec.allowed_tools}
+                & set(self._atomic_names)
+            )
+        else:
+            allowed = list(self._atomic_names)
+        # RAG orders the pool but must not *truncate* it. In the docode trial
+        # the planner saw only the RAG top-k, concluded the catalogue lacked
+        # validate_project/deploy_project, and refused a legitimate task. The
+        # most-relevant tools go first (they get full schemas in the catalogue);
+        # everything else follows and is listed by name.
+        ranked = self._rank_with_rag(query, allowed)
+        ranked_set = set(ranked)
+        return ranked + [t for t in allowed if t not in ranked_set]
+
+    def _request_plan(
+        self,
+        query: str,
+        pool: list[str],
+        ctx: Any,
+        turn: int,
+        feedback: str | None = None,
+        world_context: str | None = None,
+    ) -> tuple[list[dict[str, Any]], str | None, bool]:
+        """Ask the backend for a whole-task plan.
+
+        Returns ``(raw_steps, refusal, supported)``. ``supported`` is False when
+        the backend has no ``make_plan`` hook at all (e.g. ``MockLLM``), which is
+        what makes the lever degrade to the interleaved loop instead of failing.
+        """
+        planner = getattr(self.llm, "make_plan", None)
+        if not callable(planner):
+            return [], None, False
+        tool_list = describe_tools_for_planner(
+            self.registry, pool, max_tools=self.config.architecture.plan_execute.planner_tool_budget
+        )
+        t0 = time.perf_counter()
+        try:
+            try:
+                payload = planner(query, tool_list, feedback, world_context)
+            except TypeError:
+                # Older three-argument hook (pre world-context) — still valid.
+                payload = planner(query, tool_list, feedback)
+        except Exception:
+            return [], None, True
+        latency = (time.perf_counter() - t0) * 1000
+        usage = (payload or {}).get("_usage") or {}
+        ctx.log_llm(
+            LLMCallRecord(
+                turn=turn,
+                model=self.config.model.name,
+                input_tokens=int(usage.get("input_tokens", 0) or 0),
+                output_tokens=int(usage.get("output_tokens", 0) or 0),
+                latency_ms=latency,
+                stop_reason="end_turn",
+            ),
+            text=None,
+            reasoning=None,
+        )
+        steps, refusal = parse_plan_payload(payload)
+        return steps, refusal, True
+
+    def _route_to_state(
+        self, sm: StateMachine, ctx: Any, target: str, event_sink: Any
+    ) -> bool:
+        """Walk **legal** transitions from the current state to *target*.
+
+        Never uses ``force_to``: the planner is a sequencer, not an authority
+        over the cage. Returns False (and leaves the FSM where it was) if the
+        FSM has no legal path — the caller then drops the step.
+        """
+        if not self.config.architecture.state_machine.enabled or sm.current == target:
+            return True
+        route = state_route(sm.current, target)
+        if route is None:
+            return False
+        for hop in route:
+            ctx.exit_state()
+            sm.transit(hop)
+            ctx.enter_state(sm.current)
+            _emit_event(event_sink, "on_state_enter", sm.current)
+        return True
+
+    def _plan_and_execute(
+        self,
+        query: str,
+        world: MockWorld,
+        sm: StateMachine,
+        ctx: Any,
+        event_sink: AgentEventSink | None,
+    ) -> PlanOutcome:
+        """Plan once, compile deterministically, then execute without the LLM.
+
+        The turn accounting is the headline: an N-step task costs
+        ``1 + replans`` LLM calls instead of ``N + 1``. In combined mode this
+        tier also decides the escalation to the Multi-Agent crew: before
+        execution when the compiled plan spans ``multi_agent.min_domains``
+        registry domains, or after a failure that exhausted the replan budget.
+        """
+        cfg = self.config.architecture.plan_execute
+        crew_cfg = self.config.architecture.multi_agent
+        pool = self._planner_pool(query)
+        world_ctx = (
+            summarize_world_for_planner(world) if cfg.include_world_context else None
+        )
+        turns = 1
+        raw_steps, refusal, supported = self._request_plan(
+            query, pool, ctx, turns, world_context=world_ctx
+        )
+        if not supported:
+            # Backend cannot plan — hand back to the interleaved loop, and do
+            # not charge the run for a turn that never happened.
+            return PlanOutcome(executed=False, turns=0, summary={"enabled": True, "supported": False})
+
+        def _compile(steps: list[dict[str, Any]], refuse: str | None):
+            return compile_plan(
+                steps,
+                self.registry,
+                world,
+                allowed_atomics=pool if self.config.architecture.state_machine.enabled else None,
+                start_state=sm.current,
+                max_steps=cfg.max_steps,
+                reorder=cfg.reorder_by_dependency,
+                refusal=refuse,
+            )
+
+        plan = _compile(raw_steps, refusal)
+
+        # ---- Fix 3 (docode trial, golden-013): a compile drop means part of
+        # the task silently vanished — 2 proposed → 1 compiled read as "planned
+        # fine, executed fine, half missing". Spend one replan naming exactly
+        # what was dropped and why, instead of executing the shortened plan.
+        d = plan.diagnostics
+        dropped = d.dropped_unknown_tool + d.dropped_schema_invalid + d.dropped_unreachable_state
+        if (
+            cfg.replan_on_compile_drop
+            and dropped
+            and not refusal
+            and cfg.max_replans > 0
+        ):
+            turns += 1
+            drop_feedback = (
+                "上一版计划中以下步骤无法执行,已被编译器剔除,请修正后重新给出完整计划:\n"
+                + (f"- 工具名不存在: {', '.join(d.dropped_unknown_tool)}\n" if d.dropped_unknown_tool else "")
+                + (f"- 参数不符合 schema: {', '.join(d.dropped_schema_invalid)}\n" if d.dropped_schema_invalid else "")
+                + (f"- 当前状态机无法到达: {', '.join(d.dropped_unreachable_state)}\n" if d.dropped_unreachable_state else "")
+            )
+            retry_steps, retry_refusal, _ = self._request_plan(
+                query, pool, ctx, turns, drop_feedback, world_context=world_ctx
+            )
+            retry = _compile(retry_steps, retry_refusal)
+            # Adopt the retry only if it actually compiled at least as much of
+            # the task; otherwise keep the original plan. Either way one replan
+            # call was spent — the diagnostics must say so even when the retry
+            # is discarded, or the trace under-reports the LLM-call cost.
+            if retry.steps and len(retry.steps) >= len(plan.steps):
+                plan, refusal = retry, retry_refusal
+            plan.diagnostics.replans = 1
+
+        # ---- Escalation on surviving compile drops. If part of the task still
+        # cannot compile after the informed replan, executing the shortened
+        # plan silently delivers half the task as if it were all of it — the
+        # trial's golden-013 failed exactly this way even *with* the replan
+        # (the retry did not fix the schema). The crew's iterate-with-feedback
+        # loop is what solved that case, so hand over instead of shortening.
+        # A refusal is not a drop — it stays a respected result.
+        d = plan.diagnostics
+        still_dropped = (
+            d.dropped_unknown_tool + d.dropped_schema_invalid + d.dropped_unreachable_state
+        )
+        if still_dropped and not refusal and crew_cfg.enabled:
+            return PlanOutcome(
+                executed=False,
+                turns=turns,
+                reason="compile_drop",
+                escalate_to_crew=True,
+                # What *did* compile guides the crew; the dropped remainder is
+                # recovered by the Specialists from the query itself (their
+                # worklist is marked as possibly incomplete).
+                plan_steps=list(plan.steps),
+                summary={
+                    "enabled": True, "supported": True, "executed": False,
+                    "escalated": "compile_drop", **plan.diagnostics.as_dict(),
+                },
+            )
+
+        # ---- Domain gate: decomposition beats one flat plan once the task
+        # spans several domains, and the crew is the decomposition tier. Count
+        # registry domains, not states — states are an FSM concern.
+        if plan.steps and crew_cfg.enabled:
+            domains: set[str] = set()
+            for step in plan.steps:
+                with suppress(KeyError):
+                    domains.add(self.registry.lookup(step.tool)[0])
+            if len(domains) >= max(1, crew_cfg.min_domains):
+                return PlanOutcome(
+                    executed=False,
+                    turns=turns,
+                    reason="domain_gate",
+                    escalate_to_crew=True,
+                    plan_steps=list(plan.steps),
+                    summary={
+                        "enabled": True, "supported": True, "executed": False,
+                        "escalated": "domain_gate", "domains": sorted(domains),
+                        **plan.diagnostics.as_dict(),
+                    },
+                )
+
+        if not plan.steps:
+            # An explicit refusal is a *result*, not a failure: the golden
+            # `reject` cases expect exactly this (no world mutation). Only an
+            # empty plan with no refusal means the planner had nothing to say,
+            # and that is what the fallback exists for.
+            if refusal or not cfg.fallback_to_interleaved:
+                self._finish_plan_state(sm, ctx, event_sink)
+                return PlanOutcome(
+                    executed=True,
+                    completed=True,
+                    turns=turns,
+                    reason=None if refusal else "empty_plan",
+                    summary={"enabled": True, "supported": True, "executed": True,
+                             **plan.diagnostics.as_dict()},
+                )
+            return PlanOutcome(
+                executed=False,
+                turns=turns,
+                summary={"enabled": True, "supported": True, "executed": False,
+                         **plan.diagnostics.as_dict()},
+            )
+
+        executed_signatures: set[str] = set()
+        # Collects what the executed steps actually created (from world_diff).
+        # On a failure escalation this seeds the crew's Blackboard, so the
+        # Specialists build on the partial work instead of redoing it.
+        board = Blackboard()
+        replans = plan.diagnostics.replans
+        completed = True
+        reason: str | None = None
+        pending = list(plan.steps)
+
+        while pending:
+            failure: tuple[PlanStep, Any] | None = None
+            for step in pending:
+                ok, result = self._execute_plan_step(
+                    step, world, sm, ctx, turns, event_sink, executed_signatures,
+                    board=board,
+                )
+                if not ok:
+                    failure = (step, result)
+                    break
+            if failure is None:
+                break
+            failed_step, failed_result = failure
+            # POLICY_DENIED is a boundary, not a bug: replanning around the §4.7
+            # cage is exactly what must not happen, so stop here. It must not
+            # escalate to the crew either — same cage, same answer.
+            if failed_result is not None and getattr(failed_result, "error_code", "") == "POLICY_DENIED":
+                completed = False
+                reason = "policy_denied"
+                break
+            if replans >= cfg.max_replans:
+                completed = False
+                reason = "plan_step_failed"
+                break
+            replans += 1
+            turns += 1
+            feedback = (
+                f"步骤 {failed_step.tool}({failed_step.arguments}) 失败: "
+                f"{getattr(failed_result, 'error_code', 'UNKNOWN')} "
+                f"{getattr(failed_result, 'error_msg', '') or ''}"
+            )
+            raw_steps, refusal, _ = self._request_plan(
+                query, pool, ctx, turns, feedback, world_context=world_ctx
+            )
+            replan = _compile(raw_steps, refusal)
+            plan.diagnostics.replans = replans
+            if not replan.steps:
+                completed = False
+                reason = "replan_empty"
+                break
+            pending = replan.steps
+
+        # ---- Failure escalation: the plan tier is out of budget but the task
+        # is not done. Decomposition with fresh, narrower contexts is the next
+        # thing to try — hand over to the crew with the partial work on the
+        # board. Policy denials stay final.
+        if (
+            not completed
+            and reason in {"plan_step_failed", "replan_empty"}
+            and crew_cfg.enabled
+        ):
+            # Hand over only the un-executed remainder — the executed steps'
+            # results are already on the board, and re-listing them would make
+            # the Specialists redo (and possibly double-apply) finished work.
+            remaining = [
+                step for step in pending
+                if f"{step.tool}|{sorted(step.arguments.items(), key=lambda kv: kv[0])}"
+                not in executed_signatures
+            ]
+            return PlanOutcome(
+                executed=False,
+                completed=False,
+                turns=turns,
+                reason=reason,
+                escalate_to_crew=True,
+                board_entities=list(board.entities),
+                plan_steps=remaining,
+                summary={
+                    "enabled": True, "supported": True, "executed": False,
+                    "escalated": reason, **plan.diagnostics.as_dict(),
+                },
+            )
+
+        self._finish_plan_state(sm, ctx, event_sink)
+        summary = {
+            "enabled": True,
+            "supported": True,
+            "executed": True,
+            "completed": completed,
+            **plan.diagnostics.as_dict(),
+        }
+        return PlanOutcome(
+            executed=True, completed=completed, turns=turns, reason=reason, summary=summary
+        )
+
+    def _execute_plan_step(
+        self,
+        step: PlanStep,
+        world: MockWorld,
+        sm: StateMachine,
+        ctx: Any,
+        turn: int,
+        event_sink: AgentEventSink | None,
+        executed_signatures: set[str],
+        board: Blackboard | None = None,
+    ) -> tuple[bool, Any]:
+        """Dispatch one compiled step through the normal cages.
+
+        A replan re-proposes steps that already succeeded; ``executed_signatures``
+        makes those no-ops so a replan cannot double-apply the work the first
+        plan already did.
+        """
+        signature = f"{step.tool}|{sorted(step.arguments.items(), key=lambda kv: kv[0])}"
+        if signature in executed_signatures:
+            return True, None
+
+        # The state machine is still the cage. A step whose owning state cannot
+        # be reached legally from here is refused, not forced.
+        if not self._route_to_state(sm, ctx, step.state, event_sink):
+            ctx.log_tool_call(
+                ToolCallRecord(
+                    turn=turn, state=sm.current, visible_tools=[], visible_count=0,
+                    selected=step.tool, action=step.action, args=step.arguments,
+                    schema_valid=True, result_ok=False, error_code="OUT_OF_SCOPE",
+                    error_msg=f"no legal transition from {sm.current} to {step.state}",
+                    result_data={}, world_diff=None, latency_ms=0.0,
+                )
+            )
+            return False, None
+
+        # §4.7 runtime cage — evaluated before dispatch, exactly as in the
+        # interleaved loop. Planning must not become a way around it.
+        decision = self.policy.check(step.tool, step.arguments, world)
+        if decision.denied:
+            rec = ToolCallRecord(
+                turn=turn, state=sm.current, visible_tools=[], visible_count=0,
+                selected=step.tool, action=step.action, args=step.arguments,
+                schema_valid=True, result_ok=False, error_code="POLICY_DENIED",
+                error_msg=f"[{decision.rule_id}] {decision.reason}",
+                result_data={"rule_id": decision.rule_id}, world_diff=None, latency_ms=0.0,
+            )
+            ctx.log_tool_call(rec)
+            if event_sink is not None:
+                snap = deep_copy_world(world)
+                _emit_event(event_sink, "on_tool_call", turn, rec, snap, snap)
+            return False, _DeniedResult(decision.rule_id, decision.reason)
+
+        world_before = deep_copy_world(world) if event_sink is not None else None
+        result, _parsed, lat, action = self._route_and_dispatch(
+            step.tool, step.arguments, world
+        )
+        rec = ToolCallRecord(
+            turn=turn,
+            state=sm.current,
+            # The executed surface, recorded honestly: a compiled step is
+            # dispatched against exactly one tool, and the compiler already
+            # proved the call is in scope for this state.
+            visible_tools=[{"name": step.tool, "allowed_actions": [step.action]}],
+            visible_count=1,
+            selected=step.tool,
+            action=action if action is not None else step.action,
+            args=step.arguments,
+            schema_valid=result.error_code != "SCHEMA_ERROR",
+            result_ok=result.ok,
+            error_code=result.error_code,
+            error_msg=result.error_msg,
+            result_data=result.data,
+            world_diff=result.world_diff,
+            latency_ms=lat,
+            intended_entities=step.intended,
+            referenced_entities=step.referenced,
+        )
+        ctx.log_tool_call(rec)
+        if event_sink is not None:
+            _emit_event(
+                event_sink, "on_tool_call", turn, rec, world_before, deep_copy_world(world)
+            )
+        if result.ok:
+            self.policy.record_execution(step.tool)
+            executed_signatures.add(signature)
+            if board is not None:
+                board.record_diff(result.world_diff)
+        return result.ok, result
+
+    def _finish_plan_state(
+        self, sm: StateMachine, ctx: Any, event_sink: AgentEventSink | None
+    ) -> None:
+        """Close the run on DONE when the FSM allows it."""
+        if not self.config.architecture.state_machine.enabled:
+            return
+        if sm.is_terminal or not sm.can_transit("DONE"):
+            return
+        ctx.exit_state()
+        sm.transit("DONE")
+        ctx.enter_state(sm.current)
+        _emit_event(event_sink, "on_state_enter", sm.current)
+
+    # ------------------------------------------------------------------ multi-agent crew
+    def _crew_pool(self, query: str) -> list[str]:
+        """The ranked atomic pool the Supervisor routes from.
+
+        The union of every working state's whitelist, soft-ranked by Tool RAG —
+        the same ranking a single agent would have been shown, so routing costs
+        no extra LLM call and stays deterministic. Per-state narrowing happens
+        in ``route_subtasks``; per-call enforcement stays with the dispatcher.
+        """
+        arch = self.config.architecture
+        if arch.state_machine.enabled:
+            allowed = sorted(
+                {t for spec in STATES.values() for t in spec.allowed_tools}
+                & set(self._atomic_names)
+            )
+        else:
+            allowed = list(self._atomic_names)
+        return self._rank_with_rag(query, allowed)
+
+    def _crew_route_to(self, sm: StateMachine, ctx: Any, target: str, event_sink: Any) -> bool:
+        """Move the FSM to *target* via legal transitions only (never force_to)."""
+        if not self.config.architecture.state_machine.enabled:
+            return True
+        if sm.current == target:
+            return True
+        route = state_route(sm.current, target)
+        if route is None:
+            return False
+        for hop in route:
+            ctx.exit_state()
+            sm.transit(hop)
+            ctx.enter_state(sm.current)
+            _emit_event(event_sink, "on_state_enter", sm.current)
+        return True
+
+    def _specialist_visible(self, subtask: Subtask) -> list[dict[str, Any]]:
+        """The Specialist's tool surface: its own atomics, domain-projected in
+        hierarchical mode — the same projection the single agent gets, minus
+        every other domain's distractors."""
+        if not self.config.architecture.hierarchical_tools:
+            return [{"name": n} for n in subtask.atomics]
+        by_domain: dict[str, list[str]] = {}
+        for atomic in subtask.atomics:
+            try:
+                domain, action = self.registry.lookup(atomic)
+            except KeyError:
+                continue
+            by_domain.setdefault(domain, [])
+            if action not in by_domain[domain]:
+                by_domain[domain].append(action)
+        return [
+            {"name": domain, "allowed_actions": actions}
+            for domain, actions in by_domain.items()
+        ]
+
+    def _run_multi_agent(
+        self,
+        query: str,
+        world: MockWorld,
+        sm: StateMachine,
+        ctx: Any,
+        event_sink: AgentEventSink | None,
+        *,
+        start_turn: int = 0,
+        seed_entities: list[str] | None = None,
+        plan_steps: list[PlanStep] | None = None,
+    ) -> CrewOutcome:
+        """Supervisor → Specialists (+ Blackboard) → Critic.
+
+        Each Specialist runs a bounded *private* conversation over its own
+        state's tools; the Blackboard forwards the entity IDs that were actually
+        created (read from ``world_diff``, not from what a model said). When the
+        crew is the escalation tier, ``start_turn`` carries the turns the plan
+        tier already spent (shared budget), ``seed_entities`` carries the
+        partial work an aborted plan left behind, and ``plan_steps`` switches
+        the Supervisor to plan-guided routing: one Specialist per plan state,
+        each handed its slice of the compiled plan as an explicit worklist, and
+        a turn budget scaled to the plan's size instead of the flat
+        ``max_turns`` that starved golden-019 mid-crew.
+        """
+        cfg = self.config.architecture.multi_agent
+        if plan_steps:
+            subtasks = route_subtasks_from_plan(
+                plan_steps, tools_per_specialist=cfg.tools_per_specialist
+            )
+        else:
+            subtasks = route_subtasks(
+                self._crew_pool(query),
+                max_specialists=cfg.max_specialists,
+                tools_per_specialist=cfg.tools_per_specialist,
+            )
+        if not subtasks:
+            return CrewOutcome(executed=False, summary={"enabled": True, "specialists": 0})
+
+        # Turn budget: flat for query-routed crews; scaled to the task for
+        # plan-guided ones. Never below the global max_turns — scaling only
+        # ever *extends* the budget for demonstrably larger tasks.
+        turn_budget = self.max_turns
+        if plan_steps:
+            turn_budget = max(
+                self.max_turns,
+                start_turn + math.ceil(cfg.turns_per_step * len(plan_steps)),
+            )
+
+        board = Blackboard()
+        for entity in seed_entities or []:
+            if entity not in board.entities:
+                board.entities.append(entity)
+        turn = start_turn
+        completed = True
+        reason: str | None = None
+
+        for subtask in subtasks:
+            turn, truncated = self._run_specialist(
+                subtask, query, world, sm, ctx, board, turn, event_sink,
+                turn_budget=turn_budget,
+            )
+            # Exhausting the budget is only a failure if it cut a Specialist
+            # off mid-work — a crew whose last Specialist finished cleanly on
+            # the budget's final turn completed the task.
+            if truncated and turn >= turn_budget:
+                completed = False
+                reason = "max_turns exhausted"
+                break
+
+        # Critic pass: a Specialist that ran but changed nothing gets exactly
+        # one retry with that fact stated. Deterministic — "did the world
+        # change" is checkable without a judge call.
+        retried = 0
+        if cfg.critic_retry and completed:
+            for subtask in unsatisfied_subtasks(subtasks):
+                if turn >= turn_budget:
+                    # Retries are a quality pass, not primary work — running
+                    # out of budget here skips them without failing the run.
+                    break
+                retried += 1
+                turn, _truncated = self._run_specialist(
+                    subtask, query, world, sm, ctx, board, turn, event_sink,
+                    critic_note=critic_feedback(subtask),
+                    turn_budget=turn_budget,
+                )
+
+        # Close the run: the crew owns termination the way the workflow engine
+        # does in engine mode.
+        if (
+            self.config.architecture.state_machine.enabled
+            and not sm.is_terminal
+            and sm.can_transit("DONE")
+        ):
+            ctx.exit_state()
+            sm.transit("DONE")
+            ctx.enter_state(sm.current)
+            _emit_event(event_sink, "on_state_enter", sm.current)
+
+        summary = {
+            "enabled": True,
+            "executed": True,
+            "completed": completed,
+            "specialists": len(subtasks),
+            "plan_guided": bool(plan_steps),
+            "turn_budget": turn_budget,
+            "critic_retries": retried,
+            "assignments": [
+                {
+                    "state": s.state,
+                    "tools": list(s.atomics),
+                    "turns_used": s.turns_used,
+                    "successful_calls": s.successful_calls,
+                }
+                for s in subtasks
+            ],
+            "blackboard": board.summary(),
+        }
+        return CrewOutcome(
+            executed=True, completed=completed, turns=max(turn, 1), reason=reason,
+            summary=summary,
+        )
+
+    def _run_specialist(
+        self,
+        subtask: Subtask,
+        query: str,
+        world: MockWorld,
+        sm: StateMachine,
+        ctx: Any,
+        board: Blackboard,
+        turn: int,
+        event_sink: AgentEventSink | None,
+        *,
+        critic_note: str | None = None,
+        turn_budget: int | None = None,
+    ) -> tuple[int, bool]:
+        """One Specialist's bounded private conversation.
+
+        Returns ``(new_global_turn_count, truncated)`` — ``truncated`` is True
+        when a turn/budget cap stopped the Specialist while it was still
+        issuing tool calls, i.e. mid-work; a Specialist that ends by talking
+        (declaring its slice done or empty) is never truncated. When the ReAct
+        lever is on, the Specialist runs the ReAct loop: its own fresh
+        scratchpad, compressed observations, repair hints, and repeat-dedupe.
+        """
+        cfg = self.config.architecture.multi_agent
+        budget = turn_budget if turn_budget is not None else self.max_turns
+        if not self._crew_route_to(sm, ctx, subtask.state, event_sink):
+            # No legal path to the Specialist's state — skip the assignment
+            # rather than force the cage. The Critic will not resurrect it:
+            # turns_used stays 0.
+            return turn, False
+
+        # Fresh private conversation: the whole context-isolation claim.
+        reset = getattr(self.llm, "reset", None)
+        if callable(reset):
+            reset()
+        scratchpad = self._new_scratchpad()
+
+        history: list[dict[str, Any]] = []
+        local_turns = 0
+        # True while the Specialist's last response was still acting (tool
+        # calls); reset to False when it closes its slice with a talk turn.
+        mid_work = False
+        visible = self._specialist_visible(subtask)
+        tool_list_str = self._render_tool_list(visible) or "(no tools allowed)"
+        # Plan-guided assignment: the compiled steps for this state, rendered
+        # once — the Specialist executes a decided worklist instead of
+        # re-deriving it from the query (marked as possibly incomplete, since a
+        # compile-drop escalation means part of the task never compiled).
+        worklist_block = ""
+        if subtask.worklist:
+            numbered = "\n".join(
+                f"{i}. {line}" for i, line in enumerate(subtask.worklist, start=1)
+            )
+            worklist_block = (
+                "【你负责的执行清单(规划器已确定,按序执行;参数如与世界状态冲突可修正)】\n"
+                f"{numbered}\n"
+                "清单可能不完整:若用户需求中属于你的部分未被清单覆盖,请一并补齐。\n"
+            )
+        # The plan-guided budget may allow more local turns than the flat
+        # per-specialist cap — a specialist carrying 8 of the plan's steps
+        # needs more than 4 turns. Query-routed crews keep the flat cap.
+        local_cap = max(cfg.turns_per_specialist, len(subtask.worklist) + 1)
+        while local_turns < local_cap and turn < budget:
+            local_turns += 1
+            turn += 1
+            # Rebuilt every turn: the Blackboard grows as other work lands and
+            # the ReAct trace grows with this Specialist's own steps.
+            role_block = SPECIALIST_PROMPT_BLOCK.format(
+                role=STATES[subtask.state].description
+                if subtask.state in STATES
+                else subtask.state,
+                blackboard=board.render(),
+            )
+            if worklist_block:
+                role_block += worklist_block
+            if critic_note:
+                role_block += critic_note + "\n"
+            system_prompt = DEFAULT_SYSTEM_PROMPT.format(
+                current_state=subtask.state,
+                # Specialists do not sequence states; the Supervisor does.
+                allowed_transitions="(由协调器管理,无需切换)",
+                tool_list=tool_list_str,
+                resource_block=self._render_resource_block(),
+                workflow_block=role_block,
+                react_block=self._render_react_block(scratchpad),
+                policy_block=self._render_policy_block(),
+            )
+            resp: LLMResponse = self.llm.call(
+                system_prompt=system_prompt,
+                user_query=query,
+                visible_tools=visible,
+                history=history,
+                state=subtask.state,
+            )
+            ctx.log_llm(
+                LLMCallRecord(
+                    turn=turn,
+                    model=self.config.model.name,
+                    input_tokens=resp.input_tokens,
+                    output_tokens=resp.output_tokens,
+                    latency_ms=resp.latency_ms,
+                    stop_reason=resp.stop_reason,
+                ),
+                text=resp.text,
+                reasoning=resp.reasoning,
+            )
+            _emit_event(event_sink, "on_llm_response", turn, sm.current, resp)
+            if scratchpad is not None:
+                scratchpad.record_thought(turn, resp.text, resp.reasoning)
+
+            if not resp.tool_calls:
+                # The Specialist declared its slice done (or empty).
+                mid_work = False
+                if resp.text:
+                    board.note(f"[{subtask.state}] {' '.join(resp.text.split())[:120]}")
+                break
+            mid_work = True
+
+            for call in resp.tool_calls:
+                if call.name == READ_RESOURCE_TOOL:
+                    found, payload, err, lat = self._handle_resource_read(call.arguments, world)
+                    record = {
+                        "turn": turn, "uri": call.arguments.get("uri"), "found": found,
+                        "result_size": len(payload) if isinstance(payload, dict) else 0,
+                        "latency_ms": lat, "error": err,
+                    }
+                    ctx.resource_reads.append(record)
+                    _emit_event(event_sink, "on_resource_read", turn, dict(record))
+                    history.append({
+                        "role": "tool", "name": READ_RESOURCE_TOOL,
+                        "tool_call_id": call.call_id, "ok": found, "error_msg": err,
+                    })
+                    continue
+
+                atomic = (
+                    str(call.arguments.get("action") or call.name)
+                    if call.name in self._domain_names
+                    else call.name
+                )
+                # The Specialist's cage: its own assignment only. Narrower than
+                # the single agent's per-state whitelist, checked the same way.
+                if atomic not in subtask.atomics:
+                    rec = ToolCallRecord(
+                        turn=turn, state=sm.current, visible_tools=visible,
+                        visible_count=len(visible), selected=call.name,
+                        action=call.arguments.get("action"), args=call.arguments,
+                        schema_valid=True, result_ok=False, error_code="OUT_OF_SCOPE",
+                        error_msg=(
+                            f"tool not in this specialist's assignment for {subtask.state}; "
+                            "该部分由其它专家负责"
+                        ),
+                        result_data={}, world_diff=None, latency_ms=0.0,
+                    )
+                    ctx.log_tool_call(rec)
+                    if event_sink is not None:
+                        snap = deep_copy_world(world)
+                        _emit_event(event_sink, "on_tool_call", turn, rec, snap, snap)
+                    history.append({
+                        "role": "tool", "name": call.name, "tool_call_id": call.call_id,
+                        "ok": False, "error_code": "OUT_OF_SCOPE", "data": {},
+                        "error_msg": rec.error_msg,
+                    })
+                    continue
+
+                # §4.7 runtime cage — same check, same place: before dispatch.
+                decision = self.policy.check(atomic, call.arguments, world)
+                if decision.denied:
+                    rec = ToolCallRecord(
+                        turn=turn, state=sm.current, visible_tools=visible,
+                        visible_count=len(visible), selected=call.name,
+                        action=call.arguments.get("action"), args=call.arguments,
+                        schema_valid=True, result_ok=False, error_code="POLICY_DENIED",
+                        error_msg=f"[{decision.rule_id}] {decision.reason}",
+                        result_data={"rule_id": decision.rule_id}, world_diff=None,
+                        latency_ms=0.0,
+                    )
+                    ctx.log_tool_call(rec)
+                    if event_sink is not None:
+                        snap = deep_copy_world(world)
+                        _emit_event(event_sink, "on_tool_call", turn, rec, snap, snap)
+                    history.append({
+                        "role": "tool", "name": call.name, "tool_call_id": call.call_id,
+                        "ok": False, "error_code": "POLICY_DENIED",
+                        "data": {"rule_id": decision.rule_id},
+                        "error_msg": decision.reason,
+                    })
+                    continue
+
+                # ReAct dedupe — after the assignment check and the cage, same
+                # invariant as the interleaved loop: only a call that would have
+                # been permitted and repeats observed-done work is absorbed.
+                if (
+                    scratchpad is not None
+                    and self.config.architecture.react.dedupe_repeat_actions
+                ):
+                    cached = scratchpad.cached(action_signature(atomic, call.arguments))
+                    if cached is not None:
+                        scratchpad.note_suppressed()
+                        history.append({
+                            "role": "tool", "name": call.name,
+                            "tool_call_id": call.call_id, "ok": True,
+                            "error_code": "OK", "data": {"react_cached": True},
+                            "error_msg": (
+                                "该调用与此前已成功的调用完全相同，世界状态未变，"
+                                f"直接复用先前观察: {cached.observation}。"
+                                "请继续下一步，不要重复同一调用。"
+                            ),
+                        })
+                        continue
+
+                world_before = deep_copy_world(world) if event_sink is not None else None
+                result, parsed, lat, action = self._route_and_dispatch(
+                    call.name, call.arguments, world
+                )
+                intended: list[str] = []
+                referenced: list[str] = []
+                target_name = action if action is not None else call.name
+                try:
+                    atomic_meta = self.registry.atomic(target_name)
+                except KeyError:
+                    atomic_meta = None
+                if atomic_meta and parsed is not None:
+                    intended = atomic_meta.handler.__class__.intended_entities(parsed)
+                    referenced = atomic_meta.handler.__class__.referenced_entities(parsed)
+                rec = ToolCallRecord(
+                    turn=turn, state=sm.current, visible_tools=visible,
+                    visible_count=len(visible), selected=call.name, action=action,
+                    args=call.arguments,
+                    schema_valid=result.error_code != "SCHEMA_ERROR",
+                    result_ok=result.ok, error_code=result.error_code,
+                    error_msg=result.error_msg, result_data=result.data,
+                    world_diff=result.world_diff, latency_ms=lat,
+                    intended_entities=intended, referenced_entities=referenced,
+                )
+                ctx.log_tool_call(rec)
+                if event_sink is not None:
+                    _emit_event(
+                        event_sink, "on_tool_call", turn, rec, world_before,
+                        deep_copy_world(world),
+                    )
+                thread_data: Any = result.data
+                thread_msg = result.error_msg
+                if scratchpad is not None:
+                    _step, thread_data, thread_msg = scratchpad.observe(
+                        turn=turn, tool=call.name, action=action, atomic=atomic,
+                        args=call.arguments, ok=result.ok,
+                        error_code=result.error_code, error_msg=result.error_msg,
+                        data=result.data,
+                        world_changed=bool(result.ok and result.world_diff),
+                    )
+                history.append({
+                    "role": "tool", "name": call.name, "tool_call_id": call.call_id,
+                    "ok": result.ok, "error_code": result.error_code,
+                    "data": thread_data, "error_msg": thread_msg,
+                })
+                if result.ok:
+                    self.policy.record_execution(atomic)
+                    subtask.successful_calls += 1
+                    # What actually changed, handed to the next Specialist.
+                    board.record_diff(result.world_diff)
+
+        subtask.turns_used += local_turns
+        truncated = mid_work
+        if scratchpad is not None:
+            # Accumulate per-specialist ReAct stats into the run-level summary.
+            stats = scratchpad.summary()
+            agg = ctx.react_summary if ctx.react_summary.get("enabled") else {
+                "enabled": True, "steps": 0, "thoughts_recorded": 0,
+                "suppressed_repeats": 0, "failed_steps": 0, "hints_emitted": 0,
+                "window": stats["window"],
+            }
+            for key in ("steps", "thoughts_recorded", "suppressed_repeats",
+                        "failed_steps", "hints_emitted"):
+                agg[key] = agg.get(key, 0) + stats[key]
+            ctx.react_summary = agg
+        return turn, truncated
 
     # ------------------------------------------------------------------ engine-native step glue
     # Base bound on the engine's own advancement so a mis-authored conditional

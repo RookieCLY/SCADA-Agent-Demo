@@ -118,6 +118,16 @@ class TraceContext:
         self.workflow_summary: dict[str, Any] = {"enabled": False, "selected_workflow": None}
         # §4.7 runtime safety cage — per-run denial log (see agent/policy.py)
         self.policy_summary: dict[str, Any] = {"enabled": False}
+        # Plan-and-Execute — plan size and every compiler rejection, so a
+        # shortened plan can never be mistaken for a well-planned one.
+        self.plan_summary: dict[str, Any] = {"enabled": False}
+        # ReAct turn structure — per-run reasoning/dedupe stats (agent/react.py)
+        self.react_summary: dict[str, Any] = {"enabled": False}
+        # Multi-Agent crew — Specialist assignments, Critic retries, Blackboard
+        # (agent/multi_agent.py). Auditable decomposition, not narration.
+        self.crew_summary: dict[str, Any] = {"enabled": False}
+        # Combined-mode arbitration: which path actually ran and why.
+        self.loop_summary: dict[str, Any] = {"path": "interleaved"}
 
     # ---------- state events
     def enter_state(self, name: str) -> None:
@@ -199,6 +209,10 @@ class TraceContext:
             "rag": self.rag_summary,
             "workflow": self.workflow_summary,
             "policy": self.policy_summary,
+            "plan": self.plan_summary,
+            "react": self.react_summary,
+            "crew": self.crew_summary,
+            "loop": self.loop_summary,
             "totals": {
                 "input_tokens": total_input,
                 "output_tokens": total_output,
