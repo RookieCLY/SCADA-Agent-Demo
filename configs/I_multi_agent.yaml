@@ -1,0 +1,82 @@
+name: I_multi_agent
+description: |
+  Config I — identical to F (all four architecture levers on), plus the
+  **Multi-Agent (多智能体协作)** structure switched on.
+
+  Every A–H config is a *single* agent holding one conversation. Every turn it
+  carries the whole task, the whole transcript, and a tool surface ranked
+  across all domains at once. Three measurable costs follow, none addressed by
+  the four levers:
+
+    * **One growing context for the whole task.** Turn N re-reads turns 1..N-1
+      even when they concern a different domain entirely, so `input_tokens`
+      grows with the task rather than with the sub-task at hand.
+    * **Distractors in the tool surface.** Tool RAG's top-k spans several
+      domains; the off-domain candidates are noise for the decision being made,
+      paid for in `tool_selection_f1` and `out_of_scope_tool_rate`.
+    * **Nothing carries entity identity between sub-tasks.** The alarm step
+      re-derives the tag the point step invented — the exact situation
+      `cascade_failure_rate` counts.
+
+  The structure (`architecture.multi_agent`, `agent/multi_agent.py`) decomposes
+  the run into cooperating roles:
+
+    Supervisor   routes the query to an ordered set of Specialists, one per
+                 functional state, from the **existing** Tool-RAG ranking — no
+                 extra LLM call, deterministic, reproducible
+    Specialist   a bounded sub-agent pinned to one state: it sees only that
+                 state's tools and its own short private conversation
+    Blackboard   shared memory — entity IDs actually created (read from
+                 `world_diff`, not from model narration) are handed forward so
+                 later Specialists reference real identifiers
+    Critic       deterministic post-check: a Specialist whose slice produced no
+                 world change is re-dispatched exactly once with that stated
+
+  Compare I vs F to isolate the structure; both share every other lever.
+  Expected movement: `input_tokens` / `cost_usd` down (N short private contexts
+  vs one concatenated one), `tool_selection_f1` up and `out_of_scope_tool_rate`
+  down (each Specialist sees one domain's tools), `cascade_failure_rate` down
+  (Blackboard), `task_success` up on multi-domain cases (the Critic catches
+  silently-skipped slices).
+
+  No cage is weakened: a Specialist is *narrower* than the single agent, every
+  dispatch still passes the state-machine whitelist and the §4.7 policy, and
+  the Supervisor only enters states reachable by legal FSM transitions. If the
+  Supervisor finds no decomposition, the run falls back to the single-agent
+  loop unchanged.
+
+architecture:
+  hierarchical_tools: true
+  tool_rag:
+    enabled: true
+    top_n: 30
+    top_k: 12
+    alpha_dense: 0.6
+    use_reranker: true
+  workflow:
+    enabled: true
+    yaml_path: workflows
+  state_machine:
+    enabled: true
+  resources_separation: true
+  multi_agent:
+    enabled: true             # ← the lever under test (F leaves this off)
+    max_specialists: 3        # bounded sub-agents per run
+    turns_per_specialist: 4   # private-conversation turn budget
+    tools_per_specialist: 8   # assignment size (state whitelist ∩ ranking)
+    critic_retry: true        # one deterministic retry for an idle Specialist
+
+model:
+  provider: mock
+  name: mock
+  temperature: 0.0
+  max_tokens: 4096
+
+trace:
+  record_llm_io: true
+
+world:
+  backend: memory
+
+repetitions: 5
+seed_base: 42

@@ -55,6 +55,32 @@ class StateMachineConfig(BaseModel):
     oos_repeat_limit: int = 3
 
 
+class MultiAgentConfig(BaseModel):
+    """Multi-Agent (多智能体协作) — Supervisor / Specialists / Critic.
+
+    Orthogonal to the four architecture levers: those gate the tool *surface*,
+    this changes *who* holds the conversation. The single agent carries the
+    whole task in one growing context; with this on, a deterministic Supervisor
+    routes the query to per-state Specialists (using the existing Tool-RAG
+    ranking — no extra LLM call), each Specialist runs a bounded private
+    conversation over its own state's tools only, a Blackboard hands the
+    actually-created entity IDs forward, and a deterministic Critic re-runs a
+    Specialist once when its sub-task produced no world change.
+
+    Off by default so the archived A–F results stay reproducible.
+    """
+
+    enabled: bool = False
+    #: Ceiling on Specialists per run (each is a bounded sub-conversation).
+    max_specialists: int = 3
+    #: LLM turns each Specialist may use for its sub-task.
+    turns_per_specialist: int = 4
+    #: Tools handed to one Specialist (its state's whitelist ∩ the ranking).
+    tools_per_specialist: int = 8
+    #: Give an unproductive Specialist one Critic-prompted retry.
+    critic_retry: bool = True
+
+
 class SafetyPolicyConfig(BaseModel):
     """The §4.7 functional-safety cage — enforced in the runtime, not the prompt.
 
@@ -84,6 +110,9 @@ class ArchitectureConfig(BaseModel):
     workflow: WorkflowConfig = Field(default_factory=WorkflowConfig)
     state_machine: StateMachineConfig = Field(default_factory=StateMachineConfig)
     resources_separation: bool = False
+    #: Multi-Agent collaboration. Composes with every other lever — it changes
+    #: *who* holds the conversation, not which tools may be seen.
+    multi_agent: MultiAgentConfig = Field(default_factory=MultiAgentConfig)
 
 
 class ModelConfig(BaseModel):

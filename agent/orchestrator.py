@@ -24,12 +24,22 @@ import hashlib
 import sys
 import time
 from contextlib import suppress
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Protocol
 
 from agent.config import ExperimentConfig, load_config
 from agent.dispatcher import dispatch_atomic, dispatch_domain
 from agent.llm import LLMProvider, LLMResponse, build_llm
+from agent.multi_agent import (
+    SPECIALIST_PROMPT_BLOCK,
+    Blackboard,
+    Subtask,
+    critic_feedback,
+    route_subtasks,
+    unsatisfied_subtasks,
+)
+from agent.multi_agent import state_route as ma_state_route
 from agent.policy import SafetyPolicy, build_policy, is_read_only
 from agent.state_machine import INITIAL_STATE, STATES, StateMachine
 from agent.tool_rag import (
@@ -58,6 +68,22 @@ from world import Device, MockWorld, Point
 from world.memory_backend import deep_copy_world
 
 READ_RESOURCE_TOOL = "read_resource"  # synthetic tool name for Resource reads
+
+
+@dataclass
+class CrewOutcome:
+    """Result of the Multi-Agent phase.
+
+    ``executed=False`` means the Supervisor declined to take over (no ranked
+    tool maps to a working state) and the single-agent loop should run as if
+    the lever were off.
+    """
+
+    executed: bool
+    completed: bool = True
+    turns: int = 0
+    reason: str | None = None
+    summary: dict[str, Any] = field(default_factory=dict)
 
 
 class AgentEventSink(Protocol):
@@ -757,7 +783,29 @@ class Agent:
             early = False
             reason: str | None = None
 
-            while turn < self.max_turns:
+            # ---- Multi-Agent (多智能体协作). A deterministic Supervisor splits
+            # the run into per-state Specialists with private conversations and
+            # a shared Blackboard; a deterministic Critic re-runs an
+            # unproductive Specialist once. If the Supervisor finds no
+            # decomposition (no ranked tool maps to a working state), control
+            # falls through to the single-agent loop below, unchanged.
+            crew_done = False
+            if self.config.architecture.multi_agent.enabled:
+                outcome = self._run_multi_agent(query, world, sm, ctx, event_sink)
+                ctx.crew_summary = outcome.summary
+                if outcome.executed:
+                    crew_done = True
+                    turn = outcome.turns
+                    terminal = sm.current
+                    early = not outcome.completed
+                    reason = outcome.reason
+
+            while crew_done or turn < self.max_turns:
+                # Leave via ``break`` (not the loop condition) so the ``else:``
+                # arm below — which reports an exhausted turn budget — cannot
+                # fire on a crew that already finished the task.
+                if crew_done:
+                    break
                 turn += 1
                 visible, atomic_pool = self._visible_tools_for(
                     sm.current, query, wf_state
@@ -1267,6 +1315,341 @@ class Agent:
             if event_sink is not None:
                 _emit_event(event_sink, "on_run_finish", record, deep_copy_world(world))
             return record
+
+    # ------------------------------------------------------------------ multi-agent crew
+    def _crew_pool(self, query: str) -> list[str]:
+        """The ranked atomic pool the Supervisor routes from.
+
+        The union of every working state's whitelist, soft-ranked by Tool RAG —
+        the same ranking a single agent would have been shown, so routing costs
+        no extra LLM call and stays deterministic. Per-state narrowing happens
+        in ``route_subtasks``; per-call enforcement stays with the dispatcher.
+        """
+        arch = self.config.architecture
+        if arch.state_machine.enabled:
+            allowed = sorted(
+                {t for spec in STATES.values() for t in spec.allowed_tools}
+                & set(self._atomic_names)
+            )
+        else:
+            allowed = list(self._atomic_names)
+        return self._rank_with_rag(query, allowed)
+
+    def _crew_route_to(self, sm: StateMachine, ctx: Any, target: str, event_sink: Any) -> bool:
+        """Move the FSM to *target* via legal transitions only (never force_to)."""
+        if not self.config.architecture.state_machine.enabled:
+            return True
+        if sm.current == target:
+            return True
+        route = ma_state_route(sm.current, target)
+        if route is None:
+            return False
+        for hop in route:
+            ctx.exit_state()
+            sm.transit(hop)
+            ctx.enter_state(sm.current)
+            _emit_event(event_sink, "on_state_enter", sm.current)
+        return True
+
+    def _specialist_visible(self, subtask: Subtask) -> list[dict[str, Any]]:
+        """The Specialist's tool surface: its own atomics, domain-projected in
+        hierarchical mode — the same projection the single agent gets, minus
+        every other domain's distractors."""
+        if not self.config.architecture.hierarchical_tools:
+            return [{"name": n} for n in subtask.atomics]
+        by_domain: dict[str, list[str]] = {}
+        for atomic in subtask.atomics:
+            try:
+                domain, action = self.registry.lookup(atomic)
+            except KeyError:
+                continue
+            by_domain.setdefault(domain, [])
+            if action not in by_domain[domain]:
+                by_domain[domain].append(action)
+        return [
+            {"name": domain, "allowed_actions": actions}
+            for domain, actions in by_domain.items()
+        ]
+
+    def _run_multi_agent(
+        self,
+        query: str,
+        world: MockWorld,
+        sm: StateMachine,
+        ctx: Any,
+        event_sink: AgentEventSink | None,
+    ) -> CrewOutcome:
+        """Supervisor → Specialists (+ Blackboard) → Critic.
+
+        Each Specialist runs a bounded *private* conversation over its own
+        state's tools; the Blackboard forwards the entity IDs that were actually
+        created (read from ``world_diff``, not from what a model said). The
+        token argument lives here: N short private contexts cost less than one
+        context that is the concatenation of all of them.
+        """
+        cfg = self.config.architecture.multi_agent
+        subtasks = route_subtasks(
+            self._crew_pool(query),
+            max_specialists=cfg.max_specialists,
+            tools_per_specialist=cfg.tools_per_specialist,
+        )
+        if not subtasks:
+            return CrewOutcome(executed=False, summary={"enabled": True, "specialists": 0})
+
+        board = Blackboard()
+        turn = 0
+        completed = True
+        reason: str | None = None
+
+        for subtask in subtasks:
+            turn = self._run_specialist(
+                subtask, query, world, sm, ctx, board, turn, event_sink
+            )
+            if turn >= self.max_turns:
+                completed = False
+                reason = "max_turns exhausted"
+                break
+
+        # Critic pass: a Specialist that ran but changed nothing gets exactly
+        # one retry with that fact stated. Deterministic — "did the world
+        # change" is checkable without a judge call.
+        retried = 0
+        if cfg.critic_retry and completed:
+            for subtask in unsatisfied_subtasks(subtasks):
+                if turn >= self.max_turns:
+                    completed = False
+                    reason = "max_turns exhausted"
+                    break
+                retried += 1
+                turn = self._run_specialist(
+                    subtask, query, world, sm, ctx, board, turn, event_sink,
+                    critic_note=critic_feedback(subtask),
+                )
+
+        # Close the run: the crew owns termination the way the workflow engine
+        # does in engine mode.
+        if (
+            self.config.architecture.state_machine.enabled
+            and not sm.is_terminal
+            and sm.can_transit("DONE")
+        ):
+            ctx.exit_state()
+            sm.transit("DONE")
+            ctx.enter_state(sm.current)
+            _emit_event(event_sink, "on_state_enter", sm.current)
+
+        summary = {
+            "enabled": True,
+            "executed": True,
+            "completed": completed,
+            "specialists": len(subtasks),
+            "critic_retries": retried,
+            "assignments": [
+                {
+                    "state": s.state,
+                    "tools": list(s.atomics),
+                    "turns_used": s.turns_used,
+                    "successful_calls": s.successful_calls,
+                }
+                for s in subtasks
+            ],
+            "blackboard": board.summary(),
+        }
+        return CrewOutcome(
+            executed=True, completed=completed, turns=max(turn, 1), reason=reason,
+            summary=summary,
+        )
+
+    def _run_specialist(
+        self,
+        subtask: Subtask,
+        query: str,
+        world: MockWorld,
+        sm: StateMachine,
+        ctx: Any,
+        board: Blackboard,
+        turn: int,
+        event_sink: AgentEventSink | None,
+        *,
+        critic_note: str | None = None,
+    ) -> int:
+        """One Specialist's bounded private conversation. Returns the new global
+        turn count."""
+        cfg = self.config.architecture.multi_agent
+        if not self._crew_route_to(sm, ctx, subtask.state, event_sink):
+            # No legal path to the Specialist's state — skip the assignment
+            # rather than force the cage. The Critic will not resurrect it:
+            # turns_used stays 0.
+            return turn
+
+        # Fresh private conversation: the whole context-isolation claim.
+        reset = getattr(self.llm, "reset", None)
+        if callable(reset):
+            reset()
+
+        visible = self._specialist_visible(subtask)
+        role_block = SPECIALIST_PROMPT_BLOCK.format(
+            role=STATES[subtask.state].description if subtask.state in STATES else subtask.state,
+            blackboard=board.render(),
+        )
+        if critic_note:
+            role_block += critic_note + "\n"
+        tool_list_str = self._render_tool_list(visible) or "(no tools allowed)"
+        system_prompt = DEFAULT_SYSTEM_PROMPT.format(
+            current_state=subtask.state,
+            # Specialists do not sequence states; the Supervisor does.
+            allowed_transitions="(由协调器管理,无需切换)",
+            tool_list=tool_list_str,
+            resource_block=self._render_resource_block(),
+            workflow_block=role_block,
+            policy_block=self._render_policy_block(),
+        )
+
+        history: list[dict[str, Any]] = []
+        local_turns = 0
+        while local_turns < cfg.turns_per_specialist and turn < self.max_turns:
+            local_turns += 1
+            turn += 1
+            resp: LLMResponse = self.llm.call(
+                system_prompt=system_prompt,
+                user_query=query,
+                visible_tools=visible,
+                history=history,
+                state=subtask.state,
+            )
+            ctx.log_llm(
+                LLMCallRecord(
+                    turn=turn,
+                    model=self.config.model.name,
+                    input_tokens=resp.input_tokens,
+                    output_tokens=resp.output_tokens,
+                    latency_ms=resp.latency_ms,
+                    stop_reason=resp.stop_reason,
+                ),
+                text=resp.text,
+                reasoning=resp.reasoning,
+            )
+            _emit_event(event_sink, "on_llm_response", turn, sm.current, resp)
+
+            if not resp.tool_calls:
+                # The Specialist declared its slice done (or empty).
+                if resp.text:
+                    board.note(f"[{subtask.state}] {' '.join(resp.text.split())[:120]}")
+                break
+
+            for call in resp.tool_calls:
+                if call.name == READ_RESOURCE_TOOL:
+                    found, payload, err, lat = self._handle_resource_read(call.arguments, world)
+                    record = {
+                        "turn": turn, "uri": call.arguments.get("uri"), "found": found,
+                        "result_size": len(payload) if isinstance(payload, dict) else 0,
+                        "latency_ms": lat, "error": err,
+                    }
+                    ctx.resource_reads.append(record)
+                    _emit_event(event_sink, "on_resource_read", turn, dict(record))
+                    history.append({
+                        "role": "tool", "name": READ_RESOURCE_TOOL,
+                        "tool_call_id": call.call_id, "ok": found, "error_msg": err,
+                    })
+                    continue
+
+                atomic = (
+                    str(call.arguments.get("action") or call.name)
+                    if call.name in self._domain_names
+                    else call.name
+                )
+                # The Specialist's cage: its own assignment only. Narrower than
+                # the single agent's per-state whitelist, checked the same way.
+                if atomic not in subtask.atomics:
+                    rec = ToolCallRecord(
+                        turn=turn, state=sm.current, visible_tools=visible,
+                        visible_count=len(visible), selected=call.name,
+                        action=call.arguments.get("action"), args=call.arguments,
+                        schema_valid=True, result_ok=False, error_code="OUT_OF_SCOPE",
+                        error_msg=(
+                            f"tool not in this specialist's assignment for {subtask.state}; "
+                            "该部分由其它专家负责"
+                        ),
+                        result_data={}, world_diff=None, latency_ms=0.0,
+                    )
+                    ctx.log_tool_call(rec)
+                    if event_sink is not None:
+                        snap = deep_copy_world(world)
+                        _emit_event(event_sink, "on_tool_call", turn, rec, snap, snap)
+                    history.append({
+                        "role": "tool", "name": call.name, "tool_call_id": call.call_id,
+                        "ok": False, "error_code": "OUT_OF_SCOPE", "data": {},
+                        "error_msg": rec.error_msg,
+                    })
+                    continue
+
+                # §4.7 runtime cage — same check, same place: before dispatch.
+                decision = self.policy.check(atomic, call.arguments, world)
+                if decision.denied:
+                    rec = ToolCallRecord(
+                        turn=turn, state=sm.current, visible_tools=visible,
+                        visible_count=len(visible), selected=call.name,
+                        action=call.arguments.get("action"), args=call.arguments,
+                        schema_valid=True, result_ok=False, error_code="POLICY_DENIED",
+                        error_msg=f"[{decision.rule_id}] {decision.reason}",
+                        result_data={"rule_id": decision.rule_id}, world_diff=None,
+                        latency_ms=0.0,
+                    )
+                    ctx.log_tool_call(rec)
+                    if event_sink is not None:
+                        snap = deep_copy_world(world)
+                        _emit_event(event_sink, "on_tool_call", turn, rec, snap, snap)
+                    history.append({
+                        "role": "tool", "name": call.name, "tool_call_id": call.call_id,
+                        "ok": False, "error_code": "POLICY_DENIED",
+                        "data": {"rule_id": decision.rule_id},
+                        "error_msg": decision.reason,
+                    })
+                    continue
+
+                world_before = deep_copy_world(world) if event_sink is not None else None
+                result, parsed, lat, action = self._route_and_dispatch(
+                    call.name, call.arguments, world
+                )
+                intended: list[str] = []
+                referenced: list[str] = []
+                target_name = action if action is not None else call.name
+                try:
+                    atomic_meta = self.registry.atomic(target_name)
+                except KeyError:
+                    atomic_meta = None
+                if atomic_meta and parsed is not None:
+                    intended = atomic_meta.handler.__class__.intended_entities(parsed)
+                    referenced = atomic_meta.handler.__class__.referenced_entities(parsed)
+                rec = ToolCallRecord(
+                    turn=turn, state=sm.current, visible_tools=visible,
+                    visible_count=len(visible), selected=call.name, action=action,
+                    args=call.arguments,
+                    schema_valid=result.error_code != "SCHEMA_ERROR",
+                    result_ok=result.ok, error_code=result.error_code,
+                    error_msg=result.error_msg, result_data=result.data,
+                    world_diff=result.world_diff, latency_ms=lat,
+                    intended_entities=intended, referenced_entities=referenced,
+                )
+                ctx.log_tool_call(rec)
+                if event_sink is not None:
+                    _emit_event(
+                        event_sink, "on_tool_call", turn, rec, world_before,
+                        deep_copy_world(world),
+                    )
+                history.append({
+                    "role": "tool", "name": call.name, "tool_call_id": call.call_id,
+                    "ok": result.ok, "error_code": result.error_code,
+                    "data": result.data, "error_msg": result.error_msg,
+                })
+                if result.ok:
+                    self.policy.record_execution(atomic)
+                    subtask.successful_calls += 1
+                    # What actually changed, handed to the next Specialist.
+                    board.record_diff(result.world_diff)
+
+        subtask.turns_used += local_turns
+        return turn
 
     # ------------------------------------------------------------------ engine-native step glue
     # Base bound on the engine's own advancement so a mis-authored conditional

@@ -118,6 +118,9 @@ class TraceContext:
         self.workflow_summary: dict[str, Any] = {"enabled": False, "selected_workflow": None}
         # §4.7 runtime safety cage — per-run denial log (see agent/policy.py)
         self.policy_summary: dict[str, Any] = {"enabled": False}
+        # Multi-Agent crew — Specialist assignments, Critic retries, Blackboard
+        # (see agent/multi_agent.py). Auditable decomposition, not narration.
+        self.crew_summary: dict[str, Any] = {"enabled": False}
 
     # ---------- state events
     def enter_state(self, name: str) -> None:
@@ -199,6 +202,7 @@ class TraceContext:
             "rag": self.rag_summary,
             "workflow": self.workflow_summary,
             "policy": self.policy_summary,
+            "crew": self.crew_summary,
             "totals": {
                 "input_tokens": total_input,
                 "output_tokens": total_output,
