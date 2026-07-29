@@ -1,0 +1,91 @@
+name: I_plan_execute
+description: |
+  Config I — identical to F (all four architecture levers on), plus the
+  **Plan-and-Execute (规划-执行)** agent structure switched on.
+
+  Every A–H config runs an *interleaved* loop: one LLM call per tool call, each
+  one re-reading the whole conversation to decide a single next step. Three
+  costs follow from that shape, and the paper's metrics already measure all
+  three — no lever addresses any of them:
+
+    * **Cost is linear-to-quadratic in trajectory length.** An N-tool task costs
+      N+1 LLM calls, each with a prompt grown by every prior result, so
+      `input_tokens`, `output_tokens`, `cost_usd` and `e2e_latency_ms` all scale
+      with N. Plan-and-Execute costs `1 + replans` calls regardless of N.
+    * **Nothing is checked before it is dispatched.** A hallucinated tool name,
+      a malformed argument object, or a call in the wrong order all reach the
+      dispatcher and land in the trace as `hallucinated_tool_rate`,
+      `SCHEMA_ERROR` and `cascade_failure_rate`.
+    * **Ordering is decided one step at a time**, so the model can only discover
+      it needed the point before the alarm by failing to create the alarm.
+
+  The structure (`architecture.plan_execute`, `agent/planner.py`) splits the two
+  concerns:
+
+    Plan     one LLM call produces the whole ordered tool sequence
+    Compile  pure Python — drop hallucinated tools, validate every argument
+             object against its own Pydantic schema, collapse duplicates, and
+             topologically repair the order from the same
+             `intended_entities` / `referenced_entities` contract that powers
+             the cascade-failure detector
+    Execute  dispatch the compiled steps with no LLM in the loop; replan only
+             when a step actually fails (bounded by `max_replans`)
+
+  The compile phase is where the accuracy comes from and it is deterministic:
+  a step that could not have dispatched correctly is removed *before* execution
+  rather than discovered by executing it. Every rejection is counted by name in
+  the trace's `plan` block, so a silently shortened plan cannot read as a
+  well-planned one.
+
+  Compare I vs F to isolate the loop structure; both share every other lever.
+  Expected movement: `total_turns` / `input_tokens` / `cost_usd` /
+  `e2e_latency_ms` sharply down, `step_efficiency` up, `hallucinated_tool_rate`
+  / `schema_violation_rate` / `cascade_failure_rate` toward zero,
+  `order_correctness` up.
+
+  Cages are untouched. Compiled steps go through the same dispatch path: the
+  state router walks **legal** FSM transitions only (never `force_to`), and the
+  §4.7 runtime policy is evaluated before every dispatch. A `POLICY_DENIED` step
+  ends the run rather than triggering a replan — replanning around the outer
+  cage is precisely what must not happen.
+
+  Backends without a `make_plan` hook (e.g. `MockLLM`) abstain, and the run
+  falls back to the interleaved loop unchanged — which is what keeps the
+  mock-scripted regression suite deterministic.
+
+architecture:
+  hierarchical_tools: true
+  tool_rag:
+    enabled: true
+    top_n: 30
+    top_k: 12
+    alpha_dense: 0.6
+    use_reranker: true
+  workflow:
+    enabled: true
+    yaml_path: workflows
+  state_machine:
+    enabled: true
+  resources_separation: true
+  plan_execute:
+    enabled: true              # ← the lever under test (F leaves this off)
+    max_replans: 2             # LLM calls after a failed step
+    max_steps: 12              # ceiling on compiled steps
+    reorder_by_dependency: true
+    planner_tool_budget: 60    # atomics shown in the planning prompt
+    fallback_to_interleaved: true
+
+model:
+  provider: mock
+  name: mock
+  temperature: 0.0
+  max_tokens: 4096
+
+trace:
+  record_llm_io: true
+
+world:
+  backend: memory
+
+repetitions: 5
+seed_base: 42

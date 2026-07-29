@@ -55,6 +55,41 @@ class StateMachineConfig(BaseModel):
     oos_repeat_limit: int = 3
 
 
+class PlanExecuteConfig(BaseModel):
+    """Plan-and-Execute (规划-执行) — the *agent-loop* lever.
+
+    Orthogonal to the four architecture levers: those all gate the tool
+    *surface*, none of them change the fact that the loop is **interleaved**
+    (one LLM call per tool call, each re-reading the whole conversation).
+
+    With this on, ``Agent.run`` first asks the model for the **whole** ordered
+    tool sequence, compiles it deterministically (drop hallucinated tools,
+    validate every argument object against its Pydantic schema, collapse
+    duplicates, topologically repair the order from the
+    ``intended_entities``/``referenced_entities`` contract), then executes the
+    compiled steps with no LLM in the loop — replanning only when a step
+    actually fails.
+
+    Off by default so the archived A–F results stay reproducible.
+    """
+
+    enabled: bool = False
+    #: Replans allowed after a step failure. ``0`` = execute the first plan or
+    #: stop; each replan costs one LLM call, which is the whole budget question.
+    max_replans: int = 2
+    #: Hard ceiling on compiled steps, so a runaway plan cannot outrun the turn
+    #: budget the interleaved loop would have had.
+    max_steps: int = 12
+    #: Apply the dependency-driven topological repair to the proposed order.
+    reorder_by_dependency: bool = True
+    #: Number of atomics shown to the planner (the planning prompt is the one
+    #: place the whole catalogue has to fit).
+    planner_tool_budget: int = 60
+    #: If the planner abstains or every step is dropped, fall back to the
+    #: standard interleaved loop instead of ending the run empty-handed.
+    fallback_to_interleaved: bool = True
+
+
 class SafetyPolicyConfig(BaseModel):
     """The §4.7 functional-safety cage — enforced in the runtime, not the prompt.
 
@@ -84,6 +119,9 @@ class ArchitectureConfig(BaseModel):
     workflow: WorkflowConfig = Field(default_factory=WorkflowConfig)
     state_machine: StateMachineConfig = Field(default_factory=StateMachineConfig)
     resources_separation: bool = False
+    #: Plan-and-Execute turn structure. Composes with every other lever — it
+    #: changes *when* the model is asked, not *what* it may see.
+    plan_execute: PlanExecuteConfig = Field(default_factory=PlanExecuteConfig)
 
 
 class ModelConfig(BaseModel):

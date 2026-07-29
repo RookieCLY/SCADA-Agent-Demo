@@ -118,6 +118,9 @@ class TraceContext:
         self.workflow_summary: dict[str, Any] = {"enabled": False, "selected_workflow": None}
         # §4.7 runtime safety cage — per-run denial log (see agent/policy.py)
         self.policy_summary: dict[str, Any] = {"enabled": False}
+        # Plan-and-Execute — plan size and every compiler rejection, so a
+        # shortened plan can never be mistaken for a well-planned one.
+        self.plan_summary: dict[str, Any] = {"enabled": False}
 
     # ---------- state events
     def enter_state(self, name: str) -> None:
@@ -199,6 +202,7 @@ class TraceContext:
             "rag": self.rag_summary,
             "workflow": self.workflow_summary,
             "policy": self.policy_summary,
+            "plan": self.plan_summary,
             "totals": {
                 "input_tokens": total_input,
                 "output_tokens": total_output,

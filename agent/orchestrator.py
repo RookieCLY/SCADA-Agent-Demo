@@ -24,12 +24,20 @@ import hashlib
 import sys
 import time
 from contextlib import suppress
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Protocol
 
 from agent.config import ExperimentConfig, load_config
 from agent.dispatcher import dispatch_atomic, dispatch_domain
 from agent.llm import LLMProvider, LLMResponse, build_llm
+from agent.planner import (
+    PlanStep,
+    compile_plan,
+    describe_tools_for_planner,
+    parse_plan_payload,
+    state_route,
+)
 from agent.policy import SafetyPolicy, build_policy, is_read_only
 from agent.state_machine import INITIAL_STATE, STATES, StateMachine
 from agent.tool_rag import (
@@ -58,6 +66,35 @@ from world import Device, MockWorld, Point
 from world.memory_backend import deep_copy_world
 
 READ_RESOURCE_TOOL = "read_resource"  # synthetic tool name for Resource reads
+
+
+@dataclass
+class PlanOutcome:
+    """Result of the Plan-and-Execute phase.
+
+    ``executed=False`` means the phase declined to take over (backend has no
+    planner, or the plan compiled to nothing and fallback is on) and the
+    interleaved loop should run as if the lever were off.
+    """
+
+    executed: bool
+    completed: bool = True
+    turns: int = 0
+    reason: str | None = None
+    summary: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class _DeniedResult:
+    """Stand-in for a ToolResult on a call the §4.7 cage refused before dispatch."""
+
+    rule_id: str
+    reason: str
+    error_code: str = "POLICY_DENIED"
+
+    @property
+    def error_msg(self) -> str:
+        return f"[{self.rule_id}] {self.reason}"
 
 
 class AgentEventSink(Protocol):
@@ -757,7 +794,29 @@ class Agent:
             early = False
             reason: str | None = None
 
-            while turn < self.max_turns:
+            # ---- Plan-and-Execute (规划-执行). One planning call decides the
+            # whole trajectory; the compiler then removes everything that could
+            # not have been dispatched correctly, and execution runs with no LLM
+            # in the loop. If the planner abstains or the compiler empties the
+            # plan, ``executed`` is False and control falls through to the
+            # interleaved loop below, completely unchanged.
+            plan_done = False
+            if self.config.architecture.plan_execute.enabled:
+                outcome = self._plan_and_execute(query, world, sm, ctx, event_sink)
+                ctx.plan_summary = outcome.summary
+                if outcome.executed:
+                    plan_done = True
+                    turn = outcome.turns
+                    terminal = sm.current
+                    early = not outcome.completed
+                    reason = outcome.reason
+
+            while plan_done or turn < self.max_turns:
+                # Leave via ``break`` (not the loop condition) so the ``else:``
+                # arm below — which reports an exhausted turn budget — cannot
+                # fire on a plan that already finished the task.
+                if plan_done:
+                    break
                 turn += 1
                 visible, atomic_pool = self._visible_tools_for(
                     sm.current, query, wf_state
@@ -1267,6 +1326,310 @@ class Agent:
             if event_sink is not None:
                 _emit_event(event_sink, "on_run_finish", record, deep_copy_world(world))
             return record
+
+    # ------------------------------------------------------------------ plan & execute
+    def _planner_pool(self, query: str) -> list[str]:
+        """Atomics the planner may use: the union of every state's whitelist,
+        soft-ranked by Tool RAG.
+
+        The union — not the *current* state's whitelist — because a plan spans
+        states by construction; restricting the planner to where the FSM happens
+        to be standing would make it plan only the first step. The per-state
+        whitelist is still enforced at *execution* time, so the cage is intact:
+        the planner may propose, only the router may enter a state, and it walks
+        legal transitions only.
+        """
+        arch = self.config.architecture
+        if arch.state_machine.enabled:
+            allowed = sorted(
+                {t for spec in STATES.values() for t in spec.allowed_tools}
+                & set(self._atomic_names)
+            )
+        else:
+            allowed = list(self._atomic_names)
+        return self._rank_with_rag(query, allowed)
+
+    def _request_plan(
+        self,
+        query: str,
+        pool: list[str],
+        ctx: Any,
+        turn: int,
+        feedback: str | None = None,
+    ) -> tuple[list[dict[str, Any]], str | None, bool]:
+        """Ask the backend for a whole-task plan.
+
+        Returns ``(raw_steps, refusal, supported)``. ``supported`` is False when
+        the backend has no ``make_plan`` hook at all (e.g. ``MockLLM``), which is
+        what makes the lever degrade to the interleaved loop instead of failing.
+        """
+        planner = getattr(self.llm, "make_plan", None)
+        if not callable(planner):
+            return [], None, False
+        tool_list = describe_tools_for_planner(
+            self.registry, pool, max_tools=self.config.architecture.plan_execute.planner_tool_budget
+        )
+        t0 = time.perf_counter()
+        try:
+            payload = planner(query, tool_list, feedback)
+        except Exception:
+            return [], None, True
+        latency = (time.perf_counter() - t0) * 1000
+        usage = (payload or {}).get("_usage") or {}
+        ctx.log_llm(
+            LLMCallRecord(
+                turn=turn,
+                model=self.config.model.name,
+                input_tokens=int(usage.get("input_tokens", 0) or 0),
+                output_tokens=int(usage.get("output_tokens", 0) or 0),
+                latency_ms=latency,
+                stop_reason="end_turn",
+            ),
+            text=None,
+            reasoning=None,
+        )
+        steps, refusal = parse_plan_payload(payload)
+        return steps, refusal, True
+
+    def _route_to_state(
+        self, sm: StateMachine, ctx: Any, target: str, event_sink: Any
+    ) -> bool:
+        """Walk **legal** transitions from the current state to *target*.
+
+        Never uses ``force_to``: the planner is a sequencer, not an authority
+        over the cage. Returns False (and leaves the FSM where it was) if the
+        FSM has no legal path — the caller then drops the step.
+        """
+        if not self.config.architecture.state_machine.enabled or sm.current == target:
+            return True
+        route = state_route(sm.current, target)
+        if route is None:
+            return False
+        for hop in route:
+            ctx.exit_state()
+            sm.transit(hop)
+            ctx.enter_state(sm.current)
+            _emit_event(event_sink, "on_state_enter", sm.current)
+        return True
+
+    def _plan_and_execute(
+        self,
+        query: str,
+        world: MockWorld,
+        sm: StateMachine,
+        ctx: Any,
+        event_sink: AgentEventSink | None,
+    ) -> PlanOutcome:
+        """Plan once, compile deterministically, then execute without the LLM.
+
+        The turn accounting is the headline: an N-step task costs
+        ``1 + replans`` LLM calls instead of ``N + 1``.
+        """
+        cfg = self.config.architecture.plan_execute
+        pool = self._planner_pool(query)
+        turns = 1
+        raw_steps, refusal, supported = self._request_plan(query, pool, ctx, turns)
+        if not supported:
+            # Backend cannot plan — hand back to the interleaved loop, and do
+            # not charge the run for a turn that never happened.
+            return PlanOutcome(executed=False, turns=0, summary={"enabled": True, "supported": False})
+
+        plan = compile_plan(
+            raw_steps,
+            self.registry,
+            world,
+            allowed_atomics=pool if self.config.architecture.state_machine.enabled else None,
+            start_state=sm.current,
+            max_steps=cfg.max_steps,
+            reorder=cfg.reorder_by_dependency,
+            refusal=refusal,
+        )
+
+        if not plan.steps:
+            # An explicit refusal is a *result*, not a failure: the golden
+            # `reject` cases expect exactly this (no world mutation). Only an
+            # empty plan with no refusal means the planner had nothing to say,
+            # and that is what the fallback exists for.
+            if refusal or not cfg.fallback_to_interleaved:
+                self._finish_plan_state(sm, ctx, event_sink)
+                return PlanOutcome(
+                    executed=True,
+                    completed=True,
+                    turns=turns,
+                    reason=None if refusal else "empty_plan",
+                    summary={"enabled": True, "supported": True, "executed": True,
+                             **plan.diagnostics.as_dict()},
+                )
+            return PlanOutcome(
+                executed=False,
+                turns=turns,
+                summary={"enabled": True, "supported": True, "executed": False,
+                         **plan.diagnostics.as_dict()},
+            )
+
+        executed_signatures: set[str] = set()
+        replans = 0
+        completed = True
+        reason: str | None = None
+        pending = list(plan.steps)
+
+        while pending:
+            failure: tuple[PlanStep, Any] | None = None
+            for step in pending:
+                ok, result = self._execute_plan_step(
+                    step, world, sm, ctx, turns, event_sink, executed_signatures
+                )
+                if not ok:
+                    failure = (step, result)
+                    break
+            if failure is None:
+                break
+            failed_step, failed_result = failure
+            # POLICY_DENIED is a boundary, not a bug: replanning around the §4.7
+            # cage is exactly what must not happen, so stop here.
+            if failed_result is not None and getattr(failed_result, "error_code", "") == "POLICY_DENIED":
+                completed = False
+                reason = "policy_denied"
+                break
+            if replans >= cfg.max_replans:
+                completed = False
+                reason = "plan_step_failed"
+                break
+            replans += 1
+            turns += 1
+            feedback = (
+                f"步骤 {failed_step.tool}({failed_step.arguments}) 失败: "
+                f"{getattr(failed_result, 'error_code', 'UNKNOWN')} "
+                f"{getattr(failed_result, 'error_msg', '') or ''}"
+            )
+            raw_steps, refusal, _ = self._request_plan(query, pool, ctx, turns, feedback)
+            replan = compile_plan(
+                raw_steps,
+                self.registry,
+                world,
+                allowed_atomics=pool if self.config.architecture.state_machine.enabled else None,
+                start_state=sm.current,
+                max_steps=cfg.max_steps,
+                reorder=cfg.reorder_by_dependency,
+                refusal=refusal,
+            )
+            plan.diagnostics.replans = replans
+            if not replan.steps:
+                completed = False
+                reason = "replan_empty"
+                break
+            pending = replan.steps
+
+        self._finish_plan_state(sm, ctx, event_sink)
+        summary = {
+            "enabled": True,
+            "supported": True,
+            "executed": True,
+            "completed": completed,
+            **plan.diagnostics.as_dict(),
+        }
+        return PlanOutcome(
+            executed=True, completed=completed, turns=turns, reason=reason, summary=summary
+        )
+
+    def _execute_plan_step(
+        self,
+        step: PlanStep,
+        world: MockWorld,
+        sm: StateMachine,
+        ctx: Any,
+        turn: int,
+        event_sink: AgentEventSink | None,
+        executed_signatures: set[str],
+    ) -> tuple[bool, Any]:
+        """Dispatch one compiled step through the normal cages.
+
+        A replan re-proposes steps that already succeeded; ``executed_signatures``
+        makes those no-ops so a replan cannot double-apply the work the first
+        plan already did.
+        """
+        signature = f"{step.tool}|{sorted(step.arguments.items(), key=lambda kv: kv[0])}"
+        if signature in executed_signatures:
+            return True, None
+
+        # The state machine is still the cage. A step whose owning state cannot
+        # be reached legally from here is refused, not forced.
+        if not self._route_to_state(sm, ctx, step.state, event_sink):
+            ctx.log_tool_call(
+                ToolCallRecord(
+                    turn=turn, state=sm.current, visible_tools=[], visible_count=0,
+                    selected=step.tool, action=step.action, args=step.arguments,
+                    schema_valid=True, result_ok=False, error_code="OUT_OF_SCOPE",
+                    error_msg=f"no legal transition from {sm.current} to {step.state}",
+                    result_data={}, world_diff=None, latency_ms=0.0,
+                )
+            )
+            return False, None
+
+        # §4.7 runtime cage — evaluated before dispatch, exactly as in the
+        # interleaved loop. Planning must not become a way around it.
+        decision = self.policy.check(step.tool, step.arguments, world)
+        if decision.denied:
+            rec = ToolCallRecord(
+                turn=turn, state=sm.current, visible_tools=[], visible_count=0,
+                selected=step.tool, action=step.action, args=step.arguments,
+                schema_valid=True, result_ok=False, error_code="POLICY_DENIED",
+                error_msg=f"[{decision.rule_id}] {decision.reason}",
+                result_data={"rule_id": decision.rule_id}, world_diff=None, latency_ms=0.0,
+            )
+            ctx.log_tool_call(rec)
+            if event_sink is not None:
+                snap = deep_copy_world(world)
+                _emit_event(event_sink, "on_tool_call", turn, rec, snap, snap)
+            return False, _DeniedResult(decision.rule_id, decision.reason)
+
+        world_before = deep_copy_world(world) if event_sink is not None else None
+        result, _parsed, lat, action = self._route_and_dispatch(
+            step.tool, step.arguments, world
+        )
+        rec = ToolCallRecord(
+            turn=turn,
+            state=sm.current,
+            # The executed surface, recorded honestly: a compiled step is
+            # dispatched against exactly one tool, and the compiler already
+            # proved the call is in scope for this state.
+            visible_tools=[{"name": step.tool, "allowed_actions": [step.action]}],
+            visible_count=1,
+            selected=step.tool,
+            action=action if action is not None else step.action,
+            args=step.arguments,
+            schema_valid=result.error_code != "SCHEMA_ERROR",
+            result_ok=result.ok,
+            error_code=result.error_code,
+            error_msg=result.error_msg,
+            result_data=result.data,
+            world_diff=result.world_diff,
+            latency_ms=lat,
+            intended_entities=step.intended,
+            referenced_entities=step.referenced,
+        )
+        ctx.log_tool_call(rec)
+        if event_sink is not None:
+            _emit_event(
+                event_sink, "on_tool_call", turn, rec, world_before, deep_copy_world(world)
+            )
+        if result.ok:
+            self.policy.record_execution(step.tool)
+            executed_signatures.add(signature)
+        return result.ok, result
+
+    def _finish_plan_state(
+        self, sm: StateMachine, ctx: Any, event_sink: AgentEventSink | None
+    ) -> None:
+        """Close the run on DONE when the FSM allows it."""
+        if not self.config.architecture.state_machine.enabled:
+            return
+        if sm.is_terminal or not sm.can_transit("DONE"):
+            return
+        ctx.exit_state()
+        sm.transit("DONE")
+        ctx.enter_state(sm.current)
+        _emit_event(event_sink, "on_state_enter", sm.current)
 
     # ------------------------------------------------------------------ engine-native step glue
     # Base bound on the engine's own advancement so a mis-authored conditional

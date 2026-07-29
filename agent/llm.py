@@ -321,6 +321,15 @@ class MockLLM:
         deterministic keyword router, which keeps mock runs reproducible."""
         return None
 
+    def make_plan(self, query: str, tool_list: str, feedback: str | None = None) -> None:
+        """The scripted mock cannot plan, so it abstains.
+
+        Plan-and-Execute then falls back to the interleaved loop, which is what
+        keeps every existing mock-scripted test deterministic — the mock's canned
+        tool sequences are still what runs.
+        """
+        return None
+
 
 # ============================================================ OpenAI-compatible provider
 def _coerce_nested_json_strings(args: Any) -> Any:
@@ -352,6 +361,49 @@ def _coerce_nested_json_strings(args: Any) -> Any:
                 return args
             return _coerce_nested_json_strings(decoded)
     return args
+
+
+def _extract_json_object(text: str) -> dict[str, Any] | None:
+    """Pull the first top-level JSON object out of a model reply.
+
+    Planners are asked for bare JSON but routinely wrap it in ```json fences or
+    a sentence of preamble. Scanning for the outermost balanced ``{...}`` is
+    more robust than a strict ``json.loads`` and costs nothing when the model
+    complied.
+    """
+    stripped = text.strip()
+    if stripped.startswith("```"):
+        stripped = stripped.split("```")[1] if "```" in stripped[3:] else stripped[3:]
+        if stripped.startswith("json"):
+            stripped = stripped[4:]
+    start = stripped.find("{")
+    if start < 0:
+        return None
+    depth = 0
+    in_string = False
+    escaped = False
+    for i, ch in enumerate(stripped[start:], start=start):
+        if in_string:
+            if escaped:
+                escaped = False
+            elif ch == "\\":
+                escaped = True
+            elif ch == '"':
+                in_string = False
+            continue
+        if ch == '"':
+            in_string = True
+        elif ch == "{":
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            if depth == 0:
+                try:
+                    obj = json.loads(stripped[start : i + 1])
+                except json.JSONDecodeError:
+                    return None
+                return obj if isinstance(obj, dict) else None
+    return None
 
 
 def _load_dotenv_into_environ(path: str | Path = ".env") -> None:
@@ -477,6 +529,55 @@ class OpenAICompatibleLLM:
             if o["name"] in text:
                 return o["name"]
         return None
+
+    def make_plan(
+        self, query: str, tool_list: str, feedback: str | None = None
+    ) -> dict[str, Any] | None:
+        """One-shot whole-task planning call (Plan-and-Execute).
+
+        Deliberately *stateless* — like ``select_workflow`` it must not touch
+        ``self._messages``, both so a replan cannot inherit a half-finished
+        function-call exchange and so the planning cost stays a single flat
+        prompt rather than the growing conversation the interleaved loop pays.
+
+        Returns the decoded ``{"steps": [...], "refusal": ...}`` object, or
+        ``None`` on any transport/parse failure so the caller can fall back.
+        """
+        from agent.planner import PLANNER_SYSTEM_PROMPT
+
+        messages: list[dict[str, Any]] = [
+            {"role": "system", "content": PLANNER_SYSTEM_PROMPT.format(tool_list=tool_list)},
+            {"role": "user", "content": query},
+        ]
+        if feedback:
+            messages.append(
+                {
+                    "role": "user",
+                    "content": (
+                        "上一版计划执行失败,请给出修正后的**剩余**步骤计划(同样的 JSON 格式):\n"
+                        + feedback
+                    ),
+                }
+            )
+        try:
+            resp = self._client.chat.completions.create(
+                model=self.model_name,
+                messages=messages,
+                temperature=0.0,
+                max_tokens=self.max_tokens,
+            )
+            text = (resp.choices[0].message.content or "").strip()
+        except Exception:
+            return None
+        payload = _extract_json_object(text)
+        if payload is None:
+            return None
+        usage = getattr(resp, "usage", None)
+        payload.setdefault("_usage", {
+            "input_tokens": getattr(usage, "prompt_tokens", 0) or 0,
+            "output_tokens": getattr(usage, "completion_tokens", 0) or 0,
+        })
+        return payload
 
     # ----------------------------------------- tool schema builders
     def _flat_tool_schemas(self, names: list[str]) -> list[dict[str, Any]]:
