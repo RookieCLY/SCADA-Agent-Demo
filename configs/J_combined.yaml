@@ -64,10 +64,16 @@ architecture:
     fallback_to_interleaved: true
     include_world_context: true  # docode-trial fix (golden-019)
     replan_on_compile_drop: true # docode-trial fix (golden-013)
-    repair_schema_invalid: true  # controlled by J_nocrew_norepair
-    # The snapshot is the planner's ONLY view of the world (§4.5 removes the
-    # read tools, and the plan is fixed before execution), so a silent
-    # truncation lands as "acted, final state mismatch". Raised from 25.
+    # Keeper: measured against a no-repair control — disabling it cost 6.6pp of
+    # capability and 9.1pp of reject-case behaviour, so repair helps on both axes.
+    repair_schema_invalid: true
+    # Keeper: measured against a no-hints control — disabling it took schema drops
+    # from 35 to 160, cost 28% more tokens, and was worse on both accuracy axes.
+    typed_tool_hints: true
+    # The snapshot is a primary view of the world for the planner (the plan is
+    # fixed before execution), so a silent truncation lands as "acted, final state
+    # mismatch". Raised from 25. Note §4.5 is off here, so the read atomics are
+    # also back in the catalogue.
     world_context_max_items: 60
   react:
     enabled: true                # loop hygiene for fallback + specialists
@@ -80,7 +86,13 @@ architecture:
     dedupe_repeat_actions: false
     repair_hints: false
   multi_agent:
-    enabled: true                # escalation tier, gated
+    # Retired as a default tier. Its only measured justification (+9pp reject-case
+    # behavior_success) came from a 33-case subset where 8 cases flip between
+    # identical reps — a 24pp noise band — and does not survive. Its cost is real
+    # and reproducible: +31% input tokens. On every metric that still holds,
+    # crew-off scored better (64.2% vs 62.7% task_success at 4,536 vs 6,411
+    # tokens). Flip to true to re-enable; the tier and its tests are intact.
+    enabled: false
     max_specialists: 3
     turns_per_specialist: 4
     tools_per_specialist: 8

@@ -766,12 +766,23 @@ def test_specialists_run_the_react_loop(tmp_path: Path):
 
 
 # ============================================================ config wiring
-def test_config_J_turns_everything_on_and_matches_F_surface():
+def test_config_J_ships_plan_and_react_but_not_the_crew():
     on = load_config(CONFIGS_DIR / "J_combined.yaml").architecture
     off = load_config(CONFIGS_DIR / "F_full_four_in_one.yaml").architecture
-    assert on.plan_execute.enabled and on.react.enabled and on.multi_agent.enabled
+    assert on.plan_execute.enabled and on.react.enabled
     assert on.plan_execute.include_world_context and on.plan_execute.replan_on_compile_drop
-    assert on.multi_agent.min_domains == 2
+    # The crew is retired as a default tier. Its only measured justification
+    # (+9pp reject-case behavior_success) came from a 33-case subset where 8
+    # cases flip between identical reps — a 24pp noise band — so it does not
+    # survive. Its cost is real and reproducible: +31% input tokens, and
+    # crew-off scored better on every metric that still holds (64.2% vs 62.7%
+    # task_success at 4,536 vs 6,411 tokens). The tier and its tests stay; only
+    # the default changed.
+    assert on.multi_agent.enabled is False
+    # ReAct keeps observation compression; dedupe and repair hints are retired —
+    # both fired 0 times across three 106-case sweeps on two models.
+    assert on.react.dedupe_repeat_actions is False
+    assert on.react.repair_hints is False
     assert not (off.plan_execute.enabled or off.react.enabled or off.multi_agent.enabled)
     # J matches F on the first four architecture levers...
     assert (
