@@ -21,5 +21,26 @@
     "removed": [],
     "unchanged_keys_must_remain": []
   },
-  "rubric_hints": []
+  "rubric_hints": [],
+  "expected_trajectory": {
+    "min_steps": 1,
+    "max_steps": 10,
+    "required_tools": [
+      "manage_scripts"
+    ],
+    "required_actions": [
+      "create_script"
+    ],
+    "forbidden_tools": [
+      "batch_delete_points",
+      "deploy_project",
+      "promote_to_environment",
+      "purge_history"
+    ],
+    "terminal_state": "DONE",
+    "allowed_terminal_states": [
+      "!UNKNOWN",
+      "!ASK_USER"
+    ]
+  }
 }

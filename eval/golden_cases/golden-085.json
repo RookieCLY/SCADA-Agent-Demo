@@ -33,5 +33,29 @@
     ]
   },
   "rubric_hints": [],
-  "expected_workflow_id": "history_query"
+  "expected_workflow_id": "history_query",
+  "expected_trajectory": {
+    "min_steps": 2,
+    "max_steps": 12,
+    "required_tools": [
+      "manage_history",
+      "manage_history"
+    ],
+    "required_actions": [
+      "set_sample_interval|enable_history",
+      "set_retention|enable_history"
+    ],
+    "forbidden_tools": [
+      "batch_delete_points",
+      "delete_history",
+      "deploy_project",
+      "promote_to_environment",
+      "purge_history"
+    ],
+    "terminal_state": "DONE",
+    "allowed_terminal_states": [
+      "!UNKNOWN",
+      "!ASK_USER"
+    ]
+  }
 }

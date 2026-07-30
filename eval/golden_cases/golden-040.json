@@ -12,5 +12,23 @@
     "unchanged_keys_must_remain": []
   },
   "rubric_hints": [],
-  "expected_alternative": "应追问点位名称、类型、单位和量程"
+  "expected_alternative": "应追问点位名称、类型、单位和量程",
+  "expected_trajectory": {
+    "min_steps": 0,
+    "max_steps": 8,
+    "required_tools": [],
+    "required_actions": [],
+    "forbidden_tools": [
+      "batch_create_points",
+      "batch_delete_points",
+      "create_point",
+      "deploy_project",
+      "promote_to_environment",
+      "purge_history"
+    ],
+    "terminal_state": "DONE",
+    "allowed_terminal_states": [
+      "!UNKNOWN"
+    ]
+  }
 }

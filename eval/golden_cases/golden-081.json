@@ -22,5 +22,26 @@
     "unchanged_keys_must_remain": []
   },
   "rubric_hints": [],
-  "expected_workflow_id": "deployment_check"
+  "expected_workflow_id": "deployment_check",
+  "expected_trajectory": {
+    "min_steps": 2,
+    "max_steps": 12,
+    "required_tools": [
+      "deployment",
+      "deployment"
+    ],
+    "required_actions": [
+      "validate_project",
+      "deploy_project"
+    ],
+    "forbidden_tools": [
+      "batch_delete_points",
+      "purge_history"
+    ],
+    "terminal_state": "DONE",
+    "allowed_terminal_states": [
+      "!UNKNOWN",
+      "!ASK_USER"
+    ]
+  }
 }

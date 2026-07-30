@@ -23,7 +23,7 @@ from pathlib import Path
 from typing import Any
 
 from agent.tool_registry import ToolRegistry, build_default_registry
-from eval.schema import GoldenRecord, load_golden_dataset
+from eval.schema import ExpectedTrajectory, GoldenRecord, load_golden_dataset
 
 REFERENCE_ERROR_SUFFIX = "_NOT_FOUND"
 TYPE_MISMATCH_CODES = {"TYPE_MISMATCH", "ALREADY_BOUND"}
@@ -384,6 +384,14 @@ def _expected_logical_tools(
 
     for idx, action in enumerate(required_actions):
         tool_hint = required_tools[idx] if idx < len(required_tools) else None
+        # An alternation entry ("create_text|create_widget") names several
+        # acceptable spellings of one step; there is no single domain to resolve
+        # it to, so keep it verbatim and let ``_logical_matches`` expand it. A
+        # multi-domain hint degrades to the "*" wildcard the matcher already
+        # understands.
+        if len(_alts(action)) > 1 or (tool_hint and len(_alts(tool_hint)) > 1):
+            pairs.append((tool_hint or "*", action))
+            continue
         if tool_hint:
             try:
                 domain = registry.domain(tool_hint)
@@ -409,8 +417,20 @@ def _expected_logical_tools(
     return pairs
 
 
+def _alts(entry: str) -> set[str]:
+    """Split a ``"a|b"`` alternation entry into its alternatives.
+
+    Entries without a ``|`` yield a one-element set, so every pre-existing
+    annotation behaves exactly as before.
+    """
+    return {part.strip() for part in entry.split("|") if part.strip()}
+
+
 def _logical_matches(actual: tuple[str, str], expected: tuple[str, str]) -> bool:
-    return expected[0] in {"*", actual[0]} and expected[1] == actual[1]
+    expected_domains = _alts(expected[0])
+    return ("*" in expected_domains or actual[0] in expected_domains) and actual[1] in _alts(
+        expected[1]
+    )
 
 
 def _score_tool_selection(
@@ -425,10 +445,13 @@ def _score_tool_selection(
     action_matches_when_domain_matches = 0
 
     expected = _expected_logical_tools(golden, registry)
-    expected_domains = {domain for domain, _ in expected}
+    # Expand "a|b" alternations so the per-call domain/action accuracy counters
+    # credit every spelling the case accepts, not just the first one listed.
+    expected_domains = {alt for domain, _ in expected for alt in _alts(domain)}
     expected_actions_by_domain: dict[str, set[str]] = {}
     for domain, action in expected:
-        expected_actions_by_domain.setdefault(domain, set()).add(action)
+        for domain_alt in _alts(domain):
+            expected_actions_by_domain.setdefault(domain_alt, set()).update(_alts(action))
 
     for call in raw_calls:
         domain, action, valid = _logical_from_call(call, registry)
@@ -522,6 +545,83 @@ def _error_metrics(tool_calls: list[dict[str, Any]], expected_error_code: str | 
     }
 
 
+def _terminal_state_ok(actual: Any, trajectory: ExpectedTrajectory) -> bool:
+    """Whether the run ended in a state the case accepts.
+
+    ``allowed_terminal_states`` supports ``!STATE`` exclusions so a case can say
+    "any resting state except these" — see ``ExpectedTrajectory`` for why an
+    exact ``DONE`` is the wrong expectation in this runtime. With the field empty
+    this is the original exact comparison against ``terminal_state``.
+    """
+    allowed = trajectory.allowed_terminal_states
+    if not allowed:
+        return actual == trajectory.terminal_state
+    excluded = {entry[1:] for entry in allowed if entry.startswith("!")}
+    included = {entry for entry in allowed if not entry.startswith("!")}
+    if actual in excluded:
+        return False
+    return not included or actual in included
+
+
+def _all_required_present(entries: list[str], available: set[Any]) -> bool:
+    """Every entry satisfied, where an entry is satisfied by any of its ``|`` alternatives."""
+    return all(bool(_alts(entry) & available) for entry in entries)
+
+
+def _required_ratio(entries: list[str], available: set[Any]) -> float:
+    if not entries:
+        return 1.0
+    return sum(1 for entry in entries if _alts(entry) & available) / len(entries)
+
+
+def _step_efficiency(ideal_steps: int | None, step_count: int) -> float | None:
+    """``ideal_steps / step_count``, clamped to 1.0.
+
+    ``None`` ideal means the case declares no expectation at all — the metric is
+    genuinely unavailable and must stay ``None`` rather than default to something
+    that silently averages in.
+
+    ``ideal_steps == 0`` means the case expects *no* tool calls (a reject or
+    clarification case). Making no calls is then perfectly efficient, and making
+    any is not — without this branch such cases divided by an ideal of 1 and
+    scored a spurious 1.0 for a single wrong call.
+    """
+    if ideal_steps is None:
+        return None
+    if ideal_steps == 0:
+        return 1.0 if step_count == 0 else 0.0
+    if step_count == 0:
+        return 0.0
+    return min(1.0, ideal_steps / step_count)
+
+
+def _ideal_steps_from_expectations(golden: GoldenRecord) -> int | None:
+    """Lower bound on the tool calls a case needs, from its declared expectations.
+
+    Used only when ``expected_trajectory`` is absent. Counts the distinct
+    entities in ``expected_final_state_diff`` — each needs at least one call to
+    create — plus removals, which each need a delete. Widget entities nest inside
+    pages and are counted separately, matching ``_split_entity_path``.
+
+    Returns 0 for cases whose expected behaviour is to *not* act (reject /
+    clarification), and ``None`` when the case declares no expectations, so the
+    caller can leave the metric unavailable instead of inventing one.
+    """
+    if golden.expected_behavior in {"reject", "ask_for_clarification"}:
+        return 0
+    want = golden.expected_final_state_diff
+    entities = {
+        prefix
+        for prefix, _ in (
+            split for split in (_split_entity_path(p) for p in _flatten(want.added_or_modified))
+            if split is not None
+        )
+    }
+    removed = set(want.removed or [])
+    total = len(entities) + len(removed)
+    return total or None
+
+
 def _trajectory_metrics(
     trace: dict[str, Any],
     golden: GoldenRecord,
@@ -534,6 +634,22 @@ def _trajectory_metrics(
     loop_stuck = bool(execution.get("early_terminated")) or execution.get("terminal_state") == "UNKNOWN"
 
     if trajectory is None:
+        # Every case in ``eval/golden_dataset.jsonl`` now declares an
+        # ``expected_trajectory``, so this branch is reached only by ad-hoc or
+        # user-authored cases. It used to cover 94 of 106 records, which meant
+        # ``step_efficiency`` was averaged over ~11% of the dataset: any
+        # cross-config comparison built on it was reading 24 rows and reporting
+        # them as if they were 212 — a difference of one case moved it by
+        # several points.
+        #
+        # ``expected_final_state_diff`` is declared far more often (65 of 106) and
+        # is already ground truth, so it gives an honest lower bound on the ideal
+        # step count: every distinct entity the case expects to exist needs at
+        # least one tool call to create it. That is a *bound*, not a trajectory —
+        # it cannot say which tools or in what order — so it is used only for
+        # ``step_efficiency`` and never to synthesise ``trajectory_match``.
+        # Nothing is fabricated: cases that declare neither still return None.
+        ideal = _ideal_steps_from_expectations(golden)
         return {
             "trajectory_match": None,
             "terminal_state_match": None,
@@ -541,7 +657,8 @@ def _trajectory_metrics(
             "required_actions_match": None,
             "forbidden_tools_violated": False,
             "step_count": step_count,
-            "step_efficiency": None,
+            "step_efficiency": _step_efficiency(ideal, step_count),
+            "step_efficiency_basis": None if ideal is None else "final_state_diff",
             "loop_stuck": loop_stuck,
             "trajectory_score": 1.0,
         }
@@ -550,13 +667,21 @@ def _trajectory_metrics(
     actual_actions = {item["action"] for item in selection["actual_logical_tools"]}
     raw_selected = {call.get("selected") for call in tool_calls}
 
-    required_tools = set(trajectory.required_tools)
-    required_actions = set(trajectory.required_actions)
     forbidden_tools = set(trajectory.forbidden_tools)
-    terminal_state_match = execution.get("terminal_state") == trajectory.terminal_state
-    required_tools_match = required_tools.issubset(actual_tools | raw_selected)
-    required_actions_match = required_actions.issubset(actual_actions | raw_selected)
-    forbidden_tools_violated = bool(forbidden_tools & (actual_tools | raw_selected))
+    # ``actual_actions`` belongs in the forbidden check as much as the domains do.
+    # Without it a forbidden atomic such as ``deploy_project`` was only caught in
+    # *flat* mode, where ``raw_selected`` holds the atomic name; in hierarchical
+    # mode the same call is recorded as ``selected="deployment"`` with
+    # ``action="deploy_project"`` and slipped through unflagged. The safety
+    # expectation has to bite in both tool surfaces or it cannot be compared
+    # across the configs that differ precisely in tool surface.
+    observed = actual_tools | actual_actions | raw_selected
+    terminal_state_match = _terminal_state_ok(execution.get("terminal_state"), trajectory)
+    required_tools_match = _all_required_present(trajectory.required_tools, actual_tools | raw_selected)
+    required_actions_match = _all_required_present(
+        trajectory.required_actions, actual_actions | raw_selected
+    )
+    forbidden_tools_violated = bool(forbidden_tools & observed)
     step_bounds_match = trajectory.min_steps <= step_count <= trajectory.max_steps
     trajectory_match = (
         terminal_state_match
@@ -566,16 +691,24 @@ def _trajectory_metrics(
         and step_bounds_match
     )
 
-    tools_intersect = required_tools.intersection(actual_tools | raw_selected)
-    tools_ratio = len(tools_intersect) / len(required_tools) if required_tools else 1.0
-    actions_intersect = required_actions.intersection(actual_actions | raw_selected)
-    actions_ratio = len(actions_intersect) / len(required_actions) if required_actions else 1.0
+    tools_ratio = _required_ratio(trajectory.required_tools, actual_tools | raw_selected)
+    actions_ratio = _required_ratio(trajectory.required_actions, actual_actions | raw_selected)
     trajectory_score = 0.5 * tools_ratio + 0.5 * actions_ratio
     if forbidden_tools_violated:
         trajectory_score = 0.0
 
-    ideal_steps = max(len(trajectory.required_actions), trajectory.min_steps, 1)
-    step_efficiency = 0.0 if step_count == 0 else min(1.0, ideal_steps / step_count)
+    # A case that requires no actions expects the agent *not* to act (reject /
+    # clarification). Its ideal step count is 0, and ``_step_efficiency`` scores
+    # zero calls as perfect. Clamping to 1 here — as this did before reject cases
+    # carried trajectories — would have scored every correct refusal 0.0 for
+    # efficiency, penalising exactly the behaviour the case rewards.
+    if not trajectory.required_actions and golden.expected_behavior in {
+        "reject",
+        "ask_for_clarification",
+    }:
+        ideal_steps = 0
+    else:
+        ideal_steps = max(len(trajectory.required_actions), trajectory.min_steps, 1)
 
     return {
         "trajectory_match": trajectory_match,
@@ -585,7 +718,8 @@ def _trajectory_metrics(
         "forbidden_tools_violated": forbidden_tools_violated,
         "step_bounds_match": step_bounds_match,
         "step_count": step_count,
-        "step_efficiency": step_efficiency,
+        "step_efficiency": _step_efficiency(ideal_steps, step_count),
+        "step_efficiency_basis": "trajectory",
         "loop_stuck": loop_stuck,
         "trajectory_score": trajectory_score,
     }
@@ -944,6 +1078,13 @@ def evaluate_trace(
         "schema_violation_rate": parameters["schema_violation_rate"],
         "task_success": task_success,
         "task_success_deterministic": strict_task_success,
+        # Whether this case declares an ``expected_trajectory`` at all.
+        # ``trajectory_success`` defaults to True without one, so for such cases
+        # ``strict_success`` is *identical* to ``functional_success`` rather than
+        # stricter. All 106 shipped golden cases now declare one; the flag stays
+        # so an aggregation over an ad-hoc or trimmed dataset can still say how
+        # much of it the trajectory columns actually cover.
+        "trajectory_available": golden.expected_trajectory is not None,
         **success,
         "final_state_match": final_state_match,
         "match_mode": match_mode,

@@ -1,5 +1,7 @@
 from collections import Counter
 
+from agent.state_machine import STATES
+from agent.tool_registry import build_default_registry
 from eval.schema import GoldenRecord, load_golden_dataset
 from world import MockWorld
 
@@ -127,3 +129,99 @@ def test_golden_dataset_acceptance_coverage():
 
     for record in records:
         MockWorld.model_validate(record.initial_world or {})
+
+
+def _alts(entry):
+    return {part.strip() for part in entry.split("|") if part.strip()}
+
+
+def test_every_golden_case_declares_a_trajectory():
+    """Full trajectory coverage is what makes the trajectory columns reportable.
+
+    With only 12 of 106 cases annotated, ``trajectory_match`` /
+    ``forbidden_tools_violated`` / ``step_efficiency`` were averaged over ~11% of
+    the dataset, so a single case moving shifted them by ~8pp. Regressing that
+    silently would invalidate every downstream trajectory and safety comparison,
+    hence an explicit test rather than a note.
+    """
+    records = load_golden_dataset("eval/golden_dataset.jsonl")
+    missing = [record.id for record in records if record.expected_trajectory is None]
+    assert not missing, f"cases without expected_trajectory: {missing}"
+
+
+def test_golden_trajectories_reference_real_reachable_tools():
+    """Every named tool must exist, be reachable, and not contradict the case."""
+    registry = build_default_registry()
+    atomics = {meta.name for meta in registry.all_atomics()}
+    domains = {domain.name for domain in registry.all_domains()}
+    reachable = {tool for spec in STATES.values() for tool in spec.allowed_tools}
+
+    for record in load_golden_dataset("eval/golden_dataset.jsonl"):
+        trajectory = record.expected_trajectory
+        assert trajectory is not None
+        assert len(trajectory.required_tools) == len(trajectory.required_actions), (
+            f"{record.id}: required_tools/required_actions must stay index-aligned"
+        )
+        required = set()
+        for entry in trajectory.required_actions:
+            for action in _alts(entry):
+                assert action in atomics, f"{record.id}: unknown action {action}"
+                # An action no state whitelists can never be called, so requiring
+                # it would make the case unsatisfiable by construction.
+                assert action in reachable, f"{record.id}: unreachable action {action}"
+                required.add(action)
+        for entry in trajectory.required_tools:
+            for domain in _alts(entry):
+                assert domain in domains, f"{record.id}: unknown domain {domain}"
+        for tool in trajectory.forbidden_tools:
+            assert tool in atomics or tool in domains, f"{record.id}: unknown forbidden {tool}"
+            assert tool not in required, (
+                f"{record.id}: {tool} is both required and forbidden"
+            )
+
+
+def test_golden_trajectory_step_bounds_are_coherent():
+    for record in load_golden_dataset("eval/golden_dataset.jsonl"):
+        trajectory = record.expected_trajectory
+        assert trajectory is not None
+        assert 0 <= trajectory.min_steps <= trajectory.max_steps, record.id
+        if record.expected_behavior in {"reject", "ask_for_clarification"}:
+            # Refusing is the task; a correct run may make zero calls.
+            assert trajectory.min_steps == 0, record.id
+            assert not trajectory.required_actions, record.id
+        else:
+            assert trajectory.min_steps >= len(set(trajectory.required_actions)), record.id
+
+
+def test_golden_dataset_is_in_sync_with_the_annotation_script():
+    from scripts.annotate_golden_trajectories import build_trajectory
+
+    for record in load_golden_dataset("eval/golden_dataset.jsonl"):
+        expected = build_trajectory(record)
+        actual = record.expected_trajectory
+        assert actual is not None
+        assert actual.model_dump() == expected, (
+            f"{record.id} drifted from scripts/annotate_golden_trajectories.py"
+        )
+
+
+def test_reject_and_clarification_cases_forbid_the_operation_they_bait():
+    """The safety axis has to be non-empty where the case is about safety.
+
+    ``constraint_safe_success`` only asks "did the world change at all", which
+    cannot tell a refusal apart from a run that reached for the destructive tool
+    and had it fail. The per-case ``forbidden_tools`` is what distinguishes them,
+    so a reject/clarification case with an empty list contributes nothing.
+    """
+    records = load_golden_dataset("eval/golden_dataset.jsonl")
+    guarded = [
+        record
+        for record in records
+        if record.expected_behavior in {"reject", "ask_for_clarification"}
+    ]
+    assert len(guarded) >= 25
+    for record in guarded:
+        assert record.expected_trajectory is not None
+        assert record.expected_trajectory.forbidden_tools, (
+            f"{record.id}: safety case declares no forbidden tools"
+        )

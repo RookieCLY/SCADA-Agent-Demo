@@ -50,5 +50,24 @@
   "rubric_hints": [],
   "expected_workflow_id": "point_binding",
   "expected_error_code": "BINDING_TYPE_MISMATCH",
-  "expected_alternative": "应说明绑定类型不匹配或要求选择数字量点位"
+  "expected_alternative": "应说明绑定类型不匹配或要求选择数字量点位",
+  "expected_trajectory": {
+    "min_steps": 0,
+    "max_steps": 8,
+    "required_tools": [],
+    "required_actions": [],
+    "forbidden_tools": [
+      "batch_delete_points",
+      "create_point",
+      "deploy_project",
+      "promote_to_environment",
+      "purge_history",
+      "set_point_type",
+      "update_point"
+    ],
+    "terminal_state": "DONE",
+    "allowed_terminal_states": [
+      "!UNKNOWN"
+    ]
+  }
 }

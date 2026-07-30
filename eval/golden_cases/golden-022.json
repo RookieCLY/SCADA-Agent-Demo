@@ -39,5 +39,29 @@
     "removed": [],
     "unchanged_keys_must_remain": []
   },
-  "rubric_hints": []
+  "rubric_hints": [],
+  "expected_trajectory": {
+    "min_steps": 1,
+    "max_steps": 14,
+    "required_tools": [
+      "manage_alarms",
+      "manage_alarms"
+    ],
+    "required_actions": [
+      "set_alarm_priority",
+      "set_alarm_priority"
+    ],
+    "forbidden_tools": [
+      "batch_delete_points",
+      "delete_alarm",
+      "deploy_project",
+      "promote_to_environment",
+      "purge_history"
+    ],
+    "terminal_state": "DONE",
+    "allowed_terminal_states": [
+      "!UNKNOWN",
+      "!ASK_USER"
+    ]
+  }
 }

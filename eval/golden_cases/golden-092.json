@@ -20,5 +20,38 @@
     "unchanged_keys_must_remain": []
   },
   "rubric_hints": [],
-  "expected_workflow_id": "pump_station_screen"
+  "expected_workflow_id": "pump_station_screen",
+  "expected_trajectory": {
+    "min_steps": 5,
+    "max_steps": 34,
+    "required_tools": [
+      "manage_pages",
+      "manage_graphics|manage_pages",
+      "manage_graphics|manage_pages",
+      "manage_pages",
+      "manage_points",
+      "manage_points",
+      "manage_alarms"
+    ],
+    "required_actions": [
+      "create_page",
+      "create_pump|create_widget",
+      "create_pump|create_widget",
+      "create_widget",
+      "create_point",
+      "create_point",
+      "create_analog_alarm"
+    ],
+    "forbidden_tools": [
+      "batch_delete_points",
+      "deploy_project",
+      "promote_to_environment",
+      "purge_history"
+    ],
+    "terminal_state": "DONE",
+    "allowed_terminal_states": [
+      "!UNKNOWN",
+      "!ASK_USER"
+    ]
+  }
 }

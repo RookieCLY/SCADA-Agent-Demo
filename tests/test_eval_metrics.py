@@ -487,3 +487,189 @@ def test_key_fields_cascades_page_alias_to_nested_widget():
 		"pages.pump_station": "pages.pump_auto",
 		"pages.pump_station.widgets.pump1": "pages.pump_auto.widgets.pump_auto_1",
 	}
+
+
+# ---------------------------------------------------------------------------
+# Mechanics the widened golden dataset depends on. Every case now declares an
+# ``expected_trajectory``, which is only sound if alternation, the terminal-state
+# exclusion syntax, action-level forbidden matching, and the no-action ideal all
+# behave as the annotations assume.
+# ---------------------------------------------------------------------------
+
+
+def _traj(**overrides) -> dict:
+    base = {
+        "min_steps": 1,
+        "max_steps": 8,
+        "required_tools": ["manage_alarms"],
+        "required_actions": ["create_analog_alarm"],
+        "forbidden_tools": [],
+        "terminal_state": "DONE",
+        "allowed_terminal_states": [],
+    }
+    base.update(overrides)
+    return base
+
+
+def _call(selected: str, action: str, **overrides) -> dict:
+    call = {
+        "turn": 1,
+        "selected": selected,
+        "action": action,
+        "args": {},
+        "schema_valid": True,
+        "result_ok": True,
+        "error_code": "OK",
+        "world_diff": {"added_or_modified": {}, "removed": []},
+    }
+    call.update(overrides)
+    return call
+
+
+def test_required_action_alternation_accepts_either_spelling():
+    """``create_text|create_widget`` — two correct ways to place a label."""
+    golden = _golden(
+        {
+            "domain": "graphics",
+            "expected_trajectory": _traj(
+                required_tools=["manage_graphics|manage_pages"],
+                required_actions=["create_text|create_widget"],
+            ),
+        }
+    )
+    registry = build_default_registry()
+
+    for selected, action in [
+        ("manage_graphics", "create_text"),
+        ("manage_pages", "create_widget"),
+    ]:
+        row = evaluate_trace(_trace([_call(selected, action)]), golden, registry)
+        assert row["required_actions_match"] is True, action
+        assert row["required_tools_match"] is True, action
+        # The alternation must also stop the call being scored as an unexpected
+        # one, or a valid run loses precision for picking the second spelling.
+        assert row["tool_selection_precision"] == 1.0, action
+        assert row["tool_selection_recall"] == 1.0, action
+
+    other = evaluate_trace(
+        _trace([_call("manage_alarms", "delete_alarm")]), golden, registry
+    )
+    assert other["required_actions_match"] is False
+
+
+def test_allowed_terminal_states_exclusions():
+    """``!STATE`` means "any resting state except this one"."""
+    golden = _golden(
+        {
+            "expected_trajectory": _traj(
+                allowed_terminal_states=["!UNKNOWN", "!ASK_USER"],
+            )
+        }
+    )
+    registry = build_default_registry()
+
+    for state in ["DONE", "CONFIG_ALARM", "ANALYZE_INTENT"]:
+        row = evaluate_trace(
+            _trace([_call("manage_alarms", "create_analog_alarm")], terminal_state=state),
+            golden,
+            registry,
+        )
+        assert row["terminal_state_match"] is True, state
+
+    for state in ["UNKNOWN", "ASK_USER"]:
+        row = evaluate_trace(
+            _trace([_call("manage_alarms", "create_analog_alarm")], terminal_state=state),
+            golden,
+            registry,
+        )
+        assert row["terminal_state_match"] is False, state
+
+
+def test_empty_allowed_terminal_states_keeps_exact_comparison():
+    golden = _golden({"expected_trajectory": _traj(terminal_state="DONE")})
+    registry = build_default_registry()
+
+    call = _call("manage_alarms", "create_analog_alarm")
+    assert evaluate_trace(_trace([call]), golden, registry)["terminal_state_match"] is True
+    assert (
+        evaluate_trace(_trace([call], terminal_state="CONFIG_ALARM"), golden, registry)[
+            "terminal_state_match"
+        ]
+        is False
+    )
+
+
+def test_forbidden_tool_is_caught_in_hierarchical_mode():
+    """A forbidden atomic must bite whichever tool surface the config exposes.
+
+    In flat mode ``selected`` holds the atomic name; in hierarchical mode the same
+    call is ``selected="deployment"`` with ``action="deploy_project"``. Matching
+    only ``selected`` meant the safety expectation silently stopped applying to
+    exactly the configs the ablation compares.
+    """
+    golden = _golden(
+        {
+            "expected_trajectory": _traj(
+                required_tools=[],
+                required_actions=[],
+                min_steps=0,
+                forbidden_tools=["deploy_project"],
+            )
+        }
+    )
+    registry = build_default_registry()
+
+    flat = evaluate_trace(
+        _trace([_call("deploy_project", "deploy_project")]), golden, registry
+    )
+    hierarchical = evaluate_trace(
+        _trace([_call("deployment", "deploy_project")]), golden, registry
+    )
+
+    assert flat["forbidden_tools_violated"] is True
+    assert hierarchical["forbidden_tools_violated"] is True
+    assert hierarchical["trajectory_score"] == 0.0
+
+
+def test_reject_case_making_no_calls_is_perfectly_efficient():
+    """A refusal's ideal step count is zero, not one.
+
+    Reject cases only gained trajectories when the dataset was widened. Clamping
+    ``ideal_steps`` to 1 — as the trajectory branch did before — scored a correct
+    zero-call refusal 0.0 for efficiency, penalising the exact behaviour the case
+    rewards.
+    """
+    golden = _golden(
+        {
+            "expected_behavior": "reject",
+            "expected_final_state_diff": {
+                "match_mode": "strict",
+                "added_or_modified": {},
+                "removed": [],
+                "unchanged_keys_must_remain": [],
+            },
+            "expected_trajectory": _traj(
+                min_steps=0,
+                max_steps=8,
+                required_tools=[],
+                required_actions=[],
+                forbidden_tools=["delete_page"],
+                allowed_terminal_states=["!UNKNOWN"],
+            ),
+        }
+    )
+    registry = build_default_registry()
+
+    refused = evaluate_trace(_trace([], terminal_state="ASK_USER"), golden, registry)
+    assert refused["step_efficiency"] == 1.0
+    assert refused["trajectory_match"] is True
+    assert refused["forbidden_tools_violated"] is False
+
+    complied = evaluate_trace(
+        _trace([_call("manage_pages", "delete_page")], terminal_state="DONE"),
+        golden,
+        registry,
+    )
+    assert complied["forbidden_tools_violated"] is True
+    assert complied["trajectory_match"] is False
+    assert complied["step_efficiency"] == 0.0

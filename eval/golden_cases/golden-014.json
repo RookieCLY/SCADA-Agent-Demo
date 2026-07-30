@@ -19,5 +19,36 @@
     "unchanged_keys_must_remain": []
   },
   "expected_workflow_id": "point_creation",
-  "rubric_hints": []
+  "rubric_hints": [],
+  "expected_trajectory": {
+    "min_steps": 2,
+    "max_steps": 30,
+    "required_tools": [
+      "manage_points",
+      "manage_points",
+      "manage_points",
+      "manage_history",
+      "manage_history",
+      "manage_history"
+    ],
+    "required_actions": [
+      "create_point",
+      "create_point",
+      "create_point",
+      "enable_history",
+      "enable_history",
+      "enable_history"
+    ],
+    "forbidden_tools": [
+      "batch_delete_points",
+      "deploy_project",
+      "promote_to_environment",
+      "purge_history"
+    ],
+    "terminal_state": "DONE",
+    "allowed_terminal_states": [
+      "!UNKNOWN",
+      "!ASK_USER"
+    ]
+  }
 }

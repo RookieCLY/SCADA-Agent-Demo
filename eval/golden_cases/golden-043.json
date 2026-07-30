@@ -34,5 +34,28 @@
     ]
   },
   "rubric_hints": [],
-  "expected_workflow_id": "alarm_config"
+  "expected_workflow_id": "alarm_config",
+  "expected_trajectory": {
+    "min_steps": 1,
+    "max_steps": 10,
+    "required_tools": [
+      "manage_alarms"
+    ],
+    "required_actions": [
+      "set_alarm_priority"
+    ],
+    "forbidden_tools": [
+      "batch_delete_points",
+      "delete_alarm",
+      "deploy_project",
+      "disable_alarm",
+      "promote_to_environment",
+      "purge_history"
+    ],
+    "terminal_state": "DONE",
+    "allowed_terminal_states": [
+      "!UNKNOWN",
+      "!ASK_USER"
+    ]
+  }
 }

@@ -51,5 +51,30 @@
     "unchanged_keys_must_remain": []
   },
   "expected_workflow_id": "deployment_check",
-  "rubric_hints": []
+  "rubric_hints": [],
+  "expected_trajectory": {
+    "min_steps": 3,
+    "max_steps": 18,
+    "required_tools": [
+      "manage_pages",
+      "manage_pages",
+      "deployment"
+    ],
+    "required_actions": [
+      "clone_page|create_page",
+      "bind_point|update_widget_binding",
+      "validate_project"
+    ],
+    "forbidden_tools": [
+      "batch_delete_points",
+      "deploy_project",
+      "promote_to_environment",
+      "purge_history"
+    ],
+    "terminal_state": "DONE",
+    "allowed_terminal_states": [
+      "!UNKNOWN",
+      "!ASK_USER"
+    ]
+  }
 }
