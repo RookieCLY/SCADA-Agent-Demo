@@ -109,7 +109,14 @@ def _agent(
             state_machine=StateMachineConfig(enabled=True),
             plan_execute=plan if plan is not None else PlanExecuteConfig(enabled=True),
             react=react if react is not None else ReActConfig(enabled=True),
-            multi_agent=crew if crew is not None else MultiAgentConfig(enabled=True),
+            # ``domain_gate`` now defaults off in production (it fired 22 of 51
+            # escalations on plan *shape* alone, with no observed problem, at
+            # ~+31% tokens). This module exists to exercise the escalation
+            # arbitration itself, so its default opts back in; tests that care
+            # about the production default set it explicitly.
+            multi_agent=crew
+            if crew is not None
+            else MultiAgentConfig(enabled=True, domain_gate=True),
         ),
         safety=safety or SafetyPolicyConfig(),
         model=make_test_model_config(force_mock=True),
@@ -742,6 +749,9 @@ def test_specialists_run_the_react_loop(tmp_path: Path):
     agent = _agent(
         tmp_path, llm,
         plan=PlanExecuteConfig(enabled=False),
+        # Dedupe defaults off in production; this test asserts absorption, so
+        # it opts in explicitly.
+        react=ReActConfig(enabled=True, dedupe_repeat_actions=True),
         crew=MultiAgentConfig(enabled=True, max_specialists=1, critic_retry=False),
     )
     _pin_rank(agent, "create_point")
@@ -763,10 +773,20 @@ def test_config_J_turns_everything_on_and_matches_F_surface():
     assert on.plan_execute.include_world_context and on.plan_execute.replan_on_compile_drop
     assert on.multi_agent.min_domains == 2
     assert not (off.plan_execute.enabled or off.react.enabled or off.multi_agent.enabled)
+    # J matches F on the first four architecture levers...
     assert (
         on.hierarchical_tools, on.tool_rag.enabled, on.workflow.enabled,
-        on.state_machine.enabled, on.resources_separation,
+        on.state_machine.enabled,
     ) == (
         off.hierarchical_tools, off.tool_rag.enabled, off.workflow.enabled,
-        off.state_machine.enabled, off.resources_separation,
+        off.state_machine.enabled,
     )
+    # ...but deliberately diverges on §4.5. Measured W5 (LongCat, 106 cases x 2
+    # reps): F_noresources 53.3% vs F_full 48.6% task_success, and F_full had the
+    # worst accuracy and the highest early-termination (19.3%) of all nine arms
+    # because it spends turns reading. The lever costs accuracy even now that
+    # the read path actually works (W1). F keeps it on — F *is* the paper's
+    # "all four levers" definition and must not be redefined; F_noresources is
+    # the control that isolates it.
+    assert on.resources_separation is False
+    assert off.resources_separation is True

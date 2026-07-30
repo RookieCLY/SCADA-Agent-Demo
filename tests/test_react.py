@@ -259,7 +259,13 @@ def test_repeat_call_is_answered_from_the_scratchpad(tmp_path: Path):
     """The `step_efficiency` win: a model stuck re-issuing the same successful
     call dispatches it exactly once."""
     llm = _RepeatingLLM("create_point", {"tag": "TEMP_201", "type": "analog"})
-    agent = _agent(tmp_path, llm, ReActConfig(enabled=True), max_turns=4)
+    # Opted in explicitly: dedupe now defaults off (measured suppressed_repeats:
+    # 0 on two real models). This test exercises the mechanism, so it asks for
+    # it — and the scripted _RepeatingLLM is the weak model the default is
+    # agnostic about.
+    agent = _agent(
+        tmp_path, llm, ReActConfig(enabled=True, dedupe_repeat_actions=True), max_turns=4
+    )
     record = agent.run("新建点位 TEMP_201", golden_id="react-dedupe", initial_world=_world())
 
     assert llm.calls == 4, "the model kept asking — that is the premise"

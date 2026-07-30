@@ -1,0 +1,80 @@
+name: J_nocrew_norepair
+description: |
+  J_nocrew with the P1 schema *repair* switched off — the control for "did
+  repair trade safety for capability?".
+
+  Rep-0 finding that motivates it: the frozen pre-P1 arm (I_plan_execute) scored
+  97.0% behavior_success on reject-ish cases, while J_nocrew — same structure
+  plus repair — scored 81.8%. Repair converts "could not compile, so refuse"
+  into "repaired, so execute", so it is a plausible cause: the safest arm may
+  simply be the one that fails more often.
+
+  Byte-identical to J_nocrew except `plan_execute.repair_schema_invalid`, so the
+  delta is attributable to repair alone. If repair is the cause, the fix is to
+  gate it by risk — repair a create_point, never a delete_* or a forced deploy.
+
+architecture:
+  hierarchical_tools: true
+  tool_rag:
+    enabled: true
+    top_n: 30
+    top_k: 12
+    alpha_dense: 0.6
+    use_reranker: true
+  workflow:
+    enabled: true
+    yaml_path: workflows
+  state_machine:
+    enabled: true
+  resources_separation: true
+  plan_execute:
+    enabled: true
+    max_replans: 2
+    max_steps: 12
+    reorder_by_dependency: true
+    planner_tool_budget: 60      # detailed schemas for the RAG-ranked head
+    fallback_to_interleaved: true
+    include_world_context: true  # docode-trial fix (golden-019)
+    replan_on_compile_drop: true
+    repair_schema_invalid: false   # <-- THE LEVER UNDER TEST # docode-trial fix (golden-013)
+  react:
+    enabled: true                # loop hygiene for fallback + specialists
+    scratchpad_window: 6
+    max_observation_chars: 320
+    max_observation_items: 5
+    dedupe_repeat_actions: true
+    repair_hints: true
+  multi_agent:
+    enabled: false               # <-- THE LEVER UNDER TEST (J has this on)
+    max_specialists: 3
+    turns_per_specialist: 4
+    tools_per_specialist: 8
+    critic_retry: true
+    min_domains: 2               # crew only for genuinely multi-domain plans
+
+# §4.7 runtime cage. Measured finding: with this OFF, every reject case is
+# prompt-only, and the crew tier (which had no refusal concept) wrote to the
+# world on 3 of 5 escalated reject cases. The cage is the paper's own answer to
+# exactly that failure mode, so J measures it rather than leaving it dormant.
+# NOTE: this makes J differ from F on a fifth dimension — keep G_safety_runtime
+# (= F + cage) as the control when attributing the delta.
+safety:
+  enabled: true
+  runtime_mode: design_time
+  max_destructive_ops: 3
+  rules: null
+
+model:
+  provider: mock
+  name: mock
+  temperature: 0.0
+  max_tokens: 4096
+
+trace:
+  record_llm_io: true
+
+world:
+  backend: memory
+
+repetitions: 5
+seed_base: 42

@@ -424,11 +424,34 @@ class Agent:
                 by_domain.setdefault(domain, [])
                 if action not in by_domain[domain]:
                     by_domain[domain].append(action)
-            return [
+            visible: list[dict[str, Any]] = [
                 {"name": domain, "allowed_actions": actions}
                 for domain, actions in by_domain.items()
-            ], ranked
-        return [{"name": name} for name in ranked], ranked
+            ]
+        else:
+            visible = [{"name": name} for name in ranked]
+
+        # §4.5 gives the read atomics up in exchange for Resources — but the
+        # exchange only happens if ``read_resource`` is actually reachable.
+        # It was described in prose and never emitted as a callable tool, so
+        # the trade was one-way: F/J lost their eyes and got nothing back.
+        # Deliberately *not* added to ``ranked``: the atomic pool gates
+        # dispatch of registry tools, and this one is synthetic (the run loop
+        # intercepts it before dispatch) — putting it there would make it look
+        # like a registry atomic to every downstream consumer, metrics included.
+        uris = self._resource_uris()
+        if uris:
+            visible.append({"name": READ_RESOURCE_TOOL, "uris": uris})
+        return visible, ranked
+
+    def _resource_uris(self) -> list[str]:
+        """Available Resource URI templates, or empty when §4.5 is off."""
+        if (
+            not self.config.architecture.resources_separation
+            or self.resource_registry is None
+        ):
+            return []
+        return [d["uri"] for d in self.resource_registry.describe_for_llm()]
 
     def _render_tool_list(self, tools: list[dict[str, Any]]) -> str:
         """Format the list of visible tools into a markdown string for the system prompt.
@@ -440,10 +463,16 @@ class Agent:
             A formatted string describing the available tools and their actions.
         """
         lines: list[str] = []
+        # The URIs themselves are already enumerated by _render_resource_block;
+        # here it only needs to appear as one more callable entry.
+        read_resource_line = f"- {READ_RESOURCE_TOOL}: 只读查询世界状态(见下方 Resource 列表)"
         if self.config.architecture.hierarchical_tools:
             for tool in tools:
                 name = tool.get("name")
                 if not isinstance(name, str):
+                    continue
+                if name == READ_RESOURCE_TOOL:
+                    lines.append(read_resource_line)
                     continue
                 try:
                     d = self.registry.domain(name)
@@ -463,6 +492,9 @@ class Agent:
             for tool in tools:
                 name = tool.get("name")
                 if not isinstance(name, str):
+                    continue
+                if name == READ_RESOURCE_TOOL:
+                    lines.append(read_resource_line)
                     continue
                 try:
                     m = self.registry.atomic(name)
@@ -1566,7 +1598,9 @@ class Agent:
         if not callable(planner):
             return [], None, False
         tool_list = describe_tools_for_planner(
-            self.registry, pool, max_tools=self.config.architecture.plan_execute.planner_tool_budget
+            self.registry, pool,
+            max_tools=self.config.architecture.plan_execute.planner_tool_budget,
+            typed_hints=self.config.architecture.plan_execute.typed_tool_hints,
         )
         t0 = time.perf_counter()
         try:
@@ -1634,8 +1668,18 @@ class Agent:
         cfg = self.config.architecture.plan_execute
         crew_cfg = self.config.architecture.multi_agent
         pool = self._planner_pool(query)
+        # Truncating the planner's only view of the world is a silent
+        # correctness bug (see summarize_world_for_planner), so count what was
+        # elided and carry it into the plan summary.
+        world_truncation: dict[str, int] = {}
         world_ctx = (
-            summarize_world_for_planner(world) if cfg.include_world_context else None
+            summarize_world_for_planner(
+                world,
+                max_items=cfg.world_context_max_items,
+                truncation=world_truncation,
+            )
+            if cfg.include_world_context
+            else None
         )
         turns = 1
         raw_steps, refusal, supported = self._request_plan(
@@ -1656,6 +1700,7 @@ class Agent:
                 max_steps=cfg.max_steps,
                 reorder=cfg.reorder_by_dependency,
                 refusal=refuse,
+                repair=cfg.repair_schema_invalid,
             )
 
         plan = _compile(raw_steps, refusal)
@@ -1691,6 +1736,10 @@ class Agent:
                 plan, refusal = retry, retry_refusal
             plan.diagnostics.replans = 1
 
+        # Carried on the diagnostics (not a step drop, but the same class of
+        # defect) so every downstream summary reports it via as_dict().
+        plan.diagnostics.world_truncated = dict(world_truncation)
+
         # ---- Escalation on surviving compile drops. If part of the task still
         # cannot compile after the informed replan, executing the shortened
         # plan silently delivers half the task as if it were all of it — the
@@ -1722,7 +1771,7 @@ class Agent:
         # ---- Domain gate: decomposition beats one flat plan once the task
         # spans several domains, and the crew is the decomposition tier. Count
         # registry domains, not states — states are an FSM concern.
-        if plan.steps and crew_cfg.enabled:
+        if plan.steps and crew_cfg.enabled and crew_cfg.domain_gate:
             domains: set[str] = set()
             for step in plan.steps:
                 with suppress(KeyError):

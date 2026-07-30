@@ -22,6 +22,86 @@ from typing import Any, Literal, Protocol
 
 from agent.config import ArchitectureConfig, ModelConfig
 
+# Synthetic tool name for Resource reads (§4.5). Defined here rather than in the
+# orchestrator because the schema builders below must emit a function schema for
+# it, and the orchestrator already imports from this module — the reverse
+# direction would be a cycle. Re-exported by ``agent.orchestrator``.
+READ_RESOURCE_TOOL = "read_resource"
+
+
+# LongCat-2.0 emits tool calls as literal text in a proprietary block instead of
+# populating the OpenAI ``tool_calls`` field:
+#
+#     <longcat_tool_call>manage_points
+#     <longcat_arg_key>action</longcat_arg_key>
+#     <longcat_arg_value>list_points</longcat_arg_value>
+#     </longcat_tool_call>
+#
+# Measured on a 5-case smoke: 5/5 of the interleaved arm's turns carried one of
+# these and were recorded as ``end_turn`` with zero tool calls — the model was
+# acting and the harness discarded all of it. Any function-calling arm scores
+# ~0 on this provider while the Plan-Execute arm (which parses a JSON payload
+# out of message *content*) is unaffected, so an A-vs-J comparison on LongCat
+# measures the parser, not the architecture.
+_LONGCAT_CALL_RE = re.compile(
+    # The body is a *tempered* dot: it may not run across a further opening tag.
+    # A plain ``.*?`` under DOTALL lets an unclosed block (the malformed
+    # ``next_state`` form below) swallow the well-formed call that follows it,
+    # because the first opening tag then pairs with the second block's closing
+    # tag. Refusing to cross an opening tag makes each block match its own.
+    r"<longcat_tool_call>\s*(?P<name>[A-Za-z_][A-Za-z0-9_]*)\s*"
+    r"(?P<body>(?:(?!<longcat_tool_call>).)*?)</longcat_tool_call>",
+    re.DOTALL,
+)
+_LONGCAT_ARG_RE = re.compile(
+    r"<longcat_arg_key>(?P<key>.*?)</longcat_arg_key>\s*"
+    r"<longcat_arg_value>(?P<value>.*?)</longcat_arg_value>",
+    re.DOTALL,
+)
+
+
+def _longcat_arg_value(raw: str) -> Any:
+    """Decode one text-encoded argument value.
+
+    Everything arrives as a string. Only *containers* are JSON-decoded: Pydantic
+    coerces ``"80"`` → ``80`` on its own but cannot turn ``"[1920, 1080]"`` into
+    a list, and blanket ``json.loads`` would corrupt a genuinely string-typed
+    identifier that happens to look numeric (a tag like ``"101"`` would become
+    an int and fail a ``str`` field).
+    """
+    value = raw.strip()
+    if value[:1] in ("[", "{"):
+        try:
+            return json.loads(value)
+        except json.JSONDecodeError:
+            return value
+    return value
+
+
+def _parse_longcat_tool_calls(text: str) -> tuple[list[tuple[str, dict[str, Any]]], str]:
+    """Extract text-encoded tool calls, returning them and the cleaned prose.
+
+    The blocks are stripped from the text so the leftover narration is not fed
+    back to the model as if it were the assistant's whole turn.
+
+    ``next_state`` is skipped: the model also wraps FSM transition requests in
+    this tag (observed as ``<longcat_tool_call>next_state: MANAGE_PAGES``, with
+    a mismatched closing tag). Those are not tool calls — the ``next_state:``
+    regex in ``call()`` owns them — and dispatching one would surface as a
+    spurious unknown-tool OUT_OF_SCOPE.
+    """
+    calls: list[tuple[str, dict[str, Any]]] = []
+    for match in _LONGCAT_CALL_RE.finditer(text):
+        name = match.group("name")
+        if name == "next_state":
+            continue
+        args = {
+            arg.group("key").strip(): _longcat_arg_value(arg.group("value"))
+            for arg in _LONGCAT_ARG_RE.finditer(match.group("body"))
+        }
+        calls.append((name, args))
+    return calls, _LONGCAT_CALL_RE.sub("", text).strip()
+
 
 @lru_cache(maxsize=2048)
 def _cached_json_schema(model_cls: type) -> dict[str, Any]:
@@ -481,6 +561,8 @@ class OpenAICompatibleLLM:
         self._messages: list[dict[str, Any]] = []
         self._pending_tool_ids: list[tuple[str, str]] = []
         self._first_call = True
+        # Counter for ids synthesized for text-narrated tool calls.
+        self._synth_call_seq = 0
         # Assembled domain-tool schemas are static per (domain, allowed-actions)
         # set but were rebuilt (oneOf branches + doc string) on every turn.
         # Cache them; callers treat the result as read-only (same contract as
@@ -497,6 +579,7 @@ class OpenAICompatibleLLM:
         self._messages = []
         self._pending_tool_ids = []
         self._first_call = True
+        self._synth_call_seq = 0
 
     def select_workflow(
         self, query: str, options: list[dict[str, str]]
@@ -607,6 +690,10 @@ class OpenAICompatibleLLM:
         if self.registry is None:
             return out
         for n in names:
+            # ``read_resource`` is synthetic — it has no registry entry. The
+            # caller appends its schema separately via _read_resource_schema.
+            if n == READ_RESOURCE_TOOL:
+                continue
             try:
                 a = self.registry.atomic(n)
             except KeyError:
@@ -623,6 +710,38 @@ class OpenAICompatibleLLM:
             )
         return out
 
+    def _read_resource_schema(self, uris: list[str] | None) -> dict[str, Any]:
+        """Function schema for the ``read_resource`` pseudo-tool (§4.5).
+
+        Without this the model was told in prose that Resources existed and
+        given no way to reach them — ``resource_reads`` was 0 across every run.
+
+        The ``uri`` ``enum`` is the load-bearing part: it stops the model
+        inventing URIs no template matches, the same way ``allowed_actions``
+        keeps domain tools from reaching state-forbidden sub-actions.
+        """
+        return {
+            "type": "function",
+            "function": {
+                "name": READ_RESOURCE_TOOL,
+                "description": (
+                    "只读查询世界状态。在写入前先用它确认实体是否存在、"
+                    "以及它们的当前字段，不会修改任何东西。"
+                ),
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "uri": {
+                            "type": "string",
+                            "description": "要读取的 Resource URI",
+                            "enum": list(uris or []),
+                        }
+                    },
+                    "required": ["uri"],
+                },
+            },
+        }
+
     def _domain_tool_schemas(self, tools: list[dict[str, Any]]) -> list[dict[str, Any]]:
         """Hierarchical: one tool per domain with a filtered action union.
 
@@ -638,6 +757,9 @@ class OpenAICompatibleLLM:
         for tool in tools:
             name = tool.get("name")
             if not isinstance(name, str):
+                continue
+            if name == READ_RESOURCE_TOOL:
+                out.append(self._read_resource_schema(tool.get("uris")))
                 continue
             try:
                 d = self.registry.domain(name)
@@ -805,9 +927,20 @@ class OpenAICompatibleLLM:
 
         names = [t.get("name") for t in (visible_tools or []) if t.get("name")]
         if self.hierarchical:
+            # _domain_tool_schemas handles the read_resource descriptor inline.
             tools_schema = self._domain_tool_schemas(visible_tools or [])
         else:
             tools_schema = self._flat_tool_schemas(names)
+            read_desc = next(
+                (
+                    t
+                    for t in (visible_tools or [])
+                    if t.get("name") == READ_RESOURCE_TOOL
+                ),
+                None,
+            )
+            if read_desc is not None:
+                tools_schema.append(self._read_resource_schema(read_desc.get("uris")))
 
         kwargs: dict[str, Any] = {
             "model": self.model_name,
@@ -854,6 +987,36 @@ class OpenAICompatibleLLM:
                         "function": {"name": fn.name, "arguments": fn.arguments or "{}"},
                     }
                 )
+
+        # Fallback for providers that narrate their tool calls instead of
+        # emitting them (see _parse_longcat_tool_calls). Gated on the marker
+        # rather than the provider name so it costs one substring check and
+        # documents itself. Ids are synthesized because the text block carries
+        # none, and the results threaded back next turn need something to
+        # correlate against.
+        if not tool_calls and text and "<longcat_tool_call>" in text:
+            parsed, cleaned = _parse_longcat_tool_calls(text)
+            if parsed:
+                text = cleaned or None
+                assistant_record["content"] = text
+                assistant_record["tool_calls"] = []
+                for name, args in parsed:
+                    self._synth_call_seq += 1
+                    call_id = f"longcat_call_{self._synth_call_seq}"
+                    tool_calls.append(
+                        LLMToolCall(name=name, arguments=args, call_id=call_id)
+                    )
+                    self._pending_tool_ids.append((name, call_id))
+                    assistant_record["tool_calls"].append(
+                        {
+                            "id": call_id,
+                            "type": "function",
+                            "function": {
+                                "name": name,
+                                "arguments": json.dumps(args, ensure_ascii=False),
+                            },
+                        }
+                    )
         self._messages.append(assistant_record)
 
         stop_reason: Literal[
@@ -872,9 +1035,14 @@ class OpenAICompatibleLLM:
         usage = getattr(resp, "usage", None)
         in_tok = getattr(usage, "prompt_tokens", 0) or 0
         out_tok = getattr(usage, "completion_tokens", 0) or 0
+        # Read the transition off the *raw* completion, not the text left after
+        # tool-call blocks were stripped: LongCat has been seen putting the
+        # directive inside one of those tags, and stripping it would silently
+        # strand the FSM in its current state.
         next_state = None
-        if text:
-            m = re.search(r"next_state:\s*([A-Z_]+)", text)
+        transition_source = msg.content or text
+        if transition_source:
+            m = re.search(r"next_state:\s*([A-Z_]+)", transition_source)
             if m:
                 next_state = m.group(1)
 

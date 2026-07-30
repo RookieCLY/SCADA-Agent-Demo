@@ -109,6 +109,11 @@ class PlanDiagnostics:
     reordered: bool = False
     refusal: str | None = None
     replans: int = 0
+    #: Per-collection counts elided from the planner's world snapshot. Not a
+    #: step drop, but the same class of defect: the plan was built against an
+    #: incomplete world, which lands as a final-state mismatch rather than an
+    #: error. Empty on every run where the snapshot fitted.
+    world_truncated: dict[str, int] = field(default_factory=dict)
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -122,6 +127,7 @@ class PlanDiagnostics:
             "reordered": self.reordered,
             "refusal": self.refusal,
             "replans": self.replans,
+            "world_truncated": self.world_truncated,
         }
 
 
@@ -205,7 +211,8 @@ def _pick_state(atomic: str, current: str, preferred: str | None = None) -> str 
 
 # ============================================================ tool catalogue
 def describe_tools_for_planner(
-    registry: ToolRegistry, atomics: list[str], *, max_tools: int = 60
+    registry: ToolRegistry, atomics: list[str], *, max_tools: int = 60,
+    typed_hints: bool = True,
 ) -> str:
     """Render the planning catalogue: name, description, and required fields.
 
@@ -232,10 +239,27 @@ def describe_tools_for_planner(
         # dropping the step and escalating to the crew.
         if required:
             parts.append(
-                "必填: " + ", ".join(f"{f}:{_type_hint(props.get(f, {}))}" for f in required)
+                "必填: " + (
+                    ", ".join(f"{f}:{_type_hint(props.get(f, {}))}" for f in required)
+                    if typed_hints else ", ".join(required)
+                )
             )
-        if optional:
+        if optional and not typed_hints:
             parts.append(f"可选: {', '.join(optional[:8])}")
+        elif optional:
+            # Optional fields stay name-only to keep the catalogue cheap, but a
+            # *shaped* optional is guessed exactly as badly as a required one:
+            # create_page's only non-scalar field, ``resolution``, is optional,
+            # and create_page led the drop table (14). Spend the tokens only on
+            # the fields whose shape can actually be got wrong.
+            rendered: list[str] = []
+            for field_name in optional[:8]:
+                prop = props.get(field_name, {})
+                if prop.get("type") in ("array", "object") or "prefixItems" in prop:
+                    rendered.append(f"{field_name}:{_type_hint(prop)}")
+                else:
+                    rendered.append(field_name)
+            parts.append(f"可选: {', '.join(rendered)}")
         lines.append("; ".join(parts))
     # The remainder is listed by name, grouped per domain. This is the fix for
     # the docode-trial refusal "可用工具清单中没有 validate_project/deploy_project":
@@ -285,26 +309,55 @@ def _type_hint(prop: dict[str, Any]) -> str:
                 return _type_hint(inner[0])
     t = prop.get("type")
     if t == "array":
+        # Fixed-length tuples — position, size, resolution — are declared with
+        # ``prefixItems`` and carry no ``items`` key at all, so the lookup below
+        # used to fall straight through to a bare "array". The planner was told
+        # that a 2-integer tuple was "an array" and guessed, which is precisely
+        # the shape every measured schema drop got wrong (create_widget 11,
+        # create_page 14). Render the arity.
+        prefix = prop.get("prefixItems")
+        lo, hi = prop.get("minItems"), prop.get("maxItems")
+        if prefix:
+            hints = [_type_hint(b) for b in prefix]
+            if len(set(hints)) == 1 and lo == hi and lo:
+                return f"array[{hints[0]}]×{lo}"
+            return "[" + ", ".join(hints) + "]"
         items = prop.get("items") or {}
-        return f"array[{_type_hint(items)}]" if items else "array"
+        if items:
+            base = f"array[{_type_hint(items)}]"
+            return f"{base}×{lo}" if lo == hi and lo else base
+        return "array"
     if t == "object":
         return "object"
     return str(t or "any")
 
 
-def summarize_world_for_planner(world: Any, *, max_items: int = 25) -> str:
+def summarize_world_for_planner(
+    world: Any, *, max_items: int = 60, truncation: dict[str, int] | None = None
+) -> str:
     """Compact snapshot of the existing configuration for the planning prompt.
 
-    Grounds the plan in reality: which points/devices/pages already exist and
-    what type they are, so the planner references real identifiers instead of
-    refusing for lack of grounding or inventing tags the compiler cannot check.
-    Bounded per collection so a large world cannot blow up the planning prompt.
+    Grounds the plan in reality: which points/devices/pages/widgets already
+    exist and what type they are, so the planner references real identifiers
+    instead of refusing for lack of grounding or inventing tags the compiler
+    cannot check.
+
+    This snapshot is the planner's **only** view of the world. §4.5 removes the
+    read tools from the catalogue, and the plan is compiled before execution
+    begins, so no read at execution time can correct a plan built on a partial
+    view — a truncation here surfaces later as "acted, but final state
+    mismatch". Pass *truncation* to have the elided counts recorded per
+    collection; the caller writes them into the trace so a short snapshot is
+    visible rather than silent.
     """
     lines: list[str] = []
 
-    def _clip(names: list[str]) -> str:
+    def _clip(names: list[str], collection: str) -> str:
         shown = names[:max_items]
-        tail = f" …(+{len(names) - len(shown)})" if len(names) > len(shown) else ""
+        elided = len(names) - len(shown)
+        if elided and truncation is not None:
+            truncation[collection] = elided
+        tail = f" …(+{elided})" if elided else ""
         return ", ".join(shown) + tail
 
     points = getattr(world, "points", {}) or {}
@@ -313,22 +366,54 @@ def summarize_world_for_planner(world: Any, *, max_items: int = 25) -> str:
             f"{tag}({getattr(p, 'type', '?')}{',' + p.unit if getattr(p, 'unit', None) else ''})"
             for tag, p in points.items()
         ]
-        lines.append(f"points({len(points)}): {_clip(described)}")
+        lines.append(f"points({len(points)}): {_clip(described, 'points')}")
     devices = getattr(world, "devices", {}) or {}
     if devices:
         described = [
             f"{did}[{', '.join(getattr(d, 'tags', []) or [])}]" for did, d in devices.items()
         ]
-        lines.append(f"devices({len(devices)}): {_clip(described)}")
-    for collection in ("pages", "alarms", "scripts"):
+        lines.append(f"devices({len(devices)}): {_clip(described, 'devices')}")
+
+    # Pages carry their widgets inline. Listing page ids alone left the planner
+    # blind to every widget in the project: ``list_widgets`` was the second most
+    # common tool the flat baseline used and J could not see, and a plan that
+    # re-creates an existing widget (or binds the wrong one) lands as a final
+    # state mismatch. Widget ids are enough to reference one; the type makes the
+    # reference checkable.
+    pages = getattr(world, "pages", {}) or {}
+    if pages:
+        described = []
+        for pid, page in pages.items():
+            widgets = getattr(page, "widgets", {}) or {}
+            widget_items = list(widgets.values()) if isinstance(widgets, dict) else list(widgets)
+            if widget_items:
+                inner = ", ".join(
+                    f"{getattr(w, 'id', '?')}:{getattr(w, 'type', '?')}"
+                    for w in widget_items[:max_items]
+                )
+                extra = len(widget_items) - min(len(widget_items), max_items)
+                if extra and truncation is not None:
+                    truncation[f"widgets[{pid}]"] = extra
+                described.append(
+                    f"{pid}{{{inner}{f' …(+{extra})' if extra else ''}}}"
+                )
+            else:
+                described.append(f"{pid}{{}}")
+        lines.append(f"pages({len(pages)}): {_clip(described, 'pages')}")
+
+    for collection in ("alarms", "scripts"):
         bucket = getattr(world, collection, {}) or {}
         if bucket:
-            lines.append(f"{collection}({len(bucket)}): {_clip(sorted(bucket))}")
+            lines.append(
+                f"{collection}({len(bucket)}): {_clip(sorted(bucket), collection)}"
+            )
     return "\n".join(lines) if lines else "(空项目,尚无任何配置)"
 
 
 # ============================================================ compile
-def _validate_or_repair(meta: Any, arguments: dict[str, Any]) -> Any | None:
+def _validate_or_repair(
+    meta: Any, arguments: dict[str, Any], *, repair: bool = True
+) -> Any | None:
     """Validate a proposed step's arguments, repairing the recoverable cases.
 
     Measured on the 106-case run: **every** one of the top-10 compile drops was
@@ -362,7 +447,7 @@ def _validate_or_repair(meta: Any, arguments: dict[str, Any]) -> Any | None:
         return None
 
     parsed = _try(arguments)
-    if parsed is not None:
+    if parsed is not None or not repair:
         return parsed
 
     repaired = _coerce_nested_json_strings(arguments)
@@ -476,6 +561,7 @@ def compile_plan(
     max_steps: int = 12,
     reorder: bool = True,
     refusal: str | None = None,
+    repair: bool = True,
 ) -> CompiledPlan:
     """Turn a proposed plan into dispatch-ready steps, or drop what cannot run.
 
@@ -524,7 +610,7 @@ def compile_plan(
             continue
 
         meta = registry.atomic(name)
-        parsed = _validate_or_repair(meta, arguments)
+        parsed = _validate_or_repair(meta, arguments, repair=repair)
         if parsed is None:
             diag.dropped_schema_invalid.append(name)
             continue

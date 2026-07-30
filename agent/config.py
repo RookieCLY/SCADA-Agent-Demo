@@ -99,6 +99,27 @@ class PlanExecuteConfig(BaseModel):
     #: trial's golden-013 failed precisely this way: 2 proposed → 1 compiled →
     #: half the task silently missing.
     replan_on_compile_drop: bool = True
+    #: Repair recoverable argument-shape defects (double-encoded JSON, explicit
+    #: nulls, invented keys) instead of dropping the step. Default on — it is
+    #: what moves cases off the expensive escalation path. Switchable because
+    #: repair converts "could not compile, so refuse" into "repaired, so
+    #: execute", and the frozen no-repair arm scored markedly *safer* on reject
+    #: cases (97.0% vs 81.8%); this flag isolates whether repair caused that.
+    repair_schema_invalid: bool = True
+    #: Render argument *types* in the planning catalogue (W2): arity-aware tuple
+    #: hints for required fields, plus shaped optionals. Default on — it cut the
+    #: compile-drop rate. Switchable because W6 showed reverting W3 recovered
+    #: only 10.6 of the 22.7pp reject-safety loss, so something else in W1/W2
+    #: also costs safety; better hints mean fewer accidental refusals, and on
+    #: reject cases an accidental refusal scored as correct behaviour.
+    typed_tool_hints: bool = True
+    #: Per-collection cap on the world snapshot above. This is the *only* view
+    #: of the world the planner gets — §4.5 takes the read tools away, and the
+    #: plan is fixed before execution starts, so no read during execution can
+    #: correct a plan built on a partial snapshot. A silent truncation here
+    #: surfaces later as "acted, but final state mismatch". Raised from the
+    #: original hard-coded 25; truncation is now counted into the trace.
+    world_context_max_items: int = 60
 
 
 class ReActConfig(BaseModel):
@@ -125,9 +146,17 @@ class ReActConfig(BaseModel):
     max_observation_items: int = 5
     #: Answer a repeated identical action from the scratchpad instead of
     #: re-dispatching it (only while no successful world mutation intervened).
-    dedupe_repeat_actions: bool = True
-    #: Append an error-code-keyed repair hint to failed observations.
-    repair_hints: bool = True
+    #: Default **off**: measured ``suppressed_repeats: 0`` across three runs and
+    #: two models — the models simply do not emit the identical repeated action
+    #: this guards against. Kept (not deleted) because that is a statement about
+    #: two strong models, not about the mechanism; re-test on a genuinely weak
+    #: model before concluding it is useless.
+    dedupe_repeat_actions: bool = False
+    #: Append an error-code-keyed repair hint to failed observations. Default
+    #: **off** for the same reason: ``hints_emitted: 0`` over the same runs.
+    #: Observation *compression* — which does measurably work — is unaffected
+    #: by either flag and stays on whenever ReAct is enabled.
+    repair_hints: bool = False
 
 
 class MultiAgentConfig(BaseModel):
@@ -154,8 +183,14 @@ class MultiAgentConfig(BaseModel):
     tools_per_specialist: int = 8
     #: Give an unproductive Specialist one Critic-prompted retry.
     critic_retry: bool = True
-    #: Escalation gate (combined mode only): the crew takes over when the
-    #: compiled plan spans at least this many distinct registry domains.
+    #: Escalate on plan *shape* — the compiled plan spanning ``min_domains``+
+    #: registry domains. Default **off**: it fired 22 of 51 escalations without
+    #: any observed problem, purely because a task touched two domains, and the
+    #: crew costs ~+31% tokens. The other two triggers (``compile_drop`` and
+    #: failure-recovery) key off something that actually went wrong, and they
+    #: are kept. Flag rather than deletion so the arm stays measurable.
+    domain_gate: bool = False
+    #: Domain count at which ``domain_gate`` fires, when enabled.
     #: Single-domain tasks stay on the cheap plan path — the docode trial
     #: showed the crew costing ~13× Plan-Execute tokens, so it must buy
     #: accuracy only where decomposition can actually help.

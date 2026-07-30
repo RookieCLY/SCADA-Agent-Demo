@@ -1,39 +1,18 @@
-name: J_combined
+name: J_nohints
 description: |
-  Config J — F (all four architecture levers) plus **all three agent-loop
-  levers**, arbitrated per task so each tier only runs when the cheaper one
-  declined:
+  J with W2's typed argument hints switched off — isolating whether better
+  schema hints cost reject-case safety.
 
-      query → plan (1 LLM call, full catalogue + world snapshot)
-            ├─ compiles cleanly, single domain → execute compiled steps
-            │                                    (cheapest path: ~9× fewer
-            │                                    tokens than F in the trial)
-            ├─ spans ≥ min_domains registry domains, or execution fails with
-            │  the replan budget spent → Supervisor / Specialists / Critic,
-            │  each Specialist running the ReAct loop (accuracy tier; the
-            │  Blackboard is seeded with whatever the aborted plan built)
-            └─ planner abstains → single ReAct interleaved loop (hygiene tier:
-                                  strictly dominated F in the trial)
+  W6 finding that motivates it: reverting W3 recovered only 10.6 of the 22.7pp
+  reject-safety loss (62.1% -> 72.7%, against a pre-W1-4 baseline of 84.8%), so
+  W3 was not the whole cause. The hypothesis is the same conservatism mechanism
+  the no-repair and frozen-PE arms both showed: better hints mean fewer compile
+  drops, fewer drops mean fewer accidental refusals, and on a reject case an
+  accidental refusal scores as correct behaviour. If so, part of J's "safety"
+  was never a safety mechanism at all.
 
-  The three docode-trial planner fixes are on:
-    * the planner sees the **whole** catalogue — RAG orders it, detailed
-      schemas for the ranked head, name-only (per domain) for the rest — so it
-      can no longer refuse for "missing" tools that merely fell out of top-k;
-    * the planning prompt carries a compact **world snapshot**, so plans are
-      grounded in real identifiers instead of refused for lack of grounding;
-    * a **compile drop triggers one replan** naming exactly what was dropped
-      and why, so a shortened plan is repaired instead of silently executed.
-
-  Cage invariants (all tiers): state changes via legal FSM transitions only,
-  §4.7 policy checked before every dispatch, POLICY_DENIED is final (never
-  replanned around, never escalated around), ReAct dedupe sits after the
-  cages, and the crew spends the same global max_turns budget.
-
-  The trace records which tier ran under `loop` (path + trigger), alongside
-  the per-lever `plan` / `react` / `crew` blocks.
-
-  Ablation arms on this branch: F (all loop levers off), I_react, I_plan_execute,
-  I_multi_agent (one lever each), J_combined (all three + arbitration).
+  Byte-identical to J_combined except `plan_execute.typed_tool_hints`, so the
+  delta is attributable to the hints alone.
 
 architecture:
   hierarchical_tools: true
@@ -64,7 +43,8 @@ architecture:
     fallback_to_interleaved: true
     include_world_context: true  # docode-trial fix (golden-019)
     replan_on_compile_drop: true # docode-trial fix (golden-013)
-    repair_schema_invalid: true  # controlled by J_nocrew_norepair
+    repair_schema_invalid: true
+    typed_tool_hints: false   # <-- THE LEVER UNDER TEST  # controlled by J_nocrew_norepair
     # The snapshot is the planner's ONLY view of the world (§4.5 removes the
     # read tools, and the plan is fixed before execution), so a silent
     # truncation lands as "acted, final state mismatch". Raised from 25.
