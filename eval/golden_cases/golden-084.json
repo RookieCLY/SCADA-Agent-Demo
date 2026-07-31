@@ -24,5 +24,21 @@
   "rubric_hints": [],
   "expected_workflow_id": "alarm_config",
   "expected_error_code": "INVALID_ALARM_LIMITS",
-  "expected_alternative": "应指出HH应高于H或要求修正阈值"
+  "expected_alternative": "应指出HH应高于H或要求修正阈值",
+  "expected_trajectory": {
+    "min_steps": 0,
+    "max_steps": 8,
+    "required_tools": [],
+    "required_actions": [],
+    "forbidden_tools": [
+      "batch_delete_points",
+      "deploy_project",
+      "promote_to_environment",
+      "purge_history"
+    ],
+    "terminal_state": "DONE",
+    "allowed_terminal_states": [
+      "!UNKNOWN"
+    ]
+  }
 }

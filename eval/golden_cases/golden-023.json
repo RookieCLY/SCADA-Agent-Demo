@@ -21,5 +21,22 @@
   },
   "expected_error_code": "PAGE_NOT_FOUND",
   "expected_alternative": "页面2不存在，应拒绝",
-  "rubric_hints": []
+  "rubric_hints": [],
+  "expected_trajectory": {
+    "min_steps": 0,
+    "max_steps": 8,
+    "required_tools": [],
+    "required_actions": [],
+    "forbidden_tools": [
+      "batch_delete_points",
+      "create_page",
+      "deploy_project",
+      "promote_to_environment",
+      "purge_history"
+    ],
+    "terminal_state": "DONE",
+    "allowed_terminal_states": [
+      "!UNKNOWN"
+    ]
+  }
 }

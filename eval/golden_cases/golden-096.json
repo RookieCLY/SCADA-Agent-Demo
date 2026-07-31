@@ -32,5 +32,34 @@
   "rubric_hints": [
     "报警查询类任务不应修改World"
   ],
-  "expected_workflow_id": "alarm_config"
+  "expected_workflow_id": "alarm_config",
+  "expected_trajectory": {
+    "min_steps": 1,
+    "max_steps": 8,
+    "required_tools": [
+      "manage_alarms"
+    ],
+    "required_actions": [
+      "list_active_alarms|get_alarm_history"
+    ],
+    "forbidden_tools": [
+      "acknowledge_alarm",
+      "batch_delete_points",
+      "create_analog_alarm",
+      "create_digital_alarm",
+      "delete_alarm",
+      "deploy_project",
+      "disable_alarm",
+      "promote_to_environment",
+      "purge_history",
+      "set_alarm_priority",
+      "shelve_alarm",
+      "suppress_alarm"
+    ],
+    "terminal_state": "DONE",
+    "allowed_terminal_states": [
+      "!UNKNOWN",
+      "!ASK_USER"
+    ]
+  }
 }

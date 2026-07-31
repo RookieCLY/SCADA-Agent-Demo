@@ -12,5 +12,25 @@
     "unchanged_keys_must_remain": []
   },
   "expected_error_code": "POINT_NOT_FOUND",
-  "rubric_hints": ["用户提到物理位置'冷凝器出口'而非具体tag名, agent可以追问对应哪个点位tag, 因此用fail_or_clarify而非reject"]
+  "rubric_hints": [
+    "用户提到物理位置'冷凝器出口'而非具体tag名, agent可以追问对应哪个点位tag, 因此用fail_or_clarify而非reject"
+  ],
+  "expected_trajectory": {
+    "min_steps": 0,
+    "max_steps": 8,
+    "required_tools": [],
+    "required_actions": [],
+    "forbidden_tools": [
+      "batch_delete_points",
+      "create_point",
+      "deploy_project",
+      "enable_history",
+      "promote_to_environment",
+      "purge_history"
+    ],
+    "terminal_state": "DONE",
+    "allowed_terminal_states": [
+      "!UNKNOWN"
+    ]
+  }
 }

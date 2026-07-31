@@ -27,5 +27,54 @@
     "unchanged_keys_must_remain": []
   },
   "expected_workflow_id": "chemical_screen",
-  "rubric_hints": []
+  "rubric_hints": [],
+  "expected_trajectory": {
+    "min_steps": 6,
+    "max_steps": 52,
+    "required_tools": [
+      "manage_points",
+      "manage_points",
+      "manage_points",
+      "manage_pages",
+      "manage_graphics|manage_pages",
+      "manage_pages",
+      "manage_pages",
+      "manage_pages",
+      "manage_graphics|manage_pages",
+      "manage_graphics|manage_pages",
+      "manage_graphics|manage_pages",
+      "manage_pages",
+      "manage_pages",
+      "manage_pages",
+      "deployment"
+    ],
+    "required_actions": [
+      "create_point",
+      "create_point",
+      "create_point",
+      "create_page",
+      "create_tank|create_widget",
+      "bind_point",
+      "bind_point",
+      "bind_point",
+      "create_gauge|create_widget",
+      "create_gauge|create_widget",
+      "create_gauge|create_widget",
+      "bind_point",
+      "bind_point",
+      "bind_point",
+      "validate_project"
+    ],
+    "forbidden_tools": [
+      "batch_delete_points",
+      "deploy_project",
+      "promote_to_environment",
+      "purge_history"
+    ],
+    "terminal_state": "DONE",
+    "allowed_terminal_states": [
+      "!UNKNOWN",
+      "!ASK_USER"
+    ]
+  }
 }
