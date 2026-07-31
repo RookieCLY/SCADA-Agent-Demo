@@ -707,6 +707,16 @@ def _trajectory_metrics(
         "ask_for_clarification",
     }:
         ideal_steps = 0
+    elif not trajectory.required_actions and golden.expected_behavior == "fail_or_clarify":
+        # ``fail_or_clarify`` admits *two* correct strategies with different step
+        # counts: attempt the operation and report the error the case expects, or
+        # ask before acting. There is no single ideal, and picking one scores the
+        # other strategy 0.0 — with ``max(..., 1)`` below, a correct clarification
+        # on golden-044 / -076 scored 0.0 while the arm that clarified most was
+        # the one being measured. These cases also decline to constrain the count
+        # themselves (``min_steps: 0, max_steps: 8``), so the honest answer is the
+        # one ``_step_efficiency`` already defines for "no expectation declared".
+        ideal_steps = None
     else:
         ideal_steps = max(len(trajectory.required_actions), trajectory.min_steps, 1)
 
@@ -719,7 +729,9 @@ def _trajectory_metrics(
         "step_bounds_match": step_bounds_match,
         "step_count": step_count,
         "step_efficiency": _step_efficiency(ideal_steps, step_count),
-        "step_efficiency_basis": "trajectory",
+        # Mirrors the ``final_state_diff`` branch: no basis is recorded when the
+        # case declares no ideal, so a row with a null efficiency says *why*.
+        "step_efficiency_basis": None if ideal_steps is None else "trajectory",
         "loop_stuck": loop_stuck,
         "trajectory_score": trajectory_score,
     }
