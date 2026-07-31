@@ -102,6 +102,29 @@ def test_set_alarm_priority_actually_writes(registry):
     assert result.world_diff["added_or_modified"] == {"alarms.ALM1.priority": "high"}
 
 
+def test_every_priority_the_tool_accepts_keeps_the_world_valid(registry):
+    """A writable field's vocabulary must match the model it writes into.
+
+    ``set_alarm_priority`` also accepted ``critical`` while ``Alarm.priority`` is
+    ``high|medium|low``. That was harmless only while the tool wrote nothing —
+    once it writes, and with ``validate_assignment`` off, the bad value lands
+    unchecked and the world fails to re-validate on the next serialisation.
+    """
+    from world import MockWorld as _MockWorld
+
+    schema = registry.atomic("set_alarm_priority").args_model.model_json_schema()
+    accepted = schema["properties"]["priority"]["enum"]
+    meta = registry.atomic("set_alarm_priority")
+    for value in accepted:
+        world = MockWorld()
+        world.points["T1"] = Point(tag="T1", type="analog")
+        world.alarms["ALM1"] = Alarm(id="ALM1", tag="T1", type="analog",
+                                     high_limit=80.0, low_limit=0.0, priority="medium")
+        assert meta.handler.run(meta.args_model(alarm_id="ALM1", priority=value), world).ok
+        # the round-trip is what a snapshot, a deep copy and the tracer all do
+        _MockWorld.model_validate(world.model_dump())
+
+
 def test_set_alarm_priority_still_reports_a_missing_alarm(registry):
     world = MockWorld()
     meta = registry.atomic("set_alarm_priority")
@@ -135,5 +158,5 @@ def test_mutating_alarm_tools_report_a_diff_when_they_succeed(registry):
                                  high_limit=80.0, low_limit=0.0, priority="medium")
 
     meta = registry.atomic("set_alarm_priority")
-    result = meta.handler.run(meta.args_model(alarm_id="ALM1", priority="critical"), world)
+    result = meta.handler.run(meta.args_model(alarm_id="ALM1", priority="high"), world)
     assert result.ok and result.world_diff, "ok() with no world_diff is a silent no-op"

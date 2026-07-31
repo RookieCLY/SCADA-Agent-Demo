@@ -486,7 +486,14 @@ class UnshelveAlarm(MockTool):
 class SetAlarmPriorityArgs(BaseModel):
     action: Literal["set_alarm_priority"] = "set_alarm_priority"
     alarm_id: str
-    priority: Literal["low", "medium", "high", "critical"]
+    #: Must match ``world.Alarm.priority`` and the two alarm-creating tools, which
+    #: are all ``high|medium|low``. This alone also accepted ``critical``, which was
+    #: harmless only while ``run`` wrote nothing: once it writes, and with
+    #: ``validate_assignment`` off on the model, ``critical`` lands in the field
+    #: unchecked and the world then fails to re-validate on any serialisation
+    #: round-trip — silent corruption rather than an error. (``list_active_alarms``
+    #: keeps ``critical``/``all``; it is a query filter, not a write.)
+    priority: Literal["low", "medium", "high"]
 
 
 class SetAlarmPriority(MockTool):
