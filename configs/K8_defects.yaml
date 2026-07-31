@@ -1,4 +1,37 @@
-name: J_combined
+# ⚠ HISTORICAL ARM — NOT REPRODUCIBLE FROM THE CURRENT TREE.
+# K8 was K7 minus the binding vocabulary, which is now back in the tree.
+# These arms differ by CODE, not only by config, so running this YAML today
+# measures the current tree, not the arm recorded below. Its archived results
+# stay the record of what was measured. Only configs/K7_residue.yaml (== the
+# shipping J_combined) matches the tree as it stands.
+#
+# ARM K8 = shipping J + two proven defect fixes. Nothing else.
+#
+# K8 is K7 minus the binding-vocabulary description. K7 measured 73.9% against
+# J's 72.6% (net +4 run-by-run), but the vocabulary change contributed nothing:
+# across 106x3 the model still wrote `value` 30 times, `running` 3, and invented
+# `click` 4 times — a word the list did not contain. Since that list also mirrored
+# the golden keys' vocabulary, it was the one change needing a fairness
+# disclosure, and it was buying nothing. Dropped, so the final number carries no
+# answer-key caveat at all.
+#
+# What remains are two defects that are wrong regardless of any score:
+#
+#   1. set_alarm_priority silently did nothing. Alarm.priority exists, the module
+#      is not one of the ten declared-stub modules, and its ten sibling tools all
+#      write. Phase 4: 9 successful calls, 0 world_diffs. Eight golden cases assert
+#      alarms.*.priority and golden-022 / golden-043 exist to change an existing
+#      alarm's priority, so they could not pass. After the fix: 9 successful calls,
+#      9 world_diffs, and golden-022 passes in 3 of 3 reps.
+#
+#   2. max_steps 12 truncated correct plans. Phase 4 had 14 runs where the planner
+#      proposed a good plan and the compiler discarded the tail at the ceiling
+#      (golden-026 proposed 26, golden-069 proposed 28). Raised to 24: truncations
+#      fell from 14 to 3 and the longest compiled plan went from 12 to 24.
+#
+# Control: Jnew in results_w14, same seeds, same dataset, same --max-reruns 0.
+#
+name: K8_defects
 description: |
   Config J — F (all four architecture levers) plus **all three agent-loop
   levers**, arbitrated per task so each tier only runs when the cheaper one
@@ -58,11 +91,12 @@ architecture:
   plan_execute:
     enabled: true
     max_replans: 2
-    # PROMOTED 2026-07-31 from K7 (results_w15, 106 x 6). Raised from 12:
-    # Phase 4 had 14 runs where a *correct* plan was truncated at this ceiling
-    # (golden-026 proposed 26 steps and compiled 12; golden-069 proposed 28) —
-    # the deliberately complex multi-part cases, planned right and then half
-    # discarded. At 24 the truncations fell from 14 to 3.
+    # Raised from 12. Measured in Phase 4: 14 runs had a *correct* plan
+    # truncated at this ceiling — golden-026 proposed 26 steps and compiled 12
+    # (dropped_over_budget 15), golden-069 proposed 28. These are the
+    # deliberately complex multi-part cases, and the plan tier was planning
+    # them right and then throwing half away. 24 covers every observed plan
+    # except two outliers at 26-28, and still bounds a runaway.
     max_steps: 24
     reorder_by_dependency: true
     planner_tool_budget: 60      # detailed schemas for the RAG-ranked head
@@ -80,65 +114,7 @@ architecture:
     # mismatch". Raised from 25. Note §4.5 is off here, so the read atomics are
     # also back in the catalogue.
     world_context_max_items: 60
-    # PROMOTED 2026-07-31 from the K4 arm (results_w11, 106 x 3, LongCat-2.0).
-    # Lets the planner answer "I need more information" on a channel separate from
-    # the safety refusal; a clarification ends on ASK_USER, a refusal on DONE.
-    # Measured against the identical config without it (K1, results_w10): 69.2%
-    # vs 65.7% task_success, and run-by-run +11 net over 318 runs.
-    #
-    # It fixes the failure it was built for, reproducibly: golden-008 / -024 /
-    # -060 stopped fabricating an identity ("帮忙建个页面" had been planned as
-    # create_page(id="main_page", name="主页面")) in every rep of every arm
-    # carrying this lever.
-    #
-    # The other two W9/W10 levers stay OFF on measurement, not preference:
-    #   replan_may_create_referenced: false (cascade guard) — K2 was the weakest
-    #     arm at 65.1%; it fired 3 times in 318 runs and broke more than it
-    #     saved. The principle survives as a planner-prompt rule instead.
-    #   verify_rounds: 1 — K3 scored 65.4% at +26% input tokens. On corrected
-    #     inputs it does patch (13 patches / 169 rounds, up from 1 / 111), so the
-    #     mechanism works; the patches just do not convert into task success.
     clarify_on_underspecified: true
-    #
-    # ---- Also promoted 2026-07-31, from K7 (results_w15, 106 x 6, LongCat-2.0).
-    # Two code changes, no config surface beyond max_steps above:
-    #   * set_alarm_priority now writes. It returned ok() and changed nothing while
-    #     Alarm.priority exists and its ten sibling tools all write (manage_alarms
-    #     is not one of the ten declared-stub modules). Phase 4: 9 successful
-    #     calls, 0 world_diffs. Eight golden cases assert alarms.*.priority and
-    #     golden-022 / golden-043 change an existing alarm's priority, so they
-    #     could not pass. After: 9/9 diffs, golden-022 passes 3 of 3.
-    #   * bind_point.property documents the conventional vocabulary — see the
-    #     disclosure in tools/manage_pages.py. Measured K7 vs K8 at 6 reps:
-    #     +1.89pp, K7 ahead in 5 of 6 paired reps and behind in none.
-    #
-    # Final standing on one tree, 106 x 3 (K7 at x6): K7 74.1% task_success vs the
-    # flat baseline A at 65.7% and F at 49.1%, at 5,465 input tokens against A's
-    # 223,946 — a 41x cost difference — with step_efficiency 0.903 vs 0.641 and a
-    # paired run-by-run record of +26 against A.
-    #
-    # ---- Also promoted 2026-07-31, from K5 (results_w12, 106 x 3, LongCat-2.0).
-    # No config surface: three unconditional code fixes, so this arm's settings are
-    # byte-identical to K4 and K4 is the matched control. Measured 73.6% vs K4's
-    # 69.2% task_success, run-by-run +14 (16 fixed / 2 broke), step_efficiency
-    # 0.905 vs 0.876 with the per-rep spread down from 0.057 to 0.005, and *fewer*
-    # tokens (5,373 vs 5,755 in, 669 vs 727 out). Against the flat baseline A it is
-    # +6.1pp with non-overlapping per-rep ranges (A 63.2-71.7, K5 72.6-74.5) and a
-    # run-by-run net of +13. See CLAUDE.md for the three fixes.
-    #
-    # K6 (results_w13) is a recorded non-adoption, not a demonstrated harm:
-    # feeding the compile-drop replan the offending field names scored 72.3% vs
-    # K5's 73.6%, net -4 run-by-run, with the two per-rep ranges overlapping
-    # (K5 72.6-74.5, K6 71.7-73.6) — i.e. no measured difference either way. It
-    # did add golden-093's missing enable_history in 3 of 3 reps. K5 ships because
-    # the ledger is negative and it is the simpler prompt, not because K6 was shown
-    # to be worse. The diagnostic survives in the trace as `schema_invalid_detail`.
-    #
-    # Caveat that applies to every single-case claim in this file: golden-063
-    # measured 2/5 TYPE_MISMATCH vs 3/5 OK across five runs of the *same* config,
-    # seed and tree. LongCat is not deterministic at temperature 0, so a 3-rep
-    # per-case story is not evidence on its own; only the run-by-run aggregates and
-    # the per-rep ranges are.
   react:
     enabled: true                # loop hygiene for fallback + specialists
     scratchpad_window: 6
