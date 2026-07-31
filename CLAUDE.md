@@ -56,6 +56,25 @@ Two further levers exist outside the A–F matrix, added to close gaps between t
 
    **Read every single-case claim above with this caveat.** golden-063 was measured at **2/5 `TYPE_MISMATCH` vs 3/5 `OK` across five runs of the same config, the same seed and the same tree** — LongCat-2.0 is not deterministic at `temperature: 0.0`. A "failed in all 3 reps of X, passed in all 3 of Y" story is producible by chance at that flip rate, so only the run-by-run aggregates over all 318 runs and the per-rep ranges are evidence. An arm's per-rep spread is a floor on the noise, not the whole of it.
 
+   **Significance, from `scripts/compare_arms.py`.** Every number above is a point estimate; these are the tested ones. The tool aggregates reps to a per-case mean first — reps of a case are repeated measures, so treating 318 runs as n=318 overstates n threefold — then pairs per case, bootstraps a CI over cases, and runs a two-sided paired permutation test, Holm-corrected across the arms compared to the reference.
+
+   | arm vs A | Δ | 95% CI | Holm p |
+   |---|---:|---|---:|
+   | K7 (shipping J) | +8.33 | [+1.73, +15.41] | 0.097 |
+   | B | +3.14 | [−0.31, +6.92] | 0.221 |
+   | E | −15.09 | [−24.84, −5.97] | **0.015** |
+   | F | −16.67 | [−26.73, −6.60] | **0.015** |
+   | G | −18.24 | [−28.30, −7.86] | **0.011** |
+   | H | −20.13 | [−30.19, −9.75] | **0.004** |
+
+   Three things follow, and two of them correct claims made earlier in this file:
+
+   - **The robust results are the negative ones.** E, F, G and H are all significantly *worse* than the flat baseline. The four architecture levers without a plan loop measurably hurt; they only pay off once something else owns control flow.
+   - **K7-vs-A depends on framing.** p = 0.019 as a pre-specified primary comparison, 0.097 after Holm across ten arms. State which is meant. Split by subset it is unambiguous: **no-act cases +20.20pp, Holm p = 0.0079**, capability cases +2.97pp, **p = 0.48** — the margin is entirely safety, and capability is a tie.
+   - **"B beats A" is not supportable** (CI spans zero), and the K7-vs-K8 vocabulary result is **p = 0.060**, not the ≈0.03 an earlier hand-run sign test suggested. Both were overstated before the tests existed.
+
+   **§4.7 has never fired.** `POLICY_DENIED` = 0 across ~2,700 runs spanning A, B, F, F_noresources, J, K7, K9 and G. In A–F `safety.enabled` is 0, so the matrix never included the cage at all; where it is enabled it counts destructive operations but denies none — `_deny_bulk_destructive` needs 3+ destructive ops in one run and nothing approaches that, while the forced/unvalidated-deploy rules never fire because the planner's refusal channel stops those upstream. The null check confirms it: **`G_safety_runtime` (= F + the cage) is statistically indistinguishable from F** (−1.57pp, p = 0.27). So the safety margin above is produced by the FSM whitelist and the planner's refusal channel, **not** by the §4.7 runtime policy, which is at present an unexercised backstop. `eval/golden_safety_probe.jsonl` exists to exercise it deliberately; on the first 10-case version the cage did fire and did prevent a world mutation, but at n=10 the outcome difference was p = 1.0.
+
 Related: `state_machine.oos_guidance` / `oos_repeat_limit` control out-of-scope feedback. A blocked call now names the state that exposes the tool and how to reach it, and identical blocked calls are capped before diverting to `ASK_USER` — the H3 result (out-of-scope rate *rising* D→E) came from bare rejections that models simply retried. Set `oos_guidance: false, oos_repeat_limit: 0` to reproduce the old behaviour.
 
 ## Environment & commands
