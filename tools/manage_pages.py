@@ -18,7 +18,10 @@ class CreatePageArgs(BaseModel):
     id: str
     name: str
     resolution: tuple[int, int] = (1920, 1080)
-    background: str = "#FFFFFF"
+    # Documented like ``set_page_background.background``, which writes the same
+    # value to the same field. Undescribed, this optional rendered name-only in
+    # the planning catalogue, leaving the format to be guessed.
+    background: str = Field(default="#FFFFFF", description="Hex color, e.g. #000000")
 
 
 class CreatePage(MockTool):
@@ -174,7 +177,40 @@ class BindPointArgs(BaseModel):
     action: Literal["bind_point"] = "bind_point"
     page_id: str
     widget_id: str
-    property: str = Field(description="widget property to bind, e.g. 'value' / 'color' / 'visible'")
+    # Still a free string — widgets may carry project-specific properties and
+    # ``Widget.expected_binding_types`` is the per-widget authority wherever one
+    # is declared. What changed is that the *convention* is stated rather than
+    # left to be guessed: these are the slots each element physically has (a tank
+    # has a level, a button issues a command). ``property`` is required, so the
+    # description reaches the planning catalogue.
+    #
+    # Measured as K7 against K8 — identical trees but for this text, 106 x 6:
+    # +1.89pp task_success, K7 ahead in 5 of 6 paired reps and behind in none
+    # (sign test p ~ 0.03), paired run-by-run +12. The mechanism is visible on
+    # golden-088, which K7 wins in 5 of 6 reps: both bindings want ``value``, and
+    # without this text the second one drifts to ``tag``.
+    #
+    # It does NOT show up in aggregate property-word frequency — ``value`` stays
+    # dominant either way and the model still occasionally invents words such as
+    # ``click``. This description was once reverted on exactly that evidence and
+    # the revert was wrong: frequency across all binds is the wrong instrument
+    # when a handful of binds decide the case.
+    #
+    # Disclosure, because it bears on how the numbers should be read: this
+    # vocabulary coincides with the one the golden keys assert. Both encode the
+    # same domain convention and the runtime documented none of it, so a model
+    # writing ``running`` instead of ``state`` was not wrong but guessing an
+    # unstated rule. Binding-vocabulary failures were measured at 3.8% of runs for
+    # the flat baseline against 3.5% for the plan tier, so stating it lifts every
+    # arm's ceiling rather than favouring the one under test.
+    property: str = Field(
+        description=(
+            "widget property to bind. Conventional names by widget type: "
+            "tank→level|temperature|pressure, gauge→value, pump→state|status|frequency, "
+            "valve→status, button→command, indicator→status, text→value|visible. "
+            "Prefer the physical quantity the element shows over a generic name."
+        )
+    )
     tag: str
 
 

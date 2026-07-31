@@ -506,7 +506,22 @@ class SetAlarmPriority(MockTool):
     def run(self, args: SetAlarmPriorityArgs, world: MockWorld) -> ToolResult:
         err = _need_alarm(world, args.alarm_id)
         if err: return err
-        return ok(data={"alarm_id": args.alarm_id, "priority": args.priority})
+        # This returned ok() without writing anything. ``Alarm.priority`` exists,
+        # so unlike the stub tools whose target field is simply absent from the
+        # model, this one had somewhere to write and reported a success it had not
+        # performed. In Phase 4 it was called successfully 9 times and produced a
+        # world_diff 0 times, while 8 golden cases assert ``alarms.*.priority`` —
+        # golden-022 and golden-043 exist precisely to change the priority of an
+        # *existing* alarm, and could not pass at all.
+        alarm = world.alarms[args.alarm_id]
+        alarm.priority = args.priority
+        return ok(
+            data={"alarm_id": args.alarm_id, "priority": args.priority},
+            world_diff={
+                "added_or_modified": {f"alarms.{args.alarm_id}.priority": args.priority},
+                "removed": [],
+            },
+        )
 
 
 class SetAlarmMessageArgs(BaseModel):

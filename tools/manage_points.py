@@ -584,13 +584,29 @@ class SetPointArchiveArgs(BaseModel):
 class SetPointArchive(MockTool):
     name = "set_point_archive"
     domain = DOMAIN; action = "set_point_archive"
-    description = "Toggle whether a point's values are archived to history."
+    # Says what it is *not*, because it was measurably mistaken for the tool that
+    # is. This flips a per-point flag; it neither creates nor configures a
+    # historian entry, and a point with no history config still has none
+    # afterwards. Its old description ("archived to history") and its old
+    # examples ("让这个点位存历史" / "开启点位的历史归档") restated
+    # ``enable_history``'s job almost word for word, so Tool RAG ranked this
+    # above the real tool on history queries: golden-093 asked to keep values for
+    # history query and got ``set_point_archive``, which succeeded, wrote nothing,
+    # and left ``histories.ENERGY_KWH`` absent with no error in the trace.
+    description = (
+        "Toggle a point's archive flag. Does NOT create or configure historian "
+        "sampling — use enable_history to start recording a tag's history."
+    )
     args_model = SetPointArchiveArgs
-    examples = ["让这个点位存历史", "stop archiving this tag", "开启点位的历史归档"]
+    examples = ["切换点位的归档标记", "stop archiving this tag", "取消这个点的归档标志"]
 
     @staticmethod
     def intended_entities(args: BaseModel) -> list[str]:  # pyright: ignore[reportArgumentType]
-        return [f"points.{args.tag}.archive"]
+        # ``Point`` has no ``archive`` field and ``run`` writes nothing, so this
+        # named an entity that can never exist. Claiming an intent the tool does
+        # not fulfil is exactly what the cascade detector reads, so it must not
+        # over-declare.
+        return []
     @staticmethod
     def referenced_entities(args: BaseModel) -> list[str]:  # pyright: ignore[reportArgumentType]
         return [f"points.{args.tag}"]
