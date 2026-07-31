@@ -655,10 +655,21 @@ class OpenAICompatibleLLM:
             {"role": "user", "content": query},
         ]
         if feedback:
+            # The retry framing is only correct for *failure* feedback. A
+            # verification round arrives here with feedback that opens
+            # "计划已执行完毕" (the plan has been executed), and prefixing that with
+            # "上一版计划执行失败" put two contradictory statements about the same run
+            # into one message. Feedback carrying its own framing passes through
+            # verbatim.
+            # Imported lazily, mirroring planner.py's own deferred import of this
+            # module, so neither file gains an import-time dependency on the other.
+            from agent.planner import VERIFY_FRAMING_SENTINEL
+
+            carries_own_framing = feedback.lstrip().startswith(VERIFY_FRAMING_SENTINEL)
             messages.append(
                 {
                     "role": "user",
-                    "content": (
+                    "content": feedback if carries_own_framing else (
                         "上一版计划执行失败,请给出修正后的**剩余**步骤计划(同样的 JSON 格式):\n"
                         + feedback
                     ),

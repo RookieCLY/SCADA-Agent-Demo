@@ -120,6 +120,56 @@ class PlanExecuteConfig(BaseModel):
     #: surfaces later as "acted, but final state mismatch". Raised from the
     #: original hard-coded 25; truncation is now counted into the trace.
     world_context_max_items: int = 60
+    #: Let the planner answer "I need more information" on a channel of its own
+    #: (``clarify``) instead of folding it into the safety ``refusal``. Default
+    #: off, in which case the field is *ignored* exactly as an unrecognised key
+    #: was before it existed — deliberately not folded into ``refusal``, which
+    #: gates ``replan_on_compile_drop`` and both crew escalations.
+    #:
+    #: NOTE: "levers off ⇒ archived behaviour" holds for this module but **not**
+    #: for the tree as a whole. ``PLANNER_SYSTEM_PROMPT`` gained the clarify
+    #: instructions, an entity-grounding rule and a destructive-refusal rule, and
+    #: those are unconditional — every plan-tier arm re-run on this code plans
+    #: against a different prompt than the archived runs did. The W9 ``K0`` arm
+    #: measures exactly that difference.
+    #:
+    #: Measured motivation (A vs shipping J, 106×2, LongCat): the planner
+    #: fabricated an identity rather than asking on 4 of the 25 runs A won —
+    #: golden-008 planned ``create_page(id="main_page", name="主页面")`` for the
+    #: bare "帮忙建个页面", golden-060 invented ``SCRIPT_001`` with an
+    #: ``on_event`` trigger for a script whose trigger the user explicitly
+    #: deferred. Each mutated the world on a case whose expected diff is empty.
+    #: The same prompt slot produced the opposite error on golden-018, a
+    #: legitimate request pushed down the safety channel for a missing field.
+    #: One channel cannot carry both answers, and they do not even share a
+    #: terminal state: a refusal ends on DONE, a clarification on ASK_USER.
+    clarify_on_underspecified: bool = False
+    #: Forbid a replan from *creating* an entity that the step it is recovering
+    #: from merely *referenced*. Default off (archived behaviour).
+    #:
+    #: This is the cascade the architecture claims to prevent, re-entered
+    #: through the recovery path: on golden-054 ``query_history`` correctly
+    #: failed ``POINT_NOT_FOUND`` — the error the case expects — and the replan
+    #: "fixed" it by calling ``create_point`` to make the query succeed, on a
+    #: case that forbids ``create_point`` and expects an untouched world. A
+    #: missing referenced entity is a signal to report, not to manufacture.
+    replan_may_create_referenced: bool = True
+    #: Rounds of post-execution verification. 0 (default) is the archived
+    #: open-loop behaviour: the plan is built from a snapshot, executed blind,
+    #: and never checked against what it produced.
+    #:
+    #: This closes the loop that made A win. A acts, reads the result, corrects,
+    #: and converges; the plan tier commits once and never looks. The dominant
+    #: residual failure is exactly that shape — 11 of the 25 runs A won are
+    #: "acted, final state mismatch" with no error anywhere in the trace
+    #: (golden-093 archived a point instead of enabling history, golden-013
+    #: created one of two requested pages). Each is trivially visible by reading
+    #: the world back, and invisible to a plan that never re-reads.
+    #:
+    #: Deliberately bounded: the cost argument for this whole structure is that
+    #: it is O(1) LLM calls, so verification is capped rather than iterated to
+    #: convergence.
+    verify_rounds: int = 0
 
 
 class ReActConfig(BaseModel):

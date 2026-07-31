@@ -21,13 +21,14 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import json
 import math
 import sys
 import time
 from contextlib import suppress
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Protocol
+from typing import Any, NamedTuple, Protocol
 
 from agent.config import ExperimentConfig, load_config
 from agent.dispatcher import dispatch_atomic, dispatch_domain
@@ -43,14 +44,19 @@ from agent.multi_agent import (
     unsatisfied_subtasks,
 )
 from agent.planner import (
+    VERIFY_INSTRUCTION,
+    PlanDiagnostics,
     PlanStep,
+    _identity_known,
     compile_plan,
+    describe_entities_for_verify,
     describe_tools_for_planner,
+    entity_ids,
     parse_plan_payload,
     state_route,
     summarize_world_for_planner,
 )
-from agent.policy import SafetyPolicy, build_policy, is_read_only
+from agent.policy import SafetyPolicy, build_policy, is_destructive, is_read_only
 from agent.react import REACT_PROMPT_BLOCK, ReActScratchpad, action_signature
 from agent.state_machine import INITIAL_STATE, STATES, StateMachine
 from agent.tool_rag import (
@@ -75,6 +81,7 @@ from agent.workflow import (
     load_catalogue,
 )
 from resources import ResourceNotFound, ResourceRegistry, build_default_resource_registry
+from tools._base import REFERENCE_ERROR_CODES
 from world import Device, MockWorld, Point
 from world.memory_backend import deep_copy_world
 
@@ -131,6 +138,50 @@ class CrewOutcome:
     turns: int = 0
     reason: str | None = None
     summary: dict[str, Any] = field(default_factory=dict)
+
+
+#: Verb prefixes that make a tool name destructive regardless of whether the
+#: §4.7 policy set happens to enumerate it.
+#:
+#: ``agent.policy.is_destructive`` is backed by a hand-written 10-name set, and of
+#: the ~40 delete/disable/purge atomics in the registry it flags 10 — ``purge_history``,
+#: ``drop_db_table``, ``delete_user`` and ``unbind_widget_point`` among the misses.
+#: That set is shared with the ``max_destructive_ops`` cage, so widening it there
+#: would change every arm's behaviour and is a separate decision. The patch path
+#: makes a stronger promise than the cage does ("a verification round never
+#: deletes"), so it screens by name as well and the promise holds for tools the
+#: enumerated set has not caught up with.
+_DESTRUCTIVE_NAME_PREFIXES: tuple[str, ...] = (
+    "delete_", "remove_", "purge_", "drop_", "disable_", "revoke_",
+    "unbind_", "reset_", "clear_", "batch_delete", "force_",
+)
+
+
+def _is_destructive_for_patch(atomic: str) -> bool:
+    """Whether a verification patch may not run this tool."""
+    return is_destructive(atomic) or atomic.startswith(_DESTRUCTIVE_NAME_PREFIXES)
+
+
+class _PlanReply(NamedTuple):
+    """What one planning call returned.
+
+    ``refusal`` and ``clarify`` are mutually exclusive in practice and mean
+    different things: "this should not be done" versus "I cannot tell what you
+    want yet". They terminate in different states (DONE vs ASK_USER), so they
+    cannot share a field. A NamedTuple rather than a 4-tuple because three call
+    sites unpack this and a positional mix-up between two adjacent
+    ``str | None`` channels would be silent.
+    """
+
+    steps: list[dict[str, Any]]
+    refusal: str | None
+    clarify: str | None
+    supported: bool
+    #: The call actually returned a payload. False when the backend raised, which
+    #: is otherwise indistinguishable from "the model answered with no steps" —
+    #: and a verification round must not record a timeout as "checked, nothing
+    #: missing", which asserts the opposite of what happened.
+    answered: bool = True
 
 
 @dataclass(frozen=True)
@@ -1587,16 +1638,16 @@ class Agent:
         turn: int,
         feedback: str | None = None,
         world_context: str | None = None,
-    ) -> tuple[list[dict[str, Any]], str | None, bool]:
+    ) -> _PlanReply:
         """Ask the backend for a whole-task plan.
 
-        Returns ``(raw_steps, refusal, supported)``. ``supported`` is False when
-        the backend has no ``make_plan`` hook at all (e.g. ``MockLLM``), which is
-        what makes the lever degrade to the interleaved loop instead of failing.
+        ``supported`` is False when the backend has no ``make_plan`` hook at all
+        (e.g. ``MockLLM``), which is what makes the lever degrade to the
+        interleaved loop instead of failing.
         """
         planner = getattr(self.llm, "make_plan", None)
         if not callable(planner):
-            return [], None, False
+            return _PlanReply([], None, None, False)
         tool_list = describe_tools_for_planner(
             self.registry, pool,
             max_tools=self.config.architecture.plan_execute.planner_tool_budget,
@@ -1610,7 +1661,7 @@ class Agent:
                 # Older three-argument hook (pre world-context) — still valid.
                 payload = planner(query, tool_list, feedback)
         except Exception:
-            return [], None, True
+            return _PlanReply([], None, None, True, answered=False)
         latency = (time.perf_counter() - t0) * 1000
         usage = (payload or {}).get("_usage") or {}
         ctx.log_llm(
@@ -1622,11 +1673,33 @@ class Agent:
                 latency_ms=latency,
                 stop_reason="end_turn",
             ),
-            text=None,
+            # Honour ``trace.record_llm_io`` here as the interleaved loop does.
+            # Hard-coding ``text=None`` meant a plan-tier run recorded tokens and
+            # latency but never the plan itself, so a step dropped
+            # ``schema_invalid`` could not be diagnosed after the fact — the
+            # arguments that failed were the one thing not written down. The
+            # payload minus ``_usage`` *is* the completion for this hook.
+            text=(
+                json.dumps(
+                    {k: v for k, v in payload.items() if k != "_usage"},
+                    ensure_ascii=False, default=str,
+                )
+                if self.config.trace.record_llm_io and isinstance(payload, dict)
+                else None
+            ),
             reasoning=None,
         )
-        steps, refusal = parse_plan_payload(payload)
-        return steps, refusal, True
+        steps, refusal, clarify = parse_plan_payload(payload)
+        if not self.config.architecture.plan_execute.clarify_on_underspecified:
+            # Lever off: *ignore* the field, exactly as code predating it did with
+            # an unrecognised key. It must not be folded into ``refusal``:
+            # ``refusal`` gates ``replan_on_compile_drop`` and both crew
+            # escalations (all spelled ``and not refusal``), so a reply carrying
+            # steps *and* a clarification would silently lose the compile-drop
+            # replan — re-opening the golden-013 "half the task delivered as if it
+            # were all of it" defect through a lever that is supposed to be off.
+            return _PlanReply(steps, refusal, None, True)
+        return _PlanReply(steps, refusal, clarify, True)
 
     def _route_to_state(
         self, sm: StateMachine, ctx: Any, target: str, event_sink: Any
@@ -1682,13 +1755,32 @@ class Agent:
             else None
         )
         turns = 1
-        raw_steps, refusal, supported = self._request_plan(
-            query, pool, ctx, turns, world_context=world_ctx
-        )
-        if not supported:
+        reply = self._request_plan(query, pool, ctx, turns, world_context=world_ctx)
+        raw_steps, refusal, clarify = reply.steps, reply.refusal, reply.clarify
+        if not reply.supported:
             # Backend cannot plan — hand back to the interleaved loop, and do
             # not charge the run for a turn that never happened.
             return PlanOutcome(executed=False, turns=0, summary={"enabled": True, "supported": False})
+
+        # A clarification request outranks whatever else the planner emitted.
+        # Acting on a request whose identity or semantics is unknown is how the
+        # world gets mutated on a case that expected a question, so any step
+        # proposed alongside a clarify is discarded rather than executed.
+        if clarify:
+            self._finish_clarify_state(sm, ctx, event_sink)
+            diag = PlanDiagnostics(proposed=len(raw_steps), compiled=0)
+            diag.clarify = clarify
+            # A clarification is often *caused* by an elided snapshot, so this is
+            # the last place the truncation should go unrecorded.
+            diag.world_truncated = dict(world_truncation)
+            return PlanOutcome(
+                executed=True,
+                completed=True,
+                turns=turns,
+                reason="clarify",
+                summary={"enabled": True, "supported": True, "executed": True,
+                         **diag.as_dict()},
+            )
 
         def _compile(steps: list[dict[str, Any]], refuse: str | None):
             return compile_plan(
@@ -1721,12 +1813,46 @@ class Agent:
             drop_feedback = (
                 "上一版计划中以下步骤无法执行,已被编译器剔除,请修正后重新给出完整计划:\n"
                 + (f"- 工具名不存在: {', '.join(d.dropped_unknown_tool)}\n" if d.dropped_unknown_tool else "")
+                # Deliberately the tool name only. Naming the offending *fields*
+                # was measured as the K6 arm (results_w13) and not adopted: it is
+                # net -4 run-by-run against K5 (7 fixed, 11 broke) at 72.3% vs
+                # 73.6% task_success, and it buys no mean improvement — the two
+                # arms' per-rep ranges overlap (K5 72.6-74.5, K6 71.7-73.6).
+                #
+                # It does something real: golden-093 gained the missing
+                # ``enable_history`` in 3 of 3 reps where K5 had it in 0 of 3.
+                # But the run-by-run ledger is negative and the simpler prompt is
+                # the one with evidence behind it, so K5 ships.
+                #
+                # Do NOT read the REJECT-behaviour drop (90.9% -> 85.9%) as a
+                # safety mechanism: it is carried mostly by golden-063, which was
+                # measured at 2/5 TYPE_MISMATCH vs 3/5 OK across five runs of the
+                # *same* config, seed and tree. LongCat is not deterministic at
+                # temperature 0, so no single-case story from three reps is
+                # evidence on its own.
+                #
+                # The detail is still computed and traced as
+                # ``schema_invalid_detail``; it just does not go back to the model.
                 + (f"- 参数不符合 schema: {', '.join(d.dropped_schema_invalid)}\n" if d.dropped_schema_invalid else "")
                 + (f"- 当前状态机无法到达: {', '.join(d.dropped_unreachable_state)}\n" if d.dropped_unreachable_state else "")
             )
-            retry_steps, retry_refusal, _ = self._request_plan(
+            retry_reply = self._request_plan(
                 query, pool, ctx, turns, drop_feedback, world_context=world_ctx
             )
+            # A clarification on the retry is still a clarification. Dropping it
+            # here made the lever's meaning depend on which turn produced the
+            # reply: honoured on the first call, silently discarded on this one.
+            if retry_reply.clarify:
+                self._finish_clarify_state(sm, ctx, event_sink)
+                plan.diagnostics.clarify = retry_reply.clarify
+                plan.diagnostics.replans = 1
+                plan.diagnostics.world_truncated = dict(world_truncation)
+                return PlanOutcome(
+                    executed=True, completed=True, turns=turns, reason="clarify",
+                    summary={"enabled": True, "supported": True, "executed": True,
+                             **plan.diagnostics.as_dict()},
+                )
+            retry_steps, retry_refusal = retry_reply.steps, retry_reply.refusal
             retry = _compile(retry_steps, retry_refusal)
             # Adopt the retry only if it actually compiled at least as much of
             # the task; otherwise keep the original plan. Either way one replan
@@ -1822,6 +1948,10 @@ class Agent:
         completed = True
         reason: str | None = None
         pending = list(plan.steps)
+        # Everything the *originally approved* plan set out to create. A replan
+        # may re-create any of these (recovering a dropped prerequisite is
+        # legitimate); anything outside this set is an entity nobody asked for.
+        planned_entities = {e for step in plan.steps for e in step.intended}
 
         while pending:
             failure: tuple[PlanStep, Any] | None = None
@@ -1854,16 +1984,58 @@ class Agent:
                 f"{getattr(failed_result, 'error_code', 'UNKNOWN')} "
                 f"{getattr(failed_result, 'error_msg', '') or ''}"
             )
-            raw_steps, refusal, _ = self._request_plan(
+            replan_reply = self._request_plan(
                 query, pool, ctx, turns, feedback, world_context=world_ctx
             )
-            replan = _compile(raw_steps, refusal)
+            # Mid-execution the world is already partly written, so a clarification
+            # here cannot rewind — but it is still the honest reason the run
+            # stopped, and recording it beats reporting "replan_empty".
+            #
+            # It terminates on ASK_USER like every other clarification. Breaking
+            # out instead fell through to ``_finish_plan_state`` and ended the run
+            # on DONE, which claims the task completed and contradicts the
+            # invariant the rest of this lever is built on (refusal → DONE,
+            # clarification → ASK_USER); the golden expectations read the terminal
+            # state directly, so the two are not interchangeable. Returning here
+            # rather than breaking also keeps the clarification away from the crew
+            # escalation below: needing input from the user is not a failure a
+            # second tier can decompose its way out of.
+            if replan_reply.clarify and not replan_reply.steps:
+                plan.diagnostics.clarify = replan_reply.clarify
+                plan.diagnostics.replans = replans
+                self._finish_clarify_state(sm, ctx, event_sink)
+                return PlanOutcome(
+                    executed=True,
+                    completed=False,
+                    turns=turns,
+                    reason="replan_clarify",
+                    summary={
+                        "enabled": True, "supported": True, "executed": True,
+                        "completed": False, **plan.diagnostics.as_dict(),
+                    },
+                )
+            replan = _compile(replan_reply.steps, replan_reply.refusal)
             plan.diagnostics.replans = replans
+            recovery = self._filter_cascade_recovery(
+                replan.steps, failed_step, failed_result, planned_entities, world
+            )
+            if recovery is not replan.steps:
+                plan.diagnostics.dropped_cascade_recovery.extend(
+                    s.tool for s in replan.steps if s not in recovery
+                )
             if not replan.steps:
                 completed = False
                 reason = "replan_empty"
                 break
-            pending = replan.steps
+            if len(recovery) != len(replan.steps):
+                # A recovery that depends on manufacturing the premise is not a
+                # recovery. Stop and let the reference failure be the answer
+                # rather than spending another turn re-running the step that
+                # already failed for a reason nothing here can fix.
+                completed = False
+                reason = "replan_cascade_blocked"
+                break
+            pending = recovery
 
         # ---- Failure escalation: the plan tier is out of budget but the task
         # is not done. Decomposition with fresh, narrower contexts is the next
@@ -1897,6 +2069,18 @@ class Agent:
                 },
             )
 
+        # ---- Close the loop: check what was actually built against the request.
+        # Gated to the one situation it can help and cannot harm — the plan ran
+        # to completion and mutated something. A refusal, a clarification, a
+        # policy denial and a blocked cascade have all already returned above, so
+        # none of them can reach a round whose whole job is to finish the task.
+        if cfg.verify_rounds > 0 and completed and board.entities:
+            turns = self._verify_and_patch(
+                query, world, sm, ctx, event_sink,
+                plan=plan, board=board, pool=pool, world_ctx=world_ctx,
+                executed_signatures=executed_signatures, turns=turns,
+            )
+
         self._finish_plan_state(sm, ctx, event_sink)
         summary = {
             "enabled": True,
@@ -1908,6 +2092,133 @@ class Agent:
         return PlanOutcome(
             executed=True, completed=completed, turns=turns, reason=reason, summary=summary
         )
+
+    def _verify_and_patch(
+        self,
+        query: str,
+        world: MockWorld,
+        sm: StateMachine,
+        ctx: Any,
+        event_sink: AgentEventSink | None,
+        *,
+        plan: Any,
+        board: Blackboard,
+        pool: list[str],
+        world_ctx: str | None,
+        executed_signatures: set[str],
+        turns: int,
+    ) -> int:
+        """Read the world back, ask what the request still lacks, patch it.
+
+        Returns the updated turn count — each verification round is one LLM call
+        and is charged whether or not it produced a patch, because the cost claim
+        for this architecture has to survive its own instrumentation.
+        """
+        cfg = self.config.architecture.plan_execute
+        diag = plan.diagnostics
+        for _ in range(max(0, cfg.verify_rounds)):
+            # Verification is charged against the same global budget as every
+            # other turn. Without this the rounds were simply added on top, so a
+            # plan that had already spent ``max_turns`` could still buy itself
+            # extra LLM calls — the one arm allowed to exceed the budget every
+            # other arm is measured under, which is exactly the comparison the
+            # cost claim rests on.
+            if turns >= self.max_turns:
+                break
+            # What *actually* ran, read off the trace. ``plan.steps`` is the
+            # originally compiled plan: a replan replaces the pending list without
+            # rewriting it, and the execution loop stops at the first failure, so
+            # using it told the verifier that a step which failed had run and that
+            # the replan which succeeded had not — inverting the very comparison
+            # this round exists to make.
+            executed_desc = "\n".join(
+                f"- {call.selected}"
+                f"({json.dumps(call.args, ensure_ascii=False, default=str)})"
+                for call in (ctx.tool_calls or [])
+                if call.result_ok
+            ) or "(无)"
+            # Re-summarise the world *now*. Passing the pre-execution snapshot put
+            # the entities this round is meant to inspect in the prompt as absent
+            # under the heading 【当前世界状态】 while the state block below listed
+            # them as present — two contradictory readings, both pushing the model
+            # to re-propose finished work.
+            fresh_ctx = (
+                summarize_world_for_planner(world, max_items=cfg.world_context_max_items)
+                if cfg.include_world_context
+                else None
+            )
+            feedback = VERIFY_INSTRUCTION.format(
+                executed=executed_desc,
+                state=describe_entities_for_verify(world, board.entities),
+            )
+            turns += 1
+            diag.verify_rounds += 1
+            reply = self._request_plan(
+                query, pool, ctx, turns, feedback, world_context=fresh_ctx
+            )
+            # A verification round is not a place to refuse or to ask: the work is
+            # already done and the world is already mutated. Only steps count.
+            #
+            # "No steps" means clean only if the backend actually answered.
+            # ``_request_plan`` also returns an empty reply when the planning call
+            # raised or the backend cannot plan, and recording a timeout as
+            # "verified, nothing missing" asserts the opposite of what happened.
+            if not reply.steps:
+                diag.verify_clean = (
+                    reply.answered and reply.supported and not reply.refusal
+                )
+                break
+            patch = compile_plan(
+                reply.steps,
+                self.registry,
+                world,
+                allowed_atomics=pool if self.config.architecture.state_machine.enabled else None,
+                start_state=sm.current,
+                max_steps=cfg.max_steps,
+                reorder=cfg.reorder_by_dependency,
+                refusal=None,
+                repair=cfg.repair_schema_invalid,
+            )
+            # A round that proposed steps and lost them all to the compiler is
+            # not the same as one that had nothing to propose, and without this
+            # the two are indistinguishable in the trace.
+            pd = patch.diagnostics
+            diag.dropped_unknown_tool.extend(pd.dropped_unknown_tool)
+            diag.dropped_schema_invalid.extend(pd.dropped_schema_invalid)
+            diag.dropped_unreachable_state.extend(pd.dropped_unreachable_state)
+
+            # Completing a request never requires destroying anything. Dropping
+            # these rather than trusting the prompt keeps the patch path from
+            # becoming a way to reach the operations the §4.7 cage bounds.
+            safe = [s for s in patch.steps if not _is_destructive_for_patch(s.tool)]
+            if len(safe) != len(patch.steps):
+                diag.dropped_verify_destructive.extend(
+                    s.tool for s in patch.steps if _is_destructive_for_patch(s.tool)
+                )
+            if not safe:
+                break
+            applied = 0
+            for step in safe:
+                ok, result = self._execute_plan_step(
+                    step, world, sm, ctx, turns, event_sink, executed_signatures,
+                    board=board,
+                )
+                # ``_execute_plan_step`` returns ``(True, None)`` for a step whose
+                # signature already executed. That is a no-op, not a patch, and
+                # counting it inflated ``verify_patched`` by the re-proposal rate —
+                # letting a round that found nothing report that it fixed something.
+                if ok and result is not None:
+                    applied += 1
+                elif not ok:
+                    # Keep going. A redundant create failing ALREADY_EXISTS used to
+                    # abandon the rest of the patch, and since dependency reordering
+                    # puts creates first, one redundant create was enough to swallow
+                    # every genuine fix behind it.
+                    diag.verify_step_failures += 1
+            diag.verify_patched += applied
+            if applied == 0:
+                break
+        return turns
 
     def _execute_plan_step(
         self,
@@ -1998,6 +2309,76 @@ class Agent:
                 board.record_diff(result.world_diff)
         return result.ok, result
 
+    def _filter_cascade_recovery(
+        self,
+        steps: list[PlanStep],
+        failed_step: PlanStep,
+        failed_result: Any,
+        planned_entities: set[str],
+        world: Any,
+    ) -> list[PlanStep]:
+        """Drop recovery steps that *manufacture* the entity a step referenced.
+
+        The cascade-failure detector exists because a call that references an
+        entity an earlier call should have created is the signature failure of
+        this domain. The recovery path re-enters it from the other side: when
+        ``query_history(tag=NO_HISTORY_POINT)`` correctly fails
+        ``POINT_NOT_FOUND``, a replan that calls ``create_point`` to make the
+        query succeed has not fixed the task — it has invented the premise. On
+        golden-054 that mutated the world on a case whose expected diff is empty
+        and whose forbidden list names ``create_point``, converting a correct
+        error report into an incorrect success.
+
+        The distinction that keeps this from blocking legitimate work: only
+        entities *nobody asked for* are protected. If any step of the original
+        plan intended to create the entity, the user did ask for it and a replan
+        may re-add it — that is ordinary recovery from a dropped prerequisite.
+        Only a reference-class failure (``*_NOT_FOUND``) on an entity the failed
+        step merely read triggers the filter at all.
+        """
+        if self.config.architecture.plan_execute.replan_may_create_referenced:
+            return steps
+        if getattr(failed_result, "error_code", None) not in REFERENCE_ERROR_CODES:
+            return steps
+
+        # Protect *ids*, not exact entity paths. The cascade crosses collections:
+        # ``query_history`` references ``histories.X`` while the recovery that
+        # manufactures the premise creates ``points.X`` — a different path
+        # carrying the same name, so path matching let golden-054's
+        # ``create_point`` straight through.
+        #
+        # ``entity_ids`` returns every id in a path, not the last segment. The
+        # last segment of a deep path is a *field* (``bind_point`` intends
+        # ``pages.p1.widgets.w1.bindings.value``), so a last-segment reading put
+        # ``value`` in ``planned_ids`` and never ``w1`` — which meant the escape
+        # hatch below could not fire for any nested entity, and a recoverable
+        # ``WIDGET_NOT_FOUND`` was aborted with nothing built.
+        planned_ids: set[str] = set()
+        for entity in planned_entities:
+            planned_ids |= entity_ids(entity)
+        protected: set[str] = set()
+        for entity in failed_step.referenced:
+            if entity in failed_step.intended:
+                continue
+            for ident in entity_ids(entity):
+                # An id the approved plan already meant to create, or one that
+                # exists at any depth, is not manufactured premise: the first was
+                # asked for, the second is a missing facet of a real entity (a
+                # point that exists but has no history config).
+                if ident in planned_ids or _identity_known(world, ident):
+                    continue
+                protected.add(ident)
+        if not protected:
+            return steps
+
+        def manufactures_premise(step: PlanStep) -> bool:
+            ids: set[str] = set()
+            for entity in step.intended:
+                ids |= entity_ids(entity)
+            return bool(ids & protected)
+
+        return [s for s in steps if not manufactures_premise(s)]
+
     def _finish_plan_state(
         self, sm: StateMachine, ctx: Any, event_sink: AgentEventSink | None
     ) -> None:
@@ -2008,6 +2389,27 @@ class Agent:
             return
         ctx.exit_state()
         sm.transit("DONE")
+        ctx.enter_state(sm.current)
+        _emit_event(event_sink, "on_state_enter", sm.current)
+
+    def _finish_clarify_state(
+        self, sm: StateMachine, ctx: Any, event_sink: AgentEventSink | None
+    ) -> None:
+        """Close the run on ASK_USER — the terminal a clarification belongs in.
+
+        Distinct from :meth:`_finish_plan_state` on purpose. Landing a
+        clarification on DONE would claim the task was completed, and the golden
+        expectations read the terminal state directly: ``success`` cases exclude
+        ASK_USER (``!ASK_USER``) while clarification cases permit it. Routing
+        here therefore scores an over-eager clarification as the failure it is,
+        rather than hiding it behind a DONE.
+        """
+        if not self.config.architecture.state_machine.enabled:
+            return
+        if sm.is_terminal or not sm.can_transit("ASK_USER"):
+            return
+        ctx.exit_state()
+        sm.transit("ASK_USER")
         ctx.enter_state(sm.current)
         _emit_event(event_sink, "on_state_enter", sm.current)
 
