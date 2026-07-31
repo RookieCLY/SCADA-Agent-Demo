@@ -267,6 +267,20 @@ class SafetyPolicyConfig(BaseModel):
     runtime_mode: Literal["design_time", "operations_time"] = "design_time"
     #: Per-session cap on delete/disable operations; negative disables the cap.
     max_destructive_ops: int = 3
+    #: Treat any tool whose name begins with a destructive verb as destructive,
+    #: instead of only the ten enumerated in ``DESTRUCTIVE_ATOMICS``.
+    #:
+    #: The enumeration covers 10 of the 36 delete/disable/purge/drop atomics in
+    #: the registry, and ``_deny_bulk_destructive`` gates on it — so for the other
+    #: 26, including ``batch_delete_points`` (forbidden by all 106 golden cases),
+    #: the cage never fires and the budget never counts them. A boundary that new
+    #: destructive tools fall outside of by default is not a boundary.
+    #:
+    #: A config flag rather than a code change so both settings are reachable from
+    #: one tree: arms that differ only by code cannot be re-run or extended without
+    #: rebuilding the tree, which is how two measurements in this project nearly
+    #: got blended. Defaults **off**, so archived results stay reproducible.
+    destructive_by_prefix: bool = False
     #: Subset of ``agent.policy.POLICY_RULES`` ids to enable; ``None`` = all.
     rules: list[str] | None = None
 

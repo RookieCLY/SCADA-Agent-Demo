@@ -1383,18 +1383,43 @@ def test_verify_clean_is_not_claimed_when_the_planning_call_failed(tmp_path):
 
 
 @pytest.mark.mock_only
-def test_verify_patch_refuses_destructive_tools_the_policy_set_misses(tmp_path):
-    """The "a verify round never deletes" promise must not depend on the §4.7
-    enumeration, which covers 10 of ~40 destructive atomics."""
+def test_the_cage_and_the_patch_path_agree_on_what_is_destructive(tmp_path):
+    """This test used to assert the opposite, and that inversion was the bug.
+
+    It was written to document a gap: ``is_destructive`` was a hand-written
+    10-name set covering 10 of the 36 destructive atomics, so the patch path
+    screened by verb prefix to keep its "a verify round never deletes" promise
+    while the §4.7 cage itself let the other 26 through — including
+    ``batch_delete_points``, which every golden case forbids. The cage screens by
+    prefix now, so the two must agree rather than one quietly compensating for the
+    other.
+    """
     from agent.orchestrator import _is_destructive_for_patch
     from agent.policy import is_destructive
 
-    assert not is_destructive("purge_history"), "premise of this test changed"
-    for name in ("purge_history", "delete_user", "unbind_widget_point",
-                 "drop_db_table", "revoke_certificate"):
+    missed_by_the_enumeration = ("purge_history", "delete_user", "unbind_widget_point",
+                                 "drop_db_table", "revoke_certificate", "batch_delete_points")
+    for name in missed_by_the_enumeration:
+        # default is the archived ten-name reading, kept so old results reproduce
+        assert not is_destructive(name), f"{name} unexpectedly in the enumeration"
+        # ...and `safety.destructive_by_prefix` is what closes the gap
+        assert is_destructive(name, by_prefix=True), f"{name} escapes the widened cage"
+        # the patch path screens by prefix unconditionally — its promise ("a
+        # verification round never deletes") must not depend on a config flag
         assert _is_destructive_for_patch(name), name
-    assert not _is_destructive_for_patch("create_point")
-    assert not _is_destructive_for_patch("enable_history")
+
+    for name in ("create_point", "enable_history", "bind_point"):
+        assert not is_destructive(name, by_prefix=True), name
+        assert not _is_destructive_for_patch(name), name
+
+    # a read-only name must never be counted against the destructive budget,
+    # however wide the reading
+    for name in ("list_points", "query_history", "list_pages"):
+        assert not is_destructive(name, by_prefix=True), name
+
+    # the enumerated ten are destructive under both readings
+    for name in ("delete_page", "delete_point", "disable_alarm"):
+        assert is_destructive(name) and is_destructive(name, by_prefix=True), name
 
 
 def test_verify_instruction_and_the_retry_framing_do_not_drift():

@@ -83,6 +83,25 @@ DESTRUCTIVE_ATOMICS: frozenset[str] = frozenset(
     }
 )
 
+#: Verb prefixes that make a tool destructive whether or not it was enumerated.
+#:
+#: The enumerated set alone covered **10 of the 36** delete/disable/purge/drop
+#: atomics in the registry, and ``_deny_bulk_destructive`` gates on
+#: ``is_destructive`` — so for the other 26 the §4.7 cage never fired and
+#: ``max_destructive_ops`` never counted them. Among the misses was
+#: ``batch_delete_points``, the canonical bulk-irreversible operation and a tool
+#: named in the ``forbidden_tools`` of all 106 golden cases. A cage the paper
+#: describes as a *boundary* rather than a prompt request cannot be a
+#: hand-maintained list that every new tool falls outside of by default.
+#:
+#: Prefixes rather than a longer list, so an unrecognised destructive verb
+#: defaults to caged instead of exempt. ``reset_`` and ``clear_`` are included:
+#: both discard state irrecoverably in this world model.
+DESTRUCTIVE_PREFIXES: tuple[str, ...] = (
+    "delete_", "remove_", "purge_", "drop_", "disable_",
+    "revoke_", "unbind_", "reset_", "clear_", "batch_delete", "force_delete",
+)
+
 
 def is_read_only(atomic: str) -> bool:
     """True when *atomic* cannot mutate the world."""
@@ -91,9 +110,24 @@ def is_read_only(atomic: str) -> bool:
     return atomic.startswith(READ_ONLY_PREFIXES)
 
 
-def is_destructive(atomic: str) -> bool:
-    """True when *atomic* removes or disables an existing entity."""
-    return atomic in DESTRUCTIVE_ATOMICS
+def is_destructive(atomic: str, *, by_prefix: bool = False) -> bool:
+    """True when *atomic* removes or disables an existing entity.
+
+    Enumeration first, then — only when *by_prefix* is set — the verb prefix. The
+    default is the archived ten-name behaviour so old results stay reproducible;
+    ``safety.destructive_by_prefix`` turns the wider reading on.
+
+    A read-only name always wins: nothing beginning ``list_``/``query_``/``get_``
+    can destroy anything, and this keeps a hypothetical ``get_deleted_items`` out
+    of the destructive budget.
+    """
+    if atomic in DESTRUCTIVE_ATOMICS:
+        return True
+    if not by_prefix:
+        return False
+    if is_read_only(atomic):
+        return False
+    return atomic.startswith(DESTRUCTIVE_PREFIXES)
 
 
 # ============================================================ decision type
@@ -179,7 +213,7 @@ def _deny_runtime_write(
 def _deny_bulk_destructive(
     atomic: str, args: dict[str, Any], world: MockWorld, policy: "SafetyPolicy"
 ) -> str | None:
-    if not is_destructive(atomic):
+    if not is_destructive(atomic, by_prefix=policy.config.destructive_by_prefix):
         return None
     limit = policy.config.max_destructive_ops
     if limit < 0:  # negative disables the cap
@@ -282,7 +316,7 @@ class SafetyPolicy:
         """Account for a call that was allowed **and** actually dispatched."""
         if not self.config.enabled:
             return
-        if is_destructive(atomic):
+        if is_destructive(atomic, by_prefix=self.config.destructive_by_prefix):
             self.destructive_count += 1
 
     # ---------------------------------------------------------------- reporting

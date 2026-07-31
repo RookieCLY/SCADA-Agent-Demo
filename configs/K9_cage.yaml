@@ -1,0 +1,161 @@
+# ARM K9 = K7 (the shipping arm) + a §4.7 cage that covers destructive tools by
+# verb prefix instead of a hand-written list.
+#
+# Differs from K7 by exactly one setting, `safety.destructive_by_prefix`. It was
+# a code-only difference at first; made a config flag so both readings are
+# reachable from one tree, since code-only arms cannot be re-run or extended
+# without rebuilding the tree.
+#
+# The gap this closes: DESTRUCTIVE_ATOMICS enumerated 10 names and
+# _deny_bulk_destructive gates on it, so for 26 of the 36 delete/disable/purge/drop
+# atomics the cage never fired and max_destructive_ops never counted them. Among
+# the misses was batch_delete_points — the canonical bulk-irreversible operation,
+# and a tool named in the forbidden_tools of ALL 106 golden cases. The paper
+# describes §4.7 as a boundary rather than a prompt request; a hand-maintained
+# list that every new tool falls outside of by default is not one. Coverage goes
+# 10/36 -> 35/36 (force_user_logout is a session op, not persistent state).
+#
+# Why this must be measured rather than assumed: widening the set can only
+# *subtract* capability — more calls now count against max_destructive_ops (3) and
+# can be denied. Ships only on a neutral-or-better result against K7.
+#
+name: K9_cage
+description: |
+  Config J — F (all four architecture levers) plus **all three agent-loop
+  levers**, arbitrated per task so each tier only runs when the cheaper one
+  declined:
+
+      query → plan (1 LLM call, full catalogue + world snapshot)
+            ├─ compiles cleanly, single domain → execute compiled steps
+            │                                    (cheapest path: ~9× fewer
+            │                                    tokens than F in the trial)
+            ├─ spans ≥ min_domains registry domains, or execution fails with
+            │  the replan budget spent → Supervisor / Specialists / Critic,
+            │  each Specialist running the ReAct loop (accuracy tier; the
+            │  Blackboard is seeded with whatever the aborted plan built)
+            └─ planner abstains → single ReAct interleaved loop (hygiene tier:
+                                  strictly dominated F in the trial)
+
+  The three docode-trial planner fixes are on:
+    * the planner sees the **whole** catalogue — RAG orders it, detailed
+      schemas for the ranked head, name-only (per domain) for the rest — so it
+      can no longer refuse for "missing" tools that merely fell out of top-k;
+    * the planning prompt carries a compact **world snapshot**, so plans are
+      grounded in real identifiers instead of refused for lack of grounding;
+    * a **compile drop triggers one replan** naming exactly what was dropped
+      and why, so a shortened plan is repaired instead of silently executed.
+
+  Cage invariants (all tiers): state changes via legal FSM transitions only,
+  §4.7 policy checked before every dispatch, POLICY_DENIED is final (never
+  replanned around, never escalated around), ReAct dedupe sits after the
+  cages, and the crew spends the same global max_turns budget.
+
+  The trace records which tier ran under `loop` (path + trigger), alongside
+  the per-lever `plan` / `react` / `crew` blocks.
+
+  Ablation arms on this branch: F (all loop levers off), I_react, I_plan_execute,
+  I_multi_agent (one lever each), J_combined (all three + arbitration).
+
+architecture:
+  hierarchical_tools: true
+  tool_rag:
+    enabled: true
+    top_n: 30
+    top_k: 12
+    alpha_dense: 0.6
+    use_reranker: true
+  workflow:
+    enabled: true
+    yaml_path: workflows
+  state_machine:
+    enabled: true
+  # §4.5 Resources separation is OFF here, against F's definition.
+  # Measured W5 (LongCat, 106x2): F_noresources 53.3% vs F_full 48.6% task_success,
+  # and F_full had the worst accuracy and highest early-termination (19.3%) of all
+  # nine arms — it spends turns reading. Two independent arms say the lever costs
+  # accuracy even now that the read path works (W1). The read *atomics* return to
+  # the catalogue here; read_resource stays implemented but unused.
+  resources_separation: false
+  plan_execute:
+    enabled: true
+    max_replans: 2
+    # Raised from 12. Measured in Phase 4: 14 runs had a *correct* plan
+    # truncated at this ceiling — golden-026 proposed 26 steps and compiled 12
+    # (dropped_over_budget 15), golden-069 proposed 28. These are the
+    # deliberately complex multi-part cases, and the plan tier was planning
+    # them right and then throwing half away. 24 covers every observed plan
+    # except two outliers at 26-28, and still bounds a runaway.
+    max_steps: 24
+    reorder_by_dependency: true
+    planner_tool_budget: 60      # detailed schemas for the RAG-ranked head
+    fallback_to_interleaved: true
+    include_world_context: true  # docode-trial fix (golden-019)
+    replan_on_compile_drop: true # docode-trial fix (golden-013)
+    # Keeper: measured against a no-repair control — disabling it cost 6.6pp of
+    # capability and 9.1pp of reject-case behaviour, so repair helps on both axes.
+    repair_schema_invalid: true
+    # Keeper: measured against a no-hints control — disabling it took schema drops
+    # from 35 to 160, cost 28% more tokens, and was worse on both accuracy axes.
+    typed_tool_hints: true
+    # The snapshot is a primary view of the world for the planner (the plan is
+    # fixed before execution), so a silent truncation lands as "acted, final state
+    # mismatch". Raised from 25. Note §4.5 is off here, so the read atomics are
+    # also back in the catalogue.
+    world_context_max_items: 60
+    clarify_on_underspecified: true
+  react:
+    enabled: true                # loop hygiene for fallback + specialists
+    scratchpad_window: 6
+    max_observation_chars: 320   # observation compression: measurably works
+    max_observation_items: 5
+    # Both measured dead across three runs and two models
+    # (suppressed_repeats: 0, hints_emitted: 0). Off, not deleted — that is a
+    # statement about two strong models, not about the mechanism.
+    dedupe_repeat_actions: false
+    repair_hints: false
+  multi_agent:
+    # Retired as a default tier. Its only measured justification (+9pp reject-case
+    # behavior_success) came from a 33-case subset where 8 cases flip between
+    # identical reps — a 24pp noise band — and does not survive. Its cost is real
+    # and reproducible: +31% input tokens. On every metric that still holds,
+    # crew-off scored better (64.2% vs 62.7% task_success at 4,536 vs 6,411
+    # tokens). Flip to true to re-enable; the tier and its tests are intact.
+    enabled: false
+    max_specialists: 3
+    turns_per_specialist: 4
+    tools_per_specialist: 8
+    critic_retry: true
+    # Off: fired 22 of 51 escalations on plan *shape* alone, with no observed
+    # problem, at ~+31% tokens. compile_drop and failure-recovery remain — they
+    # key off something that actually went wrong.
+    domain_gate: false
+    min_domains: 2               # only consulted when domain_gate is on
+
+# §4.7 runtime cage. Measured finding: with this OFF, every reject case is
+# prompt-only, and the crew tier (which had no refusal concept) wrote to the
+# world on 3 of 5 escalated reject cases. The cage is the paper's own answer to
+# exactly that failure mode, so J measures it rather than leaving it dormant.
+# NOTE: this makes J differ from F on a fifth dimension — keep G_safety_runtime
+# (= F + cage) as the control when attributing the delta.
+safety:
+  enabled: true
+  runtime_mode: design_time
+  max_destructive_ops: 3
+  # The one difference from K7.
+  destructive_by_prefix: true
+  rules: null
+
+model:
+  provider: mock
+  name: mock
+  temperature: 0.0
+  max_tokens: 4096
+
+trace:
+  record_llm_io: true
+
+world:
+  backend: memory
+
+repetitions: 5
+seed_base: 42
