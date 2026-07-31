@@ -13,7 +13,11 @@ from __future__ import annotations
 
 import pytest
 
-from agent.planner import _type_hint, describe_tools_for_planner
+from agent.planner import (
+    _has_closed_values,
+    _type_hint,
+    describe_tools_for_planner,
+)
 from agent.tool_registry import build_default_registry
 
 
@@ -92,3 +96,53 @@ def test_catalogue_never_renders_a_bare_array_for_a_tuple(registry):
             if "prefixItems" in prop and _type_hint(prop) == "array":
                 offenders.append(f"{meta.name}.{field_name}")
     assert not offenders, f"tuple fields rendered as bare 'array': {offenders}"
+
+
+# ------------------------------------- enumerated optionals (golden-005 / -051)
+def test_has_closed_values_sees_through_optional_literals():
+    """``Optional[Literal[...]]`` is emitted as an anyOf wrapping the enum."""
+    assert _has_closed_values({"enum": ["on_change", "periodic"]})
+    assert _has_closed_values({"const": "analog"})
+    assert _has_closed_values(
+        {"anyOf": [{"enum": ["on_change", "periodic"]}, {"type": "null"}]}
+    )
+    assert not _has_closed_values({"type": "string"})
+    assert not _has_closed_values({"type": "array", "items": {"type": "integer"}})
+
+
+@pytest.mark.parametrize(
+    "tool, field, expected",
+    [
+        # The measured wrong_value: "开启变化存储历史" was planned as
+        # storage_mode="periodic" (the schema default) in every rep of
+        # golden-005 and golden-051, because the field is *optional* and
+        # optionals used to render name-only — so the closed value set that
+        # contains the right answer was never shown to the planner.
+        ("enable_history", "storage_mode", "on_change|periodic"),
+        ("create_analog_alarm", "priority", "high|medium|low"),
+    ],
+)
+def test_enumerated_optionals_render_their_value_set(registry, tool, field, expected):
+    schema = registry.atomic(tool).args_model.model_json_schema()
+    assert field not in (schema.get("required") or []), (
+        f"{tool}.{field} is required — this test guards the *optional* path"
+    )
+    line = describe_tools_for_planner(registry, [tool], max_tools=10)
+    assert f"{field}:{expected}" in line, line
+
+
+def test_no_enumerated_field_is_rendered_name_only(registry):
+    """Guard the class: any enumerated field, required or optional, must show
+    its values. A name-only enum is a silent wrong_value, not a compile drop —
+    the step validates, executes, and lands the wrong state in the world."""
+    offenders: list[str] = []
+    for meta in registry.all_atomics():
+        schema = meta.args_model.model_json_schema()
+        props = schema.get("properties") or {}
+        rendered = describe_tools_for_planner(registry, [meta.name], max_tools=1)
+        for field_name, prop in props.items():
+            if field_name == "action" or not _has_closed_values(prop):
+                continue
+            if f"{field_name}:{_type_hint(prop)}" not in rendered:
+                offenders.append(f"{meta.name}.{field_name}")
+    assert not offenders, f"enumerated fields rendered without values: {offenders}"

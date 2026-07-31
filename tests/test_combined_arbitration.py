@@ -31,9 +31,8 @@ from agent.orchestrator import Agent
 from agent.planner import summarize_world_for_planner
 from agent.tool_registry import build_default_registry
 from agent.tracer import Tracer
-from world import MockWorld, Point
-
 from tests._llm_factory import make_test_model_config
+from world import MockWorld, Page, Point, Widget
 
 CONFIGS_DIR = Path(__file__).resolve().parent.parent / "configs"
 REGISTRY = build_default_registry()
@@ -783,6 +782,16 @@ def test_config_J_ships_plan_and_react_but_not_the_crew():
     # both fired 0 times across three 106-case sweeps on two models.
     assert on.react.dedupe_repeat_actions is False
     assert on.react.repair_hints is False
+    # Promoted 2026-07-31 from the K4 arm (results_w11, 106 x 3): 69.2% vs 65.7%
+    # against the identical config without it, +11 net run-by-run over 318 runs.
+    assert on.plan_execute.clarify_on_underspecified is True
+    # The other two W9/W10 levers stay off on measurement, not preference. The
+    # cascade guard (K2) was the weakest arm at 65.1% and fired 3 times in 318
+    # runs; the verify round (K3) scored 65.4% at +26% tokens — on corrected
+    # inputs it does patch (13/169, up from 1/111), the patches just do not
+    # convert into task success.
+    assert on.plan_execute.replan_may_create_referenced is True
+    assert on.plan_execute.verify_rounds == 0
     assert not (off.plan_execute.enabled or off.react.enabled or off.multi_agent.enabled)
     # J matches F on the first four architecture levers...
     assert (
@@ -801,3 +810,633 @@ def test_config_J_ships_plan_and_react_but_not_the_crew():
     # the control that isolates it.
     assert on.resources_separation is False
     assert off.resources_separation is True
+
+
+# ============================================ clarify vs refusal (golden-008/-060)
+@pytest.mark.mock_only
+def test_clarify_asks_instead_of_acting_and_lands_in_ask_user(tmp_path):
+    """The measured failure: the planner invented an identity rather than asking.
+
+    golden-008 ("帮忙建个页面") was planned as
+    ``create_page(id="main_page", name="主页面")`` — a mutation on a case whose
+    expected world diff is empty. With the lever on, the same reply carries a
+    ``clarify`` and nothing is dispatched.
+    """
+    llm = _HybridLLM(plans=[{"steps": [], "clarify": "需要页面 ID 与名称"}])
+    agent = _agent(
+        tmp_path,
+        llm,
+        plan=PlanExecuteConfig(enabled=True, clarify_on_underspecified=True),
+    )
+    world = _world()
+    before = world.hash()
+    trace = agent.run("帮忙建个页面", golden_id="cb-clarify", initial_world=world)
+
+    assert trace["loop"]["path"] == "plan"
+    assert trace["plan"]["clarify"] == "需要页面 ID 与名称"
+    assert trace["plan"]["refusal"] is None
+    assert trace["execution"]["termination_reason"] == "clarify"
+    # ASK_USER, not DONE: `success` cases exclude ASK_USER, so a clarification
+    # that lands on DONE would score as a completed task.
+    assert trace["execution"]["terminal_state"] == "ASK_USER"
+    assert trace["tool_calls"] == []
+    assert world.hash() == before
+
+
+@pytest.mark.mock_only
+def test_a_clarify_discards_any_steps_proposed_alongside_it(tmp_path):
+    """Belt and braces: a model that both asks *and* plans must not act."""
+    llm = _HybridLLM(
+        plans=[{
+            "steps": [_step("create_point", tag="INVENTED", type="analog")],
+            "clarify": "点位标签是什么?",
+        }]
+    )
+    agent = _agent(
+        tmp_path,
+        llm,
+        plan=PlanExecuteConfig(enabled=True, clarify_on_underspecified=True),
+    )
+    world = _world()
+    before = world.hash()
+    trace = agent.run("加个点位", golden_id="cb-clarify-steps", initial_world=world)
+
+    assert trace["plan"]["clarify"] == "点位标签是什么?"
+    assert trace["plan"]["proposed"] == 1
+    assert trace["plan"]["compiled"] == 0
+    assert trace["tool_calls"] == []
+    assert world.hash() == before
+    assert "INVENTED" not in world.points
+
+
+@pytest.mark.mock_only
+def test_clarify_lever_off_ignores_the_field_entirely(tmp_path):
+    """Default off, the field is *ignored* — not folded into ``refusal``.
+
+    Folding looks harmless and is not: ``refusal`` gates
+    ``replan_on_compile_drop`` and both crew escalations, all written
+    ``and not refusal``. So a reply carrying steps *and* a clarification would
+    lose the compile-drop replan while the lever is supposedly off. Ignoring an
+    unrecognised key is what code predating the channel did, and is the only
+    behaviour-preserving choice. See
+    ``test_a_folded_clarify_must_not_disable_the_compile_drop_replan``.
+    """
+    llm = _HybridLLM(plans=[{"steps": [], "clarify": "需要页面 ID 与名称"}])
+    agent = _agent(tmp_path, llm, plan=PlanExecuteConfig(enabled=True))
+    world = _world()
+    trace = agent.run("帮忙建个页面", golden_id="cb-clarify-off", initial_world=world)
+
+    assert trace["plan"]["clarify"] is None
+    assert trace["plan"]["refusal"] is None
+    # Empty plan, no refusal → the archived path is the interleaved fallback.
+    assert trace["loop"]["path"] == "interleaved"
+    assert world.hash() == _world().hash()
+
+
+@pytest.mark.mock_only
+def test_a_folded_clarify_must_not_disable_the_compile_drop_replan(tmp_path):
+    """Regression: with the lever off, a clarify alongside steps must not make
+    the run behave as if the planner had refused.
+
+    The measured defect this guards: `refusal` truthiness suppressed the
+    informed replan, so a plan whose second step was dropped executed the first
+    and reported success — golden-013's "half the task delivered as if it were
+    all of it", re-opened through a lever that is off.
+    """
+    llm = _HybridLLM(
+        plans=[
+            {"steps": [_step("create_point", tag="A1", type="analog"),
+                       {"tool": "no_such_tool", "arguments": {}, "rationale": "x"}],
+             "clarify": "顺便问一下"},
+            {"steps": [_step("create_point", tag="A1", type="analog"),
+                       _step("create_point", tag="A2", type="analog")]},
+        ]
+    )
+    agent = _agent(
+        tmp_path, llm,
+        plan=PlanExecuteConfig(enabled=True, max_replans=2),
+        crew=MultiAgentConfig(enabled=False),
+    )
+    world = _world()
+    trace = agent.run("建两个点位", golden_id="cb-clarify-fold", initial_world=world)
+
+    # The adopted retry's diagnostics replace the original's, so the drop is not
+    # visible in the trace; the replan *firing* is the thing under test.
+    assert llm.plan_calls == 2, "the compile-drop replan was suppressed"
+    assert trace["plan"]["replans"] == 1
+    assert "A1" in world.points and "A2" in world.points
+
+
+def test_planner_prompt_separates_clarify_from_refusal():
+    """Both channels must be described, and the fabrication ban must be explicit
+    — the prompt is the only place the distinction can be taught."""
+    from agent.planner import PLANNER_SYSTEM_PROMPT as P
+
+    assert "clarify" in P and "refusal" in P
+    assert "发明" in P, "the fabrication ban must be explicit"
+    # The *discriminator*, not just the field. Measured: a rule phrased as
+    # "missing identity or missing semantics → ask" over-fires badly — it made
+    # golden-013 ask for page IDs the user had already named ("一个叫报警汇总")
+    # and golden-018 ask for a threshold behind the word "过高", both of which
+    # the dataset expects the agent to resolve and act on. The narrower test —
+    # is there anything to refer to at all — is what separates those from
+    # golden-008's contentless "帮忙建个页面".
+    assert "是否存在可指代的对象" in P
+    assert "不是**提问的理由" in P, "vague wording must be excluded explicitly"
+
+
+# ==================================== replan cascade guard (golden-054)
+@pytest.mark.mock_only
+def test_replan_may_not_manufacture_a_referenced_entity(tmp_path):
+    """golden-054: ``query_history`` correctly failed POINT_NOT_FOUND — the code
+    the case expects — and the replan called ``create_point`` to make the query
+    succeed, mutating a world the case requires untouched."""
+    llm = _HybridLLM(
+        plans=[
+            {"steps": [_step("query_history", tag="NO_SUCH_POINT", window_s=3600)]},
+            {"steps": [
+                _step("create_point", tag="NO_SUCH_POINT", type="analog"),
+                _step("query_history", tag="NO_SUCH_POINT", window_s=3600),
+            ]},
+        ]
+    )
+    agent = _agent(
+        tmp_path,
+        llm,
+        plan=PlanExecuteConfig(
+            enabled=True, max_replans=1, replan_may_create_referenced=False
+        ),
+        crew=MultiAgentConfig(enabled=False),
+    )
+    world = _world()
+    trace = agent.run("查询 NO_SUCH_POINT 最近一小时历史", golden_id="cb-cascade", initial_world=world)
+
+    assert "NO_SUCH_POINT" not in world.points, "the replan invented the premise"
+    assert "create_point" in trace["plan"]["dropped_cascade_recovery"]
+    assert trace["execution"]["termination_reason"] == "replan_cascade_blocked"
+
+
+@pytest.mark.mock_only
+def test_replan_may_recreate_an_entity_the_original_plan_asked_for(tmp_path):
+    """The guard must not block ordinary recovery. When the *approved* plan
+    intended to create the entity, the user did ask for it — a replan re-adding
+    it after a dropped prerequisite is exactly what replanning is for."""
+    llm = _HybridLLM(
+        plans=[
+            # Both steps approved; the alarm runs first and fails on the
+            # not-yet-created point.
+            {"steps": [
+                _step("create_analog_alarm", id="A1", tag="NEW_PT", high_limit=80),
+                _step("create_point", tag="NEW_PT", type="analog"),
+            ]},
+            {"steps": [
+                _step("create_point", tag="NEW_PT", type="analog"),
+                _step("create_analog_alarm", id="A1", tag="NEW_PT", high_limit=80),
+            ]},
+        ]
+    )
+    agent = _agent(
+        tmp_path,
+        llm,
+        plan=PlanExecuteConfig(
+            enabled=True,
+            max_replans=1,
+            reorder_by_dependency=False,  # force the failure the guard must not eat
+            replan_may_create_referenced=False,
+        ),
+        crew=MultiAgentConfig(enabled=False),
+    )
+    world = _world()
+    trace = agent.run("给 NEW_PT 建点并加高温报警", golden_id="cb-cascade-ok", initial_world=world)
+
+    assert "NEW_PT" in world.points, "legitimate prerequisite creation was blocked"
+    assert not trace["plan"]["dropped_cascade_recovery"]
+
+
+@pytest.mark.mock_only
+def test_cascade_guard_off_is_the_archived_behaviour(tmp_path):
+    llm = _HybridLLM(
+        plans=[
+            {"steps": [_step("query_history", tag="NO_SUCH_POINT", window_s=3600)]},
+            {"steps": [_step("create_point", tag="NO_SUCH_POINT", type="analog")]},
+        ]
+    )
+    agent = _agent(
+        tmp_path,
+        llm,
+        plan=PlanExecuteConfig(enabled=True, max_replans=1),  # lever defaults on
+        crew=MultiAgentConfig(enabled=False),
+    )
+    world = _world()
+    agent.run("查询 NO_SUCH_POINT 最近一小时历史", golden_id="cb-cascade-off", initial_world=world)
+    assert "NO_SUCH_POINT" in world.points
+
+
+# ==================================== verify/patch round (golden-093 / -013)
+@pytest.mark.mock_only
+def test_verify_round_patches_what_the_plan_left_undone(tmp_path):
+    """golden-093's shape: the plan acted, no step errored, and the requested
+    state was still absent. The plan archived the point instead of enabling
+    history; a round that reads the world back sees ``histories.*`` missing."""
+    llm = _HybridLLM(
+        plans=[
+            {"steps": [_step("create_point", tag="ENERGY_KWH", type="analog", unit="kWh")]},
+            {"steps": [_step("enable_history", tag="ENERGY_KWH", storage_mode="on_change")]},
+            {"steps": []},
+        ]
+    )
+    agent = _agent(
+        tmp_path,
+        llm,
+        plan=PlanExecuteConfig(enabled=True, verify_rounds=2),
+        crew=MultiAgentConfig(enabled=False),
+    )
+    world = _world()
+    trace = agent.run("给 ENERGY_KWH 建点并开启变化存储历史",
+                      golden_id="cb-verify", initial_world=world)
+
+    assert "ENERGY_KWH" in world.histories, "the verify round did not patch the gap"
+    assert world.histories["ENERGY_KWH"].storage_mode == "on_change"
+    assert trace["plan"]["verify_patched"] == 1
+    assert trace["plan"]["verify_rounds"] == 2
+    assert trace["plan"]["verify_clean"] is True
+    # The extra calls are charged, not hidden: 1 plan + 2 verify.
+    assert llm.plan_calls == 3
+    assert trace["execution"]["total_turns"] == 3
+
+
+@pytest.mark.mock_only
+def test_verify_round_sees_the_post_execution_state(tmp_path):
+    """The verification prompt must carry what was built, not the pre-run
+    snapshot — otherwise it is a second guess rather than a check."""
+    llm = _HybridLLM(
+        plans=[
+            {"steps": [_step("create_point", tag="NEW_PT", type="analog")]},
+            {"steps": []},
+        ]
+    )
+    agent = _agent(
+        tmp_path,
+        llm,
+        plan=PlanExecuteConfig(enabled=True, verify_rounds=1),
+        crew=MultiAgentConfig(enabled=False),
+    )
+    agent.run("建个点位 NEW_PT", golden_id="cb-verify-state", initial_world=_world())
+
+    verify_feedback = llm.feedbacks[1]
+    assert verify_feedback is not None
+    assert "points.NEW_PT" in verify_feedback, verify_feedback
+    assert "create_point" in verify_feedback
+    assert "不要输出任何删除/禁用类操作" in verify_feedback
+
+
+@pytest.mark.mock_only
+def test_verify_round_refuses_a_destructive_patch(tmp_path):
+    """Completing a request never requires deleting. A destructive patch step is
+    dropped by the runtime rather than trusted to the prompt."""
+    llm = _HybridLLM(
+        plans=[
+            {"steps": [_step("create_point", tag="KEEP_PT", type="analog")]},
+            {"steps": [_step("delete_point", tag="TEMP_101")]},
+        ]
+    )
+    agent = _agent(
+        tmp_path,
+        llm,
+        plan=PlanExecuteConfig(enabled=True, verify_rounds=1),
+        crew=MultiAgentConfig(enabled=False),
+    )
+    world = _world()
+    trace = agent.run("建个点位 KEEP_PT", golden_id="cb-verify-destroy", initial_world=world)
+
+    assert "TEMP_101" in world.points, "a verify round deleted an existing entity"
+    assert trace["plan"]["dropped_verify_destructive"] == ["delete_point"]
+    assert trace["plan"]["verify_patched"] == 0
+
+
+@pytest.mark.mock_only
+def test_verify_round_never_fires_on_a_refusal(tmp_path):
+    """The gate that matters most. A refusal means the world must stay untouched,
+    and a round whose job is to *finish the task* must not run after one."""
+    llm = _HybridLLM(plans=[{"steps": [], "refusal": "高危操作,拒绝执行"}])
+    agent = _agent(
+        tmp_path,
+        llm,
+        plan=PlanExecuteConfig(enabled=True, verify_rounds=2),
+        crew=MultiAgentConfig(enabled=False),
+    )
+    world = _world()
+    before = world.hash()
+    trace = agent.run("强制下装", golden_id="cb-verify-refuse", initial_world=world)
+
+    assert llm.plan_calls == 1, "a verify round ran after a refusal"
+    assert trace["plan"]["verify_rounds"] == 0
+    assert world.hash() == before
+
+
+@pytest.mark.mock_only
+def test_verify_round_never_fires_on_a_clarification(tmp_path):
+    llm = _HybridLLM(plans=[{"steps": [], "clarify": "需要页面 ID"}])
+    agent = _agent(
+        tmp_path,
+        llm,
+        plan=PlanExecuteConfig(
+            enabled=True, verify_rounds=2, clarify_on_underspecified=True
+        ),
+        crew=MultiAgentConfig(enabled=False),
+    )
+    world = _world()
+    before = world.hash()
+    trace = agent.run("帮忙建个页面", golden_id="cb-verify-clarify", initial_world=world)
+
+    assert llm.plan_calls == 1, "a verify round ran after a clarification"
+    assert trace["plan"]["verify_rounds"] == 0
+    assert world.hash() == before
+
+
+@pytest.mark.mock_only
+def test_verify_round_never_fires_after_a_policy_denial(tmp_path):
+    """Same cage, same answer: the §4.7 boundary is not something a later round
+    gets to complete around."""
+    llm = _HybridLLM(
+        plans=[{"steps": [_step("deploy_project", target="prod", force=True)]}]
+    )
+    agent = _agent(
+        tmp_path,
+        llm,
+        plan=PlanExecuteConfig(enabled=True, verify_rounds=2),
+        crew=MultiAgentConfig(enabled=False),
+        safety=SafetyPolicyConfig(enabled=True),
+    )
+    world = _world()
+    before = world.hash()
+    trace = agent.run("直接强制下装到生产", golden_id="cb-verify-denied",
+                      initial_world=world)
+
+    assert trace["execution"]["termination_reason"] == "policy_denied"
+    assert llm.plan_calls == 1, "a verify round ran after a policy denial"
+    assert trace["plan"]["verify_rounds"] == 0
+    assert world.hash() == before
+
+
+@pytest.mark.mock_only
+def test_verify_round_off_by_default_is_the_archived_open_loop(tmp_path):
+    llm = _HybridLLM(
+        plans=[{"steps": [_step("create_point", tag="NEW_PT", type="analog")]}]
+    )
+    agent = _agent(
+        tmp_path, llm,
+        plan=PlanExecuteConfig(enabled=True),
+        crew=MultiAgentConfig(enabled=False),
+    )
+    trace = agent.run("建个点位", golden_id="cb-verify-off", initial_world=_world())
+
+    assert llm.plan_calls == 1
+    assert trace["plan"]["verify_rounds"] == 0
+    assert trace["plan"]["verify_clean"] is False
+    assert trace["execution"]["total_turns"] == 1
+
+
+@pytest.mark.mock_only
+def test_verify_patch_does_not_double_apply_completed_work(tmp_path):
+    """A verify round that re-proposes a step already executed must be a no-op —
+    the executed-signature set is what makes a second pass safe."""
+    llm = _HybridLLM(
+        plans=[
+            {"steps": [_step("create_point", tag="NEW_PT", type="analog")]},
+            {"steps": [_step("create_point", tag="NEW_PT", type="analog")]},
+        ]
+    )
+    agent = _agent(
+        tmp_path, llm,
+        plan=PlanExecuteConfig(enabled=True, verify_rounds=1),
+        crew=MultiAgentConfig(enabled=False),
+    )
+    world = _world()
+    trace = agent.run("建个点位 NEW_PT", golden_id="cb-verify-idem", initial_world=world)
+
+    dispatched = [c for c in trace["tool_calls"] if c["selected"] == "create_point"]
+    assert len(dispatched) == 1, "the verify round re-dispatched finished work"
+    assert not any(c["error_code"] == "ALREADY_EXISTS" for c in trace["tool_calls"])
+
+
+@pytest.mark.mock_only
+def test_cascade_guard_allows_recreating_a_nested_entity_the_plan_intended(tmp_path):
+    """The escape hatch must fire for *nested* entities too.
+
+    Measured defect: the guard read an entity's id as the last path segment, but
+    the last segment of a deep path is a field — ``bind_point`` intends
+    ``pages.p1.widgets.therm1.bindings.value``, so the plan contributed ``value``
+    and never ``therm1``. A ``WIDGET_NOT_FOUND`` recovery that created ``therm1``
+    therefore looked like manufactured premise, and a fully recoverable failure
+    was aborted with nothing built.
+    """
+    llm = _HybridLLM(
+        plans=[
+            {"steps": [_step("bind_point", page_id="p1", widget_id="therm1",
+                             property="value", tag="TEMP_101")]},
+            {"steps": [_step("create_widget", page_id="p1", widget_id="therm1",
+                             type="thermometer", position=[10, 10], size=[40, 40]),
+                       _step("bind_point", page_id="p1", widget_id="therm1",
+                             property="value", tag="TEMP_101")]},
+        ]
+    )
+    agent = _agent(
+        tmp_path, llm,
+        plan=PlanExecuteConfig(enabled=True, max_replans=1,
+                               replan_may_create_referenced=False),
+        crew=MultiAgentConfig(enabled=False),
+    )
+    world = _world()
+    world.pages["p1"] = Page(id="p1", name="P1")
+    trace = agent.run("把 TEMP_101 绑定到 p1 的 therm1",
+                      golden_id="cb-cascade-nested", initial_world=world)
+
+    assert not trace["plan"]["dropped_cascade_recovery"], (
+        "legitimate recovery for an entity the plan intended was blocked"
+    )
+    assert "therm1" in world.pages["p1"].widgets
+    assert trace["execution"]["termination_reason"] != "replan_cascade_blocked"
+
+
+def test_entity_ids_returns_every_id_not_the_last_segment():
+    from agent.planner import entity_ids
+
+    assert entity_ids("points.TEMP_101") == {"TEMP_101"}
+    assert entity_ids("histories.TEMP_101") == {"TEMP_101"}
+    # The case that broke the guard: the widget id must survive.
+    assert "therm1" in entity_ids("pages.p1.widgets.therm1.bindings.value")
+    assert "p1" in entity_ids("pages.p1.widgets.therm1.bindings.value")
+    assert entity_ids("") == set()
+
+
+def test_identity_known_sees_nested_entities():
+    """A widget exists; reporting it as existing nowhere over-protects it."""
+    from agent.planner import _identity_known
+
+    world = _world()
+    world.pages["p1"] = Page(id="p1", name="P1")
+    world.pages["p1"].widgets["w1"] = Widget(
+        id="w1", page_id="p1", type="thermometer", position=(1, 1), size=(2, 2)
+    )
+    assert _identity_known(world, "p1")
+    assert _identity_known(world, "TEMP_101")
+    assert _identity_known(world, "w1"), "nested widget reported as nonexistent"
+    assert not _identity_known(world, "NOPE")
+
+
+def test_enum_hints_are_never_truncated():
+    """A closed value set rendered partially reads as exhaustive.
+
+    ``create_device.device_type`` has 8 values; a 4-value cut hides ``valve`` and
+    answers "建一个阀门设备" with "no such device_type".
+    """
+    from agent.planner import _type_hint, describe_tools_for_planner
+
+    reg = REGISTRY
+    schema = reg.atomic("create_device").args_model.model_json_schema()
+    prop = (schema.get("properties") or {})["device_type"]
+    assert len(prop["enum"]) > 4, "test needs a >4-value enum to be meaningful"
+    rendered = _type_hint(prop)
+    for value in prop["enum"]:
+        assert str(value) in rendered, f"{value} hidden from a closed value set"
+    line = describe_tools_for_planner(reg, ["create_device"], max_tools=1)
+    assert rendered in line
+
+
+@pytest.mark.mock_only
+def test_verify_patched_does_not_count_a_no_op_reproposal(tmp_path):
+    """A patch step whose signature already executed is a no-op, not a patch.
+
+    Counting it let a round that found nothing report that it fixed something,
+    inflating every "verification adds value" number by the re-proposal rate.
+    """
+    llm = _HybridLLM(
+        plans=[
+            {"steps": [_step("create_point", tag="NEW_PT", type="analog")]},
+            {"steps": [_step("create_point", tag="NEW_PT", type="analog")]},
+        ]
+    )
+    agent = _agent(
+        tmp_path, llm,
+        plan=PlanExecuteConfig(enabled=True, verify_rounds=1),
+        crew=MultiAgentConfig(enabled=False),
+    )
+    trace = agent.run("建个点位 NEW_PT", golden_id="cb-verify-noop",
+                      initial_world=_world())
+
+    dispatched = [c for c in trace["tool_calls"] if c["selected"] == "create_point"]
+    assert len(dispatched) == 1
+    assert trace["plan"]["verify_patched"] == 0, "a no-op was counted as a patch"
+
+
+@pytest.mark.mock_only
+def test_verify_round_reports_what_actually_executed(tmp_path):
+    """After a replan, the verify prompt must list the step that *succeeded*.
+
+    It used to render ``plan.steps`` — the original compiled plan — so it told the
+    verifier that the failed step had run and the successful replan had not.
+    """
+    llm = _HybridLLM(
+        plans=[
+            {"steps": [_step("enable_history", tag="MISSING_PT",
+                             storage_mode="periodic")]},
+            {"steps": [_step("enable_history", tag="TEMP_101",
+                             storage_mode="on_change")]},
+            {"steps": []},
+        ]
+    )
+    agent = _agent(
+        tmp_path, llm,
+        plan=PlanExecuteConfig(enabled=True, max_replans=1, verify_rounds=1),
+        crew=MultiAgentConfig(enabled=False),
+    )
+    agent.run("给 TEMP_101 开启变化存储", golden_id="cb-verify-executed",
+              initial_world=_world())
+
+    verify_feedback = llm.feedbacks[-1]
+    assert verify_feedback is not None
+    assert "TEMP_101" in verify_feedback, "the step that succeeded was omitted"
+    assert "MISSING_PT" not in verify_feedback, "a failed step reported as executed"
+
+
+@pytest.mark.mock_only
+def test_verify_clean_is_not_claimed_when_the_planning_call_failed(tmp_path):
+    """A timeout must not be recorded as "verified, nothing missing"."""
+    class _Boom(_HybridLLM):
+        def make_plan(self, query, tool_list, feedback=None, world_context=None):
+            self.plan_calls += 1
+            if self.plan_calls == 1:
+                return {"steps": [_step("create_point", tag="NEW_PT", type="analog")]}
+            raise RuntimeError("upstream 500")
+
+    llm = _Boom()
+    agent = _agent(
+        tmp_path, llm,
+        plan=PlanExecuteConfig(enabled=True, verify_rounds=1),
+        crew=MultiAgentConfig(enabled=False),
+    )
+    trace = agent.run("建个点位", golden_id="cb-verify-boom", initial_world=_world())
+
+    assert trace["plan"]["verify_rounds"] == 1
+    assert trace["plan"]["verify_clean"] is False, "a failed call claimed clean"
+
+
+@pytest.mark.mock_only
+def test_verify_patch_refuses_destructive_tools_the_policy_set_misses(tmp_path):
+    """The "a verify round never deletes" promise must not depend on the §4.7
+    enumeration, which covers 10 of ~40 destructive atomics."""
+    from agent.orchestrator import _is_destructive_for_patch
+    from agent.policy import is_destructive
+
+    assert not is_destructive("purge_history"), "premise of this test changed"
+    for name in ("purge_history", "delete_user", "unbind_widget_point",
+                 "drop_db_table", "revoke_certificate"):
+        assert _is_destructive_for_patch(name), name
+    assert not _is_destructive_for_patch("create_point")
+    assert not _is_destructive_for_patch("enable_history")
+
+
+def test_verify_instruction_and_the_retry_framing_do_not_drift():
+    """``make_plan`` wraps ordinary feedback in "上一版计划执行失败" — the wrong
+    framing for a verification round, which opens "计划已执行完毕". The wrapper
+    detects the difference by a sentinel, so the sentinel must stay the way
+    VERIFY_INSTRUCTION actually starts."""
+    from agent.planner import VERIFY_FRAMING_SENTINEL, VERIFY_INSTRUCTION
+
+    assert VERIFY_INSTRUCTION.lstrip().startswith(VERIFY_FRAMING_SENTINEL)
+    # And a failure feedback must NOT be mistaken for verify feedback.
+    assert not "步骤 create_point 失败: POINT_NOT_FOUND".startswith(
+        VERIFY_FRAMING_SENTINEL
+    )
+
+
+def test_prompt_keeps_one_identifier_across_dependent_steps():
+    """golden-068 broke in every arm and every rep of both campaigns.
+
+    "先校验再下装staging部署,部署记录叫deploy_staging" was planned as
+    ``validate_project(deployment_id="default", target="staging")`` followed by
+    ``deploy_project(deployment_id="deploy_staging")`` — different deployments,
+    so the §4.7 cage correctly refused the deploy as unvalidated. The cause was
+    the entity-grounding rule: told to reuse ids from the world snapshot, the
+    planner preferred the pre-existing ``default`` over the name the request had
+    just assigned. An explicit new name in the request must win.
+    """
+    from agent.planner import PLANNER_SYSTEM_PROMPT as P
+
+    assert "明确指定了新名称" in P
+    assert "deploy_staging" in P, "the measured failure should be the worked example"
+    assert "同一个标识" in P, "cross-step identifier consistency must be stated"
+
+
+def test_prompt_forbids_creating_a_missing_configure_target():
+    """golden-044: "给不存在的NO_SUCH_TEMP配置高温报警" — the request itself says
+    the point does not exist, and the correct answer is to say so, not to
+    create_point and then attach the alarm. This is the cascade principle applied
+    to the *initial* plan; the runtime guard only covers the replan path."""
+    from agent.planner import PLANNER_SYSTEM_PROMPT as P
+
+    assert "不要顺手把它创建出来" in P
+    assert "NO_SUCH_TEMP" in P
+    # Must not contradict the legitimate prerequisite-creation rule.
+    assert "照建不误" in P
