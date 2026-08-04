@@ -352,7 +352,10 @@ class SetScriptTrigger(MockTool):
     def run(self, args: SetScriptTriggerArgs, world: MockWorld) -> ToolResult:
         err = _need_script(world, args.script_id)
         if err: return err
-        return ok(data={"script_id": args.script_id, "trigger": args.trigger})
+        s = world.scripts[args.script_id]; s.trigger = args.trigger
+        return ok(data={"script_id": args.script_id, "trigger": args.trigger},
+                  world_diff={"added_or_modified": {f"scripts.{args.script_id}": s.model_dump()},
+                              "removed": []})
 
 
 class SetScriptPeriodArgs(BaseModel):

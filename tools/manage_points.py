@@ -466,7 +466,10 @@ class SetPointSimulation(MockTool):
     def run(self, args: SetPointSimulationArgs, world: MockWorld) -> ToolResult:
         if args.tag not in world.points:
             return fail(ErrorCode.POINT_NOT_FOUND, f"point {args.tag} not found")
-        return ok(data={"tag": args.tag, "mode": args.mode})
+        p = world.points[args.tag]; p.simulation_mode = args.mode
+        return ok(data={"tag": args.tag, "mode": args.mode},
+                  world_diff={"added_or_modified": {f"points.{args.tag}": p.model_dump()},
+                              "removed": []})
 
 
 class SetPointInitialValueArgs(BaseModel):
@@ -492,7 +495,10 @@ class SetPointInitialValue(MockTool):
     def run(self, args: SetPointInitialValueArgs, world: MockWorld) -> ToolResult:
         if args.tag not in world.points:
             return fail(ErrorCode.POINT_NOT_FOUND, f"point {args.tag} not found")
-        return ok(data={"tag": args.tag, "initial_value": args.value})
+        p = world.points[args.tag]; p.initial_value = args.value
+        return ok(data={"tag": args.tag, "initial_value": args.value},
+                  world_diff={"added_or_modified": {f"points.{args.tag}": p.model_dump()},
+                              "removed": []})
 
 
 class SetPointScalingArgs(BaseModel):

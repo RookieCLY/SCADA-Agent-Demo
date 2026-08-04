@@ -429,7 +429,9 @@ class AcknowledgeAlarm(MockTool):
     def run(self, args: AcknowledgeAlarmArgs, world: MockWorld) -> ToolResult:
         err = _need_alarm(world, args.alarm_id)
         if err: return err
-        return ok(data={"alarm_id": args.alarm_id, "acknowledged": True})
+        a = world.alarms[args.alarm_id]; a.acknowledged = True
+        return ok(data={"alarm_id": args.alarm_id, "acknowledged": True},
+                  world_diff=_al_diff(args.alarm_id, a))
 
 
 class ShelveAlarmArgs(BaseModel):
@@ -455,7 +457,9 @@ class ShelveAlarm(MockTool):
     def run(self, args: ShelveAlarmArgs, world: MockWorld) -> ToolResult:
         err = _need_alarm(world, args.alarm_id)
         if err: return err
-        return ok(data={"alarm_id": args.alarm_id, "shelved_minutes": args.minutes})
+        a = world.alarms[args.alarm_id]; a.shelved_minutes = args.minutes
+        return ok(data={"alarm_id": args.alarm_id, "shelved_minutes": args.minutes},
+                  world_diff=_al_diff(args.alarm_id, a))
 
 
 class UnshelveAlarmArgs(BaseModel):
@@ -480,7 +484,9 @@ class UnshelveAlarm(MockTool):
     def run(self, args: UnshelveAlarmArgs, world: MockWorld) -> ToolResult:
         err = _need_alarm(world, args.alarm_id)
         if err: return err
-        return ok(data={"alarm_id": args.alarm_id, "shelved": False})
+        a = world.alarms[args.alarm_id]; a.shelved_minutes = None
+        return ok(data={"alarm_id": args.alarm_id, "shelved": False},
+                  world_diff=_al_diff(args.alarm_id, a))
 
 
 class SetAlarmPriorityArgs(BaseModel):
@@ -728,7 +734,9 @@ class SuppressAlarm(MockTool):
     def run(self, args: SuppressAlarmArgs, world: MockWorld) -> ToolResult:
         err = _need_alarm(world, args.alarm_id)
         if err: return err
-        return ok(data={"alarm_id": args.alarm_id, "suppressed": True})
+        a = world.alarms[args.alarm_id]; a.suppressed = True
+        return ok(data={"alarm_id": args.alarm_id, "suppressed": True},
+                  world_diff=_al_diff(args.alarm_id, a))
 
 
 class SetAlarmEnableConditionArgs(BaseModel):
