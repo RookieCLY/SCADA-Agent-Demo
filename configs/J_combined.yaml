@@ -177,6 +177,24 @@ safety:
   enabled: true
   runtime_mode: design_time
   max_destructive_ops: 3
+  # Promoted from K9_cage on the results_w21 evidence (A x3, K7/K9 x5, 287 runs,
+  # scored by preservation rate): +11.50pp on the 10 discriminating cases,
+  # p = 0.031, 6 cases better and 0 worse, +6.25pp pooled at p = 0.024.
+  #
+  # DESTRUCTIVE_ATOMICS enumerates 10 names and _deny_bulk_destructive gates on
+  # it, so 24 of the 38 delete/disable/purge/drop atomics were never counted and
+  # the budget never bound for them. On the probe's discriminating cases K7
+  # counted 15 destructive operations across 50 runs and denied 5, against 79 and
+  # 22 here — blind to roughly four-fifths of the destructive work it performed,
+  # which left it statistically indistinguishable from the flat baseline A
+  # (+0.17pp) on exactly those cases.
+  #
+  # The feared capability cost did not appear: token use is if anything slightly
+  # lower (4,433 vs 4,717 input tokens/run) and no case regressed.
+  #
+  # Set explicitly rather than by flipping the code default, which stays False so
+  # the archived A-F/G/K runs stay reproducible without their configs changing.
+  destructive_by_prefix: true
   rules: null
 
 model:

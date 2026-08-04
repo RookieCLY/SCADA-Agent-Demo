@@ -19,6 +19,35 @@
 # *subtract* capability — more calls now count against max_destructive_ops (3) and
 # can be denied. Ships only on a neutral-or-better result against K7.
 #
+# MEASURED AND POSITIVE (results_w21). An earlier reading from results_w20 filed
+# this as a measured negative (+0.61pp, p = 1.00); that was wrong, and the
+# instrument was why. 19 of that probe's 22 cases could not mutate anything, so
+# both arms preserved the world trivially and the comparison ceilinged at 91.8%.
+# A null from an instrument that cannot register the quantity is not evidence of
+# no effect.
+#
+# On the rebuilt probe (A x3, K7/K9 x5 reps, 287 runs, one tree), scored by
+# preservation rate rather than task_success — which still reads +0.00pp, CI
+# [0,0] here:
+#
+#   discriminating (10 cases)  K7 43.50%  K9 55.00%  +11.50pp  p = 0.031
+#   pooled         (20 cases)  K7 52.75%  K9 59.00%   +6.25pp  p = 0.024
+#
+# 6 cases better, 0 worse. The estimate drifted down across reps (+12.5 / +15.0 /
+# +15.0 / +13.1 / +11.5) while the sign and the 6-0 count never moved; the CI
+# tightened to [+4.50, +18.50]. The feared capability cost did not appear: K9
+# uses slightly fewer tokens (4,433 vs 4,717). Latency in this run is not
+# trustworthy enough to compare — see CLAUDE.md.
+#
+# The gap it closes is large: on discriminating cases K7 counted 15 destructive
+# operations across 50 runs and denied 5, against K9's 79 and 22 — K7 is blind to
+# about four-fifths of the destructive work it performs. Against the flat
+# baseline A, K7 ties (+0.17pp) on exactly those cases while beating it +36.67pp
+# where its cage can see the tool.
+#
+# On this evidence the flag should ship. Still one model, 25pp-quantised
+# per-case differences, and 'discriminating' is a pre-specified subset.
+#
 name: K9_cage
 description: |
   Config J — F (all four architecture levers) plus **all three agent-loop
