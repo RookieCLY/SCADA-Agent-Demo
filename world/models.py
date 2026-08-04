@@ -25,6 +25,8 @@ class Point(BaseModel):
     min: float | None = None
     max: float | None = None
     description: str | None = None
+    initial_value: float | None = None
+    simulation_mode: str | None = None
 
 
 class Widget(BaseModel):
@@ -61,15 +63,51 @@ class Alarm(BaseModel):
     deadband: float = 0.0
     priority: Priority = "medium"
     enabled: bool = True
+    #: Annunciation state. ``enabled`` says whether the alarm is configured;
+    #: these say whether an operator would ever hear it. All three tools that
+    #: write them — acknowledge/shelve/suppress — previously returned ``ok`` and
+    #: changed nothing, so a run that silenced a safety interlock was
+    #: indistinguishable from one that refused to.
+    acknowledged: bool = False
+    suppressed: bool = False
+    shelved_minutes: int | None = None
 
 
 class Device(BaseModel):
+    """A registered device in the project catalogue.
+
+    Every field past ``tags`` was added when the ``manage_devices`` tools were
+    made to write. Before that the domain's 20 tools validated, returned ``ok``
+    and left the world untouched, so the collection only ever held whatever a
+    golden case seeded — the one failure shape a trace cannot show, since a
+    silent no-op and a correct write are the same successful call. All default,
+    so worlds serialized against the old four-field model still validate.
+    """
+
     model_config = ConfigDict(extra="forbid")
 
     id: str
     name: str
     type: str
     tags: list[str] = Field(default_factory=list)
+    enabled: bool = True
+    location: str | None = None
+    manufacturer: str | None = None
+    model: str | None = None
+    area_id: str | None = None
+    template_id: str | None = None
+    #: Communication parameters, written by ``configure_device_params``.
+    protocol: str | None = None
+    address: str | None = None
+    port: int | None = None
+    polling_interval_ms: int | None = None
+    timeout_ms: int | None = None
+    retry_count: int | None = None
+    #: Template-carried alarm defaults, written by ``set_device_alarm_limits``.
+    low_limit: float | None = None
+    high_limit: float | None = None
+    #: Last calibration reference recorded by ``calibrate_device``.
+    calibration_reference: float | None = None
 
 
 HistoryStorageMode = Literal["on_change", "periodic"]
@@ -86,6 +124,18 @@ class HistoryConfig(BaseModel):
     sample_interval_s: float = 1.0
     deadband: float = 0.0
     retention_days: int = 30
+    #: The archive itself, coarsely: how far back stored data reaches and how
+    #: much of it there is. Added so ``purge_history`` has something to destroy.
+    #: It is described as destructive and is named in the ``forbidden_tools`` of
+    #: every golden case, but it only ever validated the config and returned
+    #: ``ok`` — its ``intended_entities`` claimed ``histories.<tag>.data``, a
+    #: path that could not exist. A purge that removes nothing makes the §4.7
+    #: safety probe untestable: denying it prevents no loss.
+    stored_days: int = 0
+    stored_samples: int = 0
+    #: How the archive is kept, as distinct from ``storage_mode`` (when a sample
+    #: is taken). Written by ``set_storage_policy``.
+    storage_policy: Literal["raw", "compressed", "aggregated"] = "raw"
 
 
 ScriptTrigger = Literal["on_change", "on_alarm", "periodic", "on_event"]

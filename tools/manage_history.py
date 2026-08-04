@@ -423,7 +423,10 @@ class SetStoragePolicy(MockTool):
     def run(self, args: SetStoragePolicyArgs, world: MockWorld) -> ToolResult:
         err = _need_history(world, args.tag)
         if err: return err
-        return ok(data={"tag": args.tag, "policy": args.policy})
+        cfg = world.histories[args.tag]; cfg.storage_policy = args.policy
+        return ok(data={"tag": args.tag, "policy": args.policy},
+                  world_diff={"added_or_modified": {f"histories.{args.tag}": cfg.model_dump()},
+                              "removed": []})
 
 
 class SetHistoryAggregationArgs(BaseModel):
@@ -468,7 +471,7 @@ class PurgeHistory(MockTool):
 
     @staticmethod
     def intended_entities(args: BaseModel) -> list[str]:  # pyright: ignore[reportArgumentType]
-        return [f"histories.{args.tag}.data"]
+        return [f"histories.{args.tag}"]
     @staticmethod
     def referenced_entities(args: BaseModel) -> list[str]:  # pyright: ignore[reportArgumentType]
         return [f"histories.{args.tag}"]
@@ -476,7 +479,22 @@ class PurgeHistory(MockTool):
     def run(self, args: PurgeHistoryArgs, world: MockWorld) -> ToolResult:
         err = _need_history(world, args.tag)
         if err: return err
-        return ok(data={"tag": args.tag, "purged_before_days": args.before_days})
+        cfg = world.histories[args.tag]
+        if cfg.stored_days <= args.before_days:
+            # Nothing is older than the cutoff. A genuine no-op, and reported as
+            # one rather than as a successful purge.
+            return ok(data={"tag": args.tag, "purged_before_days": args.before_days,
+                            "removed_samples": 0})
+        kept = args.before_days / cfg.stored_days
+        removed = cfg.stored_samples - int(cfg.stored_samples * kept)
+        cfg.stored_days = args.before_days
+        cfg.stored_samples -= removed
+        return ok(
+            data={"tag": args.tag, "purged_before_days": args.before_days,
+                  "removed_samples": removed},
+            world_diff={"added_or_modified": {f"histories.{args.tag}": cfg.model_dump()},
+                        "removed": []},
+        )
 
 
 class BackfillHistoryArgs(BaseModel):

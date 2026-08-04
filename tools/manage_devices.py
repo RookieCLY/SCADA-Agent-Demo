@@ -1,7 +1,22 @@
-"""manage_devices — device registration and management stubs.
+"""manage_devices — device registration and management.
 
-The demo uses MockWorld.devices for the device catalog; these stubs provide
-realistic device-CRUD schemas for LLM evaluation without modifying world state.
+These were stubs: all 20 tools validated their arguments, returned ``ok`` and
+left ``MockWorld.devices`` untouched, while ``create_device`` reported
+``created: True`` and ``delete_device`` reported ``deleted: True``. That is the
+worst failure shape available to a trace, because a silent no-op and a correct
+write produce byte-identical successful calls — the only way to tell them apart
+is the absent ``world_diff``, which nothing was checking.
+
+It also broke the §4.7 safety probe: the cage denied bulk deletes in domains
+where nothing could be deleted, so "the policy prevented a mutation" was not
+demonstrable on 19 of 22 probe cases. ``devices`` is a real world collection, so
+unlike the prop domains (users, recipes, schedules, …) there was somewhere to
+write all along.
+
+Three tools still return ``ok`` without a diff, and that is correct rather than
+a leftover: ``reset_device`` clears latched faults, ``get_*`` read, and
+``export_device_config`` writes a file outside the world model. None of them
+claims otherwise — their ``intended_entities`` return ``[]``.
 """
 from __future__ import annotations
 
@@ -9,9 +24,19 @@ from typing import Annotated, Literal, Union
 
 from pydantic import BaseModel, Field
 
-from tools._base import ErrorCode, MockTool, ToolResult, ok
+from tools._base import ErrorCode, MockTool, ToolResult, fail, ok
+from world import MockWorld
+from world.models import Device
 
 DOMAIN = "manage_devices"
+
+
+def _diff(device: Device) -> dict[str, object]:
+    return {"added_or_modified": {f"devices.{device.id}": device.model_dump()}, "removed": []}
+
+
+def _missing(device_id: str) -> ToolResult:
+    return fail(ErrorCode.DEVICE_NOT_FOUND, f"device {device_id} not found")
 
 
 # ---------------------------------------------------------------- create_device
@@ -45,8 +70,23 @@ class CreateDevice(MockTool):
     def referenced_entities(args: BaseModel) -> list[str]:  # pyright: ignore[reportArgumentType]
         return [f"points.{t}" for t in args.tags] if args.tags else []
 
-    def run(self, args: CreateDeviceArgs, world: object) -> ToolResult:
-        return ok(data={"device_id": args.device_id, "created": True})
+    def run(self, args: CreateDeviceArgs, world: MockWorld) -> ToolResult:
+        if args.device_id in world.devices:
+            return fail(ErrorCode.ALREADY_EXISTS, f"device {args.device_id} already exists")
+        # Deliberately does *not* require the tags to exist yet: registering the
+        # device before its points is the normal engineering order. Linking to
+        # points that must already exist is link_device_points' job.
+        device = Device(
+            id=args.device_id,
+            name=args.device_name,
+            type=args.device_type,
+            tags=list(args.tags),
+            location=args.location,
+            manufacturer=args.manufacturer,
+            model=args.model,
+        )
+        world.devices[args.device_id] = device
+        return ok(data={"device_id": args.device_id, "created": True}, world_diff=_diff(device))
 
 
 # ---------------------------------------------------------------- update_device
@@ -77,8 +117,17 @@ class UpdateDevice(MockTool):
     def referenced_entities(args: BaseModel) -> list[str]:  # pyright: ignore[reportArgumentType]
         return [f"devices.{args.device_id}"]
 
-    def run(self, args: UpdateDeviceArgs, world: object) -> ToolResult:
-        return ok(data={"device_id": args.device_id, "updated": True})
+    def run(self, args: UpdateDeviceArgs, world: MockWorld) -> ToolResult:
+        device = world.devices.get(args.device_id)
+        if device is None:
+            return _missing(args.device_id)
+        if args.device_name is not None:
+            device.name = args.device_name
+        if args.location is not None:
+            device.location = args.location
+        if args.tags is not None:
+            device.tags = list(args.tags)
+        return ok(data={"device_id": args.device_id, "updated": True}, world_diff=_diff(device))
 
 
 # ---------------------------------------------------------------- delete_device
@@ -106,8 +155,14 @@ class DeleteDevice(MockTool):
     def referenced_entities(args: BaseModel) -> list[str]:  # pyright: ignore[reportArgumentType]
         return [f"devices.{args.device_id}"]
 
-    def run(self, args: DeleteDeviceArgs, world: object) -> ToolResult:
-        return ok(data={"device_id": args.device_id, "deleted": True})
+    def run(self, args: DeleteDeviceArgs, world: MockWorld) -> ToolResult:
+        if args.device_id not in world.devices:
+            return _missing(args.device_id)
+        del world.devices[args.device_id]
+        return ok(
+            data={"device_id": args.device_id, "deleted": True},
+            world_diff={"added_or_modified": {}, "removed": [f"devices.{args.device_id}"]},
+        )
 
 
 # ---------------------------------------------------------------- configure_device_params
@@ -141,8 +196,17 @@ class ConfigureDeviceParams(MockTool):
     def referenced_entities(args: BaseModel) -> list[str]:  # pyright: ignore[reportArgumentType]
         return [f"devices.{args.device_id}"]
 
-    def run(self, args: ConfigureDeviceParamsArgs, world: object) -> ToolResult:
-        return ok(data={"device_id": args.device_id, "configured": True})
+    def run(self, args: ConfigureDeviceParamsArgs, world: MockWorld) -> ToolResult:
+        device = world.devices.get(args.device_id)
+        if device is None:
+            return _missing(args.device_id)
+        device.protocol = args.protocol
+        device.address = args.address
+        device.port = args.port
+        device.polling_interval_ms = args.polling_interval_ms
+        device.timeout_ms = args.timeout_ms
+        device.retry_count = args.retry_count
+        return ok(data={"device_id": args.device_id, "configured": True}, world_diff=_diff(device))
 
 
 # ---------------------------------------------------------------- get_device_status
@@ -170,8 +234,16 @@ class GetDeviceStatus(MockTool):
     def referenced_entities(args: BaseModel) -> list[str]:  # pyright: ignore[reportArgumentType]
         return [f"devices.{args.device_id}"]
 
-    def run(self, args: GetDeviceStatusArgs, world: object) -> ToolResult:
-        return ok(data={"device_id": args.device_id, "status": "online", "health": "ok"})
+    def run(self, args: GetDeviceStatusArgs, world: MockWorld) -> ToolResult:
+        device = world.devices.get(args.device_id)
+        if device is None:
+            return _missing(args.device_id)
+        return ok(data={
+            "device_id": device.id,
+            "status": "online" if device.enabled else "out_of_service",
+            "health": "ok",
+            "type": device.type,
+        })
 
 
 # ---------------------------------------------------------------- list_devices
@@ -200,8 +272,17 @@ class ListDevices(MockTool):
     def referenced_entities(args: BaseModel) -> list[str]:  # pyright: ignore[reportArgumentType]
         return []
 
-    def run(self, args: ListDevicesArgs, world: object) -> ToolResult:
-        return ok(data={"devices": [], "count": 0})
+    def run(self, args: ListDevicesArgs, world: MockWorld) -> ToolResult:
+        matches = [
+            d for d in world.devices.values()
+            if args.device_type is None or d.type == args.device_type
+        ]
+        page = matches[: args.page_size]
+        return ok(data={
+            "devices": [{"device_id": d.id, "name": d.name, "type": d.type, "enabled": d.enabled} for d in page],
+            "count": len(page),
+            "total": len(matches),
+        })
 
 
 # ---------------------------------------------------------------- registry hookup
@@ -257,8 +338,15 @@ class CloneDevice(MockTool):
     def referenced_entities(args: BaseModel) -> list[str]:  # pyright: ignore[reportArgumentType]
         return [f"devices.{args.source_device_id}"]
 
-    def run(self, args: CloneDeviceArgs, world: object) -> ToolResult:
-        return ok(data={"new_device_id": args.new_device_id})
+    def run(self, args: CloneDeviceArgs, world: MockWorld) -> ToolResult:
+        source = world.devices.get(args.source_device_id)
+        if source is None:
+            return _missing(args.source_device_id)
+        if args.new_device_id in world.devices:
+            return fail(ErrorCode.ALREADY_EXISTS, f"device {args.new_device_id} already exists")
+        clone = source.model_copy(deep=True, update={"id": args.new_device_id})
+        world.devices[args.new_device_id] = clone
+        return ok(data={"new_device_id": args.new_device_id}, world_diff=_diff(clone))
 
 
 class MoveDeviceArgs(BaseModel):
@@ -281,8 +369,12 @@ class MoveDevice(MockTool):
     def referenced_entities(args: BaseModel) -> list[str]:  # pyright: ignore[reportArgumentType]
         return [f"devices.{args.device_id}"]
 
-    def run(self, args: MoveDeviceArgs, world: object) -> ToolResult:
-        return ok(data={"device_id": args.device_id, "area": args.target_area})
+    def run(self, args: MoveDeviceArgs, world: MockWorld) -> ToolResult:
+        device = world.devices.get(args.device_id)
+        if device is None:
+            return _missing(args.device_id)
+        device.area_id = args.target_area
+        return ok(data={"device_id": args.device_id, "area": args.target_area}, world_diff=_diff(device))
 
 
 class SetDeviceTemplateArgs(BaseModel):
@@ -305,8 +397,12 @@ class SetDeviceTemplate(MockTool):
     def referenced_entities(args: BaseModel) -> list[str]:  # pyright: ignore[reportArgumentType]
         return [f"devices.{args.device_id}"]
 
-    def run(self, args: SetDeviceTemplateArgs, world: object) -> ToolResult:
-        return ok(data={"device_id": args.device_id, "template_id": args.template_id})
+    def run(self, args: SetDeviceTemplateArgs, world: MockWorld) -> ToolResult:
+        device = world.devices.get(args.device_id)
+        if device is None:
+            return _missing(args.device_id)
+        device.template_id = args.template_id
+        return ok(data={"device_id": args.device_id, "template_id": args.template_id}, world_diff=_diff(device))
 
 
 class GetDeviceHealthArgs(BaseModel):
@@ -328,8 +424,11 @@ class GetDeviceHealth(MockTool):
     def referenced_entities(args: BaseModel) -> list[str]:  # pyright: ignore[reportArgumentType]
         return [f"devices.{args.device_id}"]
 
-    def run(self, args: GetDeviceHealthArgs, world: object) -> ToolResult:
-        return ok(data={"device_id": args.device_id, "health": "ok"})
+    def run(self, args: GetDeviceHealthArgs, world: MockWorld) -> ToolResult:
+        device = world.devices.get(args.device_id)
+        if device is None:
+            return _missing(args.device_id)
+        return ok(data={"device_id": device.id, "health": "ok" if device.enabled else "out_of_service"})
 
 
 class CalibrateDeviceArgs(BaseModel):
@@ -352,8 +451,12 @@ class CalibrateDevice(MockTool):
     def referenced_entities(args: BaseModel) -> list[str]:  # pyright: ignore[reportArgumentType]
         return [f"devices.{args.device_id}"]
 
-    def run(self, args: CalibrateDeviceArgs, world: object) -> ToolResult:
-        return ok(data={"device_id": args.device_id, "calibrated": True})
+    def run(self, args: CalibrateDeviceArgs, world: MockWorld) -> ToolResult:
+        device = world.devices.get(args.device_id)
+        if device is None:
+            return _missing(args.device_id)
+        device.calibration_reference = args.reference_value
+        return ok(data={"device_id": args.device_id, "calibrated": True}, world_diff=_diff(device))
 
 
 class ResetDeviceArgs(BaseModel):
@@ -370,12 +473,16 @@ class ResetDevice(MockTool):
 
     @staticmethod
     def intended_entities(args: BaseModel) -> list[str]:  # pyright: ignore[reportArgumentType]
-        return [f"devices.{args.device_id}.state"]
+        # A soft reset clears latched faults on the device itself; no persistent
+        # project state changes, so this claims nothing it does not write.
+        return []
     @staticmethod
     def referenced_entities(args: BaseModel) -> list[str]:  # pyright: ignore[reportArgumentType]
         return [f"devices.{args.device_id}"]
 
-    def run(self, args: ResetDeviceArgs, world: object) -> ToolResult:
+    def run(self, args: ResetDeviceArgs, world: MockWorld) -> ToolResult:
+        if args.device_id not in world.devices:
+            return _missing(args.device_id)
         return ok(data={"device_id": args.device_id, "reset": True})
 
 
@@ -398,8 +505,12 @@ class EnableDevice(MockTool):
     def referenced_entities(args: BaseModel) -> list[str]:  # pyright: ignore[reportArgumentType]
         return [f"devices.{args.device_id}"]
 
-    def run(self, args: EnableDeviceArgs, world: object) -> ToolResult:
-        return ok(data={"device_id": args.device_id, "enabled": True})
+    def run(self, args: EnableDeviceArgs, world: MockWorld) -> ToolResult:
+        device = world.devices.get(args.device_id)
+        if device is None:
+            return _missing(args.device_id)
+        device.enabled = True
+        return ok(data={"device_id": args.device_id, "enabled": True}, world_diff=_diff(device))
 
 
 class DisableDeviceArgs(BaseModel):
@@ -421,8 +532,12 @@ class DisableDevice(MockTool):
     def referenced_entities(args: BaseModel) -> list[str]:  # pyright: ignore[reportArgumentType]
         return [f"devices.{args.device_id}"]
 
-    def run(self, args: DisableDeviceArgs, world: object) -> ToolResult:
-        return ok(data={"device_id": args.device_id, "enabled": False})
+    def run(self, args: DisableDeviceArgs, world: MockWorld) -> ToolResult:
+        device = world.devices.get(args.device_id)
+        if device is None:
+            return _missing(args.device_id)
+        device.enabled = False
+        return ok(data={"device_id": args.device_id, "enabled": False}, world_diff=_diff(device))
 
 
 class SetDevicePollingArgs(BaseModel):
@@ -445,8 +560,12 @@ class SetDevicePolling(MockTool):
     def referenced_entities(args: BaseModel) -> list[str]:  # pyright: ignore[reportArgumentType]
         return [f"devices.{args.device_id}"]
 
-    def run(self, args: SetDevicePollingArgs, world: object) -> ToolResult:
-        return ok(data={"device_id": args.device_id, "interval_ms": args.interval_ms})
+    def run(self, args: SetDevicePollingArgs, world: MockWorld) -> ToolResult:
+        device = world.devices.get(args.device_id)
+        if device is None:
+            return _missing(args.device_id)
+        device.polling_interval_ms = args.interval_ms
+        return ok(data={"device_id": args.device_id, "interval_ms": args.interval_ms}, world_diff=_diff(device))
 
 
 class AssignDeviceToAreaArgs(BaseModel):
@@ -469,8 +588,12 @@ class AssignDeviceToArea(MockTool):
     def referenced_entities(args: BaseModel) -> list[str]:  # pyright: ignore[reportArgumentType]
         return [f"devices.{args.device_id}"]
 
-    def run(self, args: AssignDeviceToAreaArgs, world: object) -> ToolResult:
-        return ok(data={"device_id": args.device_id, "area_id": args.area_id})
+    def run(self, args: AssignDeviceToAreaArgs, world: MockWorld) -> ToolResult:
+        device = world.devices.get(args.device_id)
+        if device is None:
+            return _missing(args.device_id)
+        device.area_id = args.area_id
+        return ok(data={"device_id": args.device_id, "area_id": args.area_id}, world_diff=_diff(device))
 
 
 class LinkDevicePointsArgs(BaseModel):
@@ -493,8 +616,20 @@ class LinkDevicePoints(MockTool):
     def referenced_entities(args: BaseModel) -> list[str]:  # pyright: ignore[reportArgumentType]
         return [f"devices.{args.device_id}"] + [f"points.{t}" for t in args.tags]
 
-    def run(self, args: LinkDevicePointsArgs, world: object) -> ToolResult:
-        return ok(data={"device_id": args.device_id, "linked": len(args.tags)})
+    def run(self, args: LinkDevicePointsArgs, world: MockWorld) -> ToolResult:
+        device = world.devices.get(args.device_id)
+        if device is None:
+            return _missing(args.device_id)
+        # Unlike create_device this is an association to points that must already
+        # exist, so a missing tag is a reference failure the cascade detector can
+        # trace back to whichever step should have created it.
+        missing = [t for t in args.tags if t not in world.points]
+        if missing:
+            return fail(ErrorCode.POINT_NOT_FOUND, f"point(s) not found: {', '.join(missing)}")
+        for tag in args.tags:
+            if tag not in device.tags:
+                device.tags.append(tag)
+        return ok(data={"device_id": args.device_id, "linked": len(args.tags)}, world_diff=_diff(device))
 
 
 class GetDeviceDiagnosticsArgs(BaseModel):
@@ -516,8 +651,11 @@ class GetDeviceDiagnostics(MockTool):
     def referenced_entities(args: BaseModel) -> list[str]:  # pyright: ignore[reportArgumentType]
         return [f"devices.{args.device_id}"]
 
-    def run(self, args: GetDeviceDiagnosticsArgs, world: object) -> ToolResult:
-        return ok(data={"device_id": args.device_id, "faults": []})
+    def run(self, args: GetDeviceDiagnosticsArgs, world: MockWorld) -> ToolResult:
+        device = world.devices.get(args.device_id)
+        if device is None:
+            return _missing(args.device_id)
+        return ok(data={"device_id": device.id, "faults": [], "protocol": device.protocol})
 
 
 class SetDeviceAlarmLimitsArgs(BaseModel):
@@ -541,8 +679,23 @@ class SetDeviceAlarmLimits(MockTool):
     def referenced_entities(args: BaseModel) -> list[str]:  # pyright: ignore[reportArgumentType]
         return [f"devices.{args.device_id}"]
 
-    def run(self, args: SetDeviceAlarmLimitsArgs, world: object) -> ToolResult:
-        return ok(data={"device_id": args.device_id, "limits_set": True})
+    def run(self, args: SetDeviceAlarmLimitsArgs, world: MockWorld) -> ToolResult:
+        device = world.devices.get(args.device_id)
+        if device is None:
+            return _missing(args.device_id)
+        if args.low_limit is None and args.high_limit is None:
+            return fail(ErrorCode.BUSINESS_RULE, "at least one of low_limit / high_limit is required")
+        if (
+            args.low_limit is not None
+            and args.high_limit is not None
+            and args.low_limit >= args.high_limit
+        ):
+            return fail(ErrorCode.BUSINESS_RULE, "low_limit must be below high_limit")
+        if args.low_limit is not None:
+            device.low_limit = args.low_limit
+        if args.high_limit is not None:
+            device.high_limit = args.high_limit
+        return ok(data={"device_id": args.device_id, "limits_set": True}, world_diff=_diff(device))
 
 
 class ExportDeviceConfigArgs(BaseModel):
@@ -564,8 +717,11 @@ class ExportDeviceConfig(MockTool):
     def referenced_entities(args: BaseModel) -> list[str]:  # pyright: ignore[reportArgumentType]
         return [f"devices.{args.device_id}"]
 
-    def run(self, args: ExportDeviceConfigArgs, world: object) -> ToolResult:
-        return ok(data={"device_id": args.device_id, "exported": True})
+    def run(self, args: ExportDeviceConfigArgs, world: MockWorld) -> ToolResult:
+        device = world.devices.get(args.device_id)
+        if device is None:
+            return _missing(args.device_id)
+        return ok(data={"device_id": device.id, "exported": True, "config": device.model_dump()})
 
 
 DEVICE_ACTIONS.update({
