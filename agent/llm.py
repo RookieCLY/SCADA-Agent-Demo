@@ -1165,7 +1165,7 @@ def build_llm(
         _load_dotenv_into_environ()
         api_key = _env("DOCODE_API_KEY")
         base_url = _env("DOCODE_API_URL") or "https://docode.cc/v1"
-        model_name = cfg.name or _env("DOCODE_MODEL") or "gpt-5.6-terra"
+        model_name = cfg.name or _env("DOCODE_MODEL") or "gpt-5.6-luna"
         if not api_key:
             raise RuntimeError(
                 "docode: missing DOCODE_API_KEY (set it in .env or env)."
