@@ -44,21 +44,33 @@ from __future__ import annotations
 import argparse
 import io
 import json
+import os
 import random
 import statistics
 import sys
 from collections import defaultdict
 from pathlib import Path
 
-sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8")
-
 REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO))
+
+
+def _force_utf8_stdout() -> None:
+    """Only when run as a script. Rebinding ``sys.stdout`` at *import* time
+    detaches the caller's stream — score_safety_probe.py imports the statistics
+    from here, and this line closed the stdout it had already wrapped."""
+    if hasattr(sys.stdout, "buffer"):
+        sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8")
 
 from eval.metrics import evaluate_traces  # noqa: E402
 from eval.schema import load_golden_dataset  # noqa: E402
 
-TRIALS = Path(r"D:/GitHub/SCADA-trials")
+#: Where the ``results_w*`` archives live — the repo's parent, since the repo is
+#: one working copy checked out beside them. Overridable with ``--trials-root``
+#: (or ``SCADA_TRIALS_ROOT``): this was an absolute path to one machine's
+#: checkout, so the script that produced every significance number in CLAUDE.md
+#: silently found no traces once the tree moved.
+TRIALS = Path(os.environ.get("SCADA_TRIALS_ROOT") or REPO.parent)
 MAX_REPS = 12
 BOOTSTRAP = 10_000
 PERMUTATIONS = 10_000
@@ -154,7 +166,11 @@ def main() -> int:
     ap.add_argument("--subset", choices=["all", "noact", "capability"], default="all")
     ap.add_argument("--dataset", default=str(REPO / "eval" / "golden_dataset.jsonl"))
     ap.add_argument("--title", default="arm comparison")
+    ap.add_argument("--trials-root", default=None,
+                    help=f"Directory holding the results_w* archives (default: {TRIALS})")
     args = ap.parse_args()
+
+    trials = Path(args.trials_root) if args.trials_root else TRIALS
 
     golden = load_golden_dataset(args.dataset)
     keep = {g.id for g in golden}
@@ -168,7 +184,7 @@ def main() -> int:
     order: list[str] = []
     for spec in args.arm:
         name, results_dir, prefix = spec.split(":")
-        traces = load_arm(TRIALS / results_dir, prefix)
+        traces = load_arm(trials / results_dir, prefix)
         traces = {k: v for k, v in traces.items() if k[0] in keep}
         if not traces:
             print(f"!! {name}: no traces under {results_dir} ({prefix}_rep*)")
@@ -243,4 +259,5 @@ def main() -> int:
 
 
 if __name__ == "__main__":
+    _force_utf8_stdout()
     raise SystemExit(main())
