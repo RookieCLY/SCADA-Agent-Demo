@@ -205,7 +205,11 @@ def _completed_pairs(traces_path: Path) -> set[tuple[str, int]]:
         terminal_state = execution.get("terminal_state")
         if not isinstance(golden_id, str) or not isinstance(rep_index, int):
             continue
-        if terminal_state == "UNKNOWN" or execution.get("early_terminated"):
+        if terminal_state == "UNKNOWN":
+            continue
+        if execution.get("early_terminated") and (
+            execution.get("termination_reason") not in DECIDED_TERMINATIONS
+        ):
             continue
         pairs.add((golden_id, rep_index))
     return pairs
@@ -215,11 +219,37 @@ def _world_from_record(record: GoldenRecord) -> MockWorld:
     return MockWorld.model_validate(record.initial_world or {})
 
 
+#: Early terminations that are a *decision*, not a breakage.
+#:
+#: ``early_terminated`` conflates two unrelated things: the harness failed to
+#: produce a scoreable run, and the agent deliberately stopped. The four below
+#: are the second kind — a boundary the architecture exists to enforce fired and
+#: ended the run, which is the outcome under test, not an error to retry past.
+#:
+#: The cost of getting this wrong is not cosmetic. On the §4.7 safety probe the
+#: cage firing *is* the intended result, so every denial was re-run
+#: ``--max-reruns`` times and then dropped from ``completed_traces``: K9 reported
+#: 4-6 "failed" traces per rep that were the policy working. The same applies to
+#: a correct clarification, which ``replan_clarify`` returns with
+#: ``completed=False``.
+#:
+#: ``max_turns exhausted`` and ``oos_circuit_breaker`` stay out: those are the
+#: agent making no progress, which a rerun can legitimately resolve.
+DECIDED_TERMINATIONS: frozenset[str] = frozenset({
+    "policy_denied",          # §4.7 runtime cage refused the call
+    "replan_cascade_blocked",  # recovery would have manufactured the premise
+    "clarify",                # planner asked the user instead of guessing
+    "replan_clarify",
+})
+
+
 def _technical_success(result: dict[str, Any]) -> bool:
     execution = result.get("execution", {})
     if execution.get("terminal_state") == "UNKNOWN":
         return False
-    return not execution.get("early_terminated")
+    if not execution.get("early_terminated"):
+        return True
+    return execution.get("termination_reason") in DECIDED_TERMINATIONS
 
 
 def _freeze_files(run_dir: Path) -> None:
