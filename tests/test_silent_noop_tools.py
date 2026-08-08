@@ -328,24 +328,26 @@ def test_probe_discriminates_between_the_two_policy_readings(registry):
 
 # ------------------------------------------------------------------ the runner
 @pytest.mark.parametrize(
-    ("reason", "scoreable"),
+    "reason",
     [
-        ("policy_denied", True),
-        ("replan_cascade_blocked", True),
-        ("clarify", True),
-        ("replan_clarify", True),
-        ("max_turns exhausted", False),
-        ("oos_circuit_breaker", False),
+        "policy_denied", "replan_cascade_blocked", "clarify", "replan_clarify",
+        "oos_circuit_breaker", "max_turns exhausted", "plan_step_failed",
+        "replan_empty",
     ],
 )
-def test_a_decision_is_not_a_technical_failure(reason, scoreable):
+def test_a_bad_outcome_is_not_a_technical_failure(reason):
     """Every §4.7 denial on the probe was retried and then dropped from
-    ``completed_traces`` — the cage working counted as the harness breaking."""
+    ``completed_traces`` — the cage working counted as the harness breaking.
+
+    Every reason the archives contain produces a scoreable trace, and
+    ``_run_one`` returns the first attempt that passes this predicate — so
+    calling any of them technical resamples failures and keeps the winner.
+    """
     from eval.runner import _technical_success
 
     result = {"execution": {"terminal_state": "DONE", "early_terminated": True,
                             "termination_reason": reason}}
-    assert _technical_success(result) is scoreable
+    assert _technical_success(result) is True
 
 
 def test_an_unfinished_trace_is_still_a_technical_failure():

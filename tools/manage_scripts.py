@@ -27,6 +27,15 @@ class CreateScriptArgs(BaseModel):
     bound_tag: str | None = None
     period_s: float | None = Field(default=None, gt=0)
     body: str = ""
+    # ``Script.enabled`` has always existed and enable/disable_script write it,
+    # but the creator did not expose it — so "创建一个默认禁用的脚本"
+    # (golden-086) required a two-step plan the one-shot planner never
+    # produced, while the interleaved baseline found ``disable_script`` by
+    # trial. State at create what create controls.
+    enabled: bool = Field(
+        default=True,
+        description="False = create the script disabled (默认禁用).",
+    )
 
     @model_validator(mode="after")
     def _trigger_consistency(self):
@@ -78,6 +87,7 @@ class CreateScript(MockTool):
             bound_tag=args.bound_tag,
             period_s=args.period_s,
             body=args.body,
+            enabled=args.enabled,
         )
         world.scripts[args.id] = script
         return ok(

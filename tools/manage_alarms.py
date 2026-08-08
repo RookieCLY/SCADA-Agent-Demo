@@ -20,10 +20,34 @@ DOMAIN = "manage_alarms"
 # ---------------------------------------------------------------- create_analog
 class CreateAnalogAlarmArgs(BaseModel):
     action: Literal["create_analog_alarm"] = "create_analog_alarm"
-    id: str = Field(description="Unique alarm ID, e.g. 'alarm_temp_high_101'")
+    # The old example here ('alarm_temp_high_101') taught the *wrong* shape: in
+    # results_w23 the planner copied it as `alarm_ft_200_high` on every rep of
+    # golden-071/-092 while the project convention is `<TAG>_<LEVEL>`. An example
+    # in a schema is a vocabulary, and this one was the only vocabulary the model
+    # had. Conventional-ID disclosure, same precedent as bind_point.property.
+    id: str = Field(
+        description=(
+            "Unique alarm ID. Convention: <TAG>_<LEVEL> where LEVEL is "
+            "H|HH|L|LL, e.g. 'TEMP_101_H', 'FT-200_HH'."
+        )
+    )
     tag: str = Field(description="The SCADA point tag to monitor, e.g. 'TEMP_101'")
-    high_limit: float | None = None
-    low_limit: float | None = None
+    # The "at least one limit" rule lives in a model_validator, which Pydantic
+    # does NOT express in model_json_schema() — so the planning catalogue rendered
+    # these as ordinary optional fields and the planner omitted both. That was the
+    # single largest compile drop on results_w23: 32 of 48, every one killing the
+    # alarm entity outright and taking its dependent steps with it. The flat
+    # baseline survives the same mistake because it calls the tool, reads the
+    # error text, and retries; the plan tier drops the step and replans blind.
+    # Stating the constraint on the fields themselves is what reaches the model.
+    high_limit: float | None = Field(
+        default=None,
+        description="High alarm limit. At least one of high_limit / low_limit is REQUIRED.",
+    )
+    low_limit: float | None = Field(
+        default=None,
+        description="Low alarm limit. At least one of high_limit / low_limit is REQUIRED.",
+    )
     deadband: float = Field(default=0.0, ge=0)
     priority: Priority = "medium"
 

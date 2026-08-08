@@ -207,7 +207,8 @@ class BindPointArgs(BaseModel):
         description=(
             "widget property to bind. Conventional names by widget type: "
             "tank→level|temperature|pressure, gauge→value, pump→state|status|frequency, "
-            "valve→status, button→command, indicator→status, text→value|visible. "
+            "valve→status, button→command, indicator→status, text→text|value|visible, "
+            "banner→visible. "
             "Prefer the physical quantity the element shows over a generic name."
         )
     )

@@ -267,6 +267,20 @@ def test_create_script_happy(chemical_world: MockWorld):
     assert r.ok and "s1" in chemical_world.scripts
 
 
+def test_create_script_can_start_disabled(chemical_world: MockWorld):
+    """golden-086 asks for a script that is 默认禁用. ``Script.enabled`` always
+    existed and enable/disable_script write it, but the creator did not expose
+    it — a one-shot plan could not satisfy the request at all."""
+    r = CreateScript().run(
+        CreateScriptArgs(
+            id="hb", name="心跳巡检", trigger="periodic", period_s=60, enabled=False
+        ),
+        chemical_world,
+    )
+    assert r.ok and chemical_world.scripts["hb"].enabled is False
+    assert r.world_diff["added_or_modified"]["scripts.hb"]["enabled"] is False
+
+
 def test_create_script_unknown_tag(chemical_world: MockWorld):
     r = CreateScript().run(
         CreateScriptArgs(id="s1", name="X", trigger="on_change", bound_tag="NOPE"),
