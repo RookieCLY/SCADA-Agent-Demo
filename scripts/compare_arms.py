@@ -79,20 +79,33 @@ NOACT = {"reject", "ask_for_clarification", "fail_or_clarify"}
 
 
 # ------------------------------------------------------------------ loading
+#: Runs dropped by the last ``load_arm`` call, per ``prefix_repN``. A run that
+#: never started carries no information and must not be scored as a failure —
+#: but dropping it silently is how ``results_w22`` reported "A, 3 reps" when
+#: ``A_rep2`` was 102/106 dead (the provider failed mid-sequence) and the arm
+#: really had two. The rep count then overstates precision on one side of a
+#: paired comparison, so the drops are recorded and printed.
+VOID_RUNS: dict[str, int] = {}
+
+
 def load_arm(root: Path, prefix: str) -> dict[tuple[str, int], dict]:
     traces: dict[tuple[str, int], dict] = {}
     for rep in range(MAX_REPS):
         path = root / f"{prefix}_rep{rep}" / "traces.jsonl"
         if not path.is_file():
             continue
+        void = 0
         for line in path.open(encoding="utf-8"):
             if not line.strip():
                 continue
             trace = json.loads(line)
             execution = trace.get("execution") or {}
             if execution.get("total_turns", 0) == 0 and execution.get("terminal_state") == "UNKNOWN":
+                void += 1
                 continue
             traces[(trace["query"]["golden_id"], rep)] = trace
+        if void:
+            VOID_RUNS[f"{prefix}_rep{rep}"] = void
     return traces
 
 
@@ -196,6 +209,13 @@ def main() -> int:
         arms[name] = per_case_means(rows, args.metric)
         runs[name] = {k: r for k, r in zip(keys, rows, strict=False)}
         order.append(name)
+
+    if VOID_RUNS:
+        print("!! runs that never started, dropped from scoring "
+              "(a rep with many of these is not a rep):")
+        for run, n in sorted(VOID_RUNS.items()):
+            print(f"     {run}: {n} void")
+        print()
 
     if args.ref not in arms:
         print(f"reference arm {args.ref!r} not loaded")
