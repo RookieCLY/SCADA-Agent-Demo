@@ -312,6 +312,10 @@ class ModelConfig(BaseModel):
     name: str = "mock"
     temperature: float = 0.0
     max_tokens: int = 4096
+    #: Reasoning-effort tier for providers that accept it (gpt-5.x style:
+    #: "low"/"medium"/"high"/"xhigh"/"max"). None sends nothing, reproducing
+    #: every archived run. Overridable per-run with DOCODE_REASONING_EFFORT.
+    reasoning_effort: str | None = None
 
 
 class DatasetConfig(BaseModel):

@@ -548,6 +548,7 @@ class OpenAICompatibleLLM:
         max_tokens: int = 4096,
         registry: Any | None = None,
         hierarchical: bool = False,
+        reasoning_effort: str | None = None,
     ) -> None:
         from openai import OpenAI
 
@@ -557,6 +558,11 @@ class OpenAICompatibleLLM:
         self.max_tokens = max_tokens
         self.registry = registry
         self.hierarchical = hierarchical
+        # Reasoning-effort tier for providers that accept it (gpt-5.x style:
+        # low/medium/high/xhigh/max). Sent via extra_body so the installed SDK
+        # version does not have to know the parameter; None sends nothing and
+        # reproduces the archived behaviour exactly.
+        self.reasoning_effort = reasoning_effort
         # cross-turn conversation state
         self._messages: list[dict[str, Any]] = []
         self._pending_tool_ids: list[tuple[str, str]] = []
@@ -568,6 +574,18 @@ class OpenAICompatibleLLM:
         # Cache them; callers treat the result as read-only (same contract as
         # _cached_json_schema).
         self._domain_schema_cache: dict[tuple[str, tuple[str, ...]], dict[str, Any]] = {}
+
+    def _effort_kwargs(self) -> dict[str, Any]:
+        """``extra_body`` carrying the reasoning-effort tier, or nothing.
+
+        Applied to every completion this adapter makes — the interleaved loop,
+        ``make_plan`` and ``select_workflow`` — so an arm's effort setting is
+        uniform across its tiers rather than an accidental property of which
+        code path ran.
+        """
+        if not self.reasoning_effort:
+            return {}
+        return {"extra_body": {"reasoning_effort": self.reasoning_effort}}
 
     def reset(self) -> None:
         """Discard cross-turn state so the next ``call()`` starts a fresh chat.
@@ -607,6 +625,7 @@ class OpenAICompatibleLLM:
                 ],
                 temperature=0.0,
                 max_tokens=32,
+                **self._effort_kwargs(),
             )
             text = (resp.choices[0].message.content or "").strip()
         except Exception:
@@ -681,6 +700,7 @@ class OpenAICompatibleLLM:
                 messages=messages,
                 temperature=0.0,
                 max_tokens=self.max_tokens,
+                **self._effort_kwargs(),
             )
             text = (resp.choices[0].message.content or "").strip()
         except Exception:
@@ -958,6 +978,7 @@ class OpenAICompatibleLLM:
             "messages": self._messages,
             "temperature": self.temperature,
             "max_tokens": self.max_tokens,
+            **self._effort_kwargs(),
         }
         if tools_schema:
             kwargs["tools"] = tools_schema
@@ -1179,6 +1200,9 @@ def build_llm(
             max_tokens=cfg.max_tokens,
             registry=registry,
             hierarchical=hierarchical,
+            # Env wins over config so a run script can pin the tier for both
+            # arms uniformly without touching every config file.
+            reasoning_effort=_env("DOCODE_REASONING_EFFORT") or cfg.reasoning_effort,
         )
     if cfg.provider == "nvidia":
         _load_dotenv_into_environ()
