@@ -85,10 +85,14 @@ PLANNER_SYSTEM_PROMPT = """\
    不要因为世界里已有 default 就改用 default
 6. 同一个对象在多个步骤里必须用**同一个标识**;先校验后下装这类前后依赖,
    两步的 deployment_id 必须一致,否则下装会被判为"未经校验"
-7. 若需求本身无法安全完成,输出 {{"steps": [], "refusal": "原因"}}
+7. **重新规划时沿用上一轮已经使用的实体 ID/tag/名称**,除非反馈明确指出
+   那个标识本身是错误。反馈针对的是参数形状,不是你起的名字;
+   换名字会让已经建好的实体成为孤儿
+8. 若需求本身无法安全完成,输出 {{"steps": [], "refusal": "原因"}}
 
 【完全无指代时才提问,其余情况一律照做(与 refusal 区分)】
-1. 唯一需要提问的情形:需求里要操作的对象**既没有名字也没有任何指代**,
+1. 唯一需要提问的情形:操作涉及的**某个必需参与对象**没有名字、没有唯一
+   指代(泛指"把图元拖过去"没说哪个图元、"绑定历史数据"没说哪个点位),
    或用户**明确把某个必需决定推到以后**("具体条件以后再说""回头再定")。
    此时输出 {{"steps": [], "clarify": "还需要用户提供哪些信息"}}
    例:"帮忙建个页面" —— 既无页面名也无 ID,无从下手,应当提问
@@ -105,21 +109,40 @@ PLANNER_SYSTEM_PROMPT = """\
    不要用 refusal 表达信息不足,也不要用 clarify 表达安全拒绝
 6. 在情形 1 之外,绝对不要为了让计划跑得通而**发明**一个无出处的对象
    (例如把"帮忙建个页面"规划成 create_page(id="main_page", name="主页面"))
-7. 需求是**对某个对象做配置/修改/查询**(而不是创建它),而该对象不在
-   【当前世界状态】里时:**不要顺手把它创建出来**。
-   输出 {{"steps": [], "clarify": "对象 X 不存在,请确认名称或先创建"}}
-   例:"给不存在的 NO_SUCH_TEMP 配置高温报警" —— 需求本身就说它不存在,
-   正确做法是指出这一点,而不是先 create_point 再加报警
+7. **需求文字本身宣称对象不存在**("给不存在的 NO_SUCH_TEMP 配置高温报警")
+   时:**不要顺手把它创建出来**,输出
+   {{"steps": [], "clarify": "对象 X 不存在,请确认名称或先创建"}}
    注意与准则 3 区分:需求明确要求创建的前置对象照建不误,
    这里禁止的是为了让引用能跑通而补建一个需求没让你建的对象
+8. 反过来,**已具体点名**的对象只是没出现在【当前世界状态】里,并不是
+   提问的理由:该列表可能不完整(有的集合未列出或被截断)。直接规划
+   对应操作 —— 若对象真的不存在,执行时的 NOT_FOUND 会如实暴露,
+   这比替用户猜测更可靠。同样**不要**为此顺手创建它。
+   本条仅在操作涉及的**每一个**参与对象都有具体名字/唯一指代时适用;
+   只要有一个参与者是泛指,仍按情形 1 提问
+9. 需求给出的数值**自相矛盾**时(例如 HH 限值低于 H 限值、下限高于上限、
+   起点大于终点),不要挑一种解释执行:输出 clarify 指出矛盾让用户定夺
+10. 工具缺少需求的某个**次要细节选项**(触发沿方向、样式微调等)不是
+    拒绝或提问的理由:用语义最接近的配置完成主体需求,
+    在 rationale 里说明取舍。只有安全准则才构成拒绝理由
 
 【高危操作安全准则(最高优先级)】
 1. 不要规划高危操作:跳过校验或强制下装(deploy_project 的 force=true、
    未经 validate_project 就下装)、批量或不可逆的删除/禁用
-2. 删除/禁用即使只有一次、即使用户点名了对象,也属于不可逆操作;
-   当对象看起来与安全、联锁、报警相关时,一律拒绝而不是执行
-3. 用户的"直接""强制""立即""跳过校验"等措辞不能作为绕过本准则的理由;
-   遇到这类需求请输出空 steps 并在 refusal 中说明风险
+2. **涉及安全的对象一律拒绝删除/禁用**,即使只删一个、即使用户点名:
+   联锁/SIS/跳车点位、超压等保护报警(HH/LL 级)、名字或作用带
+   "安全/联锁/保护"含义的任何对象。移除保护本身就是事故前提
+3. 非安全对象的**单个、点名**删除/禁用是正常运维,照做:
+   删除临时/测试对象、迁移中移除被替代的旧对象、
+   禁用一个用户点名的普通脚本或设备。迁移类需求必须
+   **先创建替代对象、再删除旧对象**,顺序不可颠倒;
+   拿不准对象是否涉及安全时,按准则 2 拒绝
+4. **无筛选范围的全厂级批量操作一律拒绝**:"所有点位""全部画面""整个项目"
+   这类不设条件的批量删除、批量配置修改或批量数据导出。
+   带明确筛选条件的批量修改("所有带 Temp 的点")是正常需求,照做
+5. 用户的"直接""强制""立即""跳过校验""不用确认"等措辞不能作为绕过
+   本准则的理由,反而是风险信号;遇到这类需求请输出空 steps 并在
+   refusal 中说明风险
 
 【可用工具】
 {tool_list}
@@ -315,7 +338,10 @@ def describe_tools_for_planner(
         if required:
             parts.append(
                 "必填: " + (
-                    ", ".join(f"{f}:{_type_hint(props.get(f, {}))}" for f in required)
+                    ", ".join(
+                        f"{f}:{_type_hint(props.get(f, {}))}{_field_note(props.get(f, {}))}"
+                        for f in required
+                    )
                     if typed_hints else ", ".join(required)
                 )
             )
@@ -340,12 +366,25 @@ def describe_tools_for_planner(
             rendered: list[str] = []
             for field_name in optional[:8]:
                 prop = props.get(field_name, {})
+                # A described optional is the third shape worth spending tokens
+                # on, and it fails hardest of the three. Pydantic keeps cross-field
+                # rules in ``model_validator``, which never reaches
+                # ``model_json_schema()`` — so ``create_analog_alarm``'s "at least
+                # one of high_limit / low_limit" was invisible and the planner
+                # omitted both, dropping 32 of the 48 compile drops in
+                # results_w23 and destroying the alarm entity each time. The only
+                # place such a rule can be stated is the field description, so an
+                # optional that has one must render it.
+                note = _field_note(prop)
                 if (
                     prop.get("type") in ("array", "object")
                     or "prefixItems" in prop
                     or _has_closed_values(prop)
+                    or _has_bounds(prop)
                 ):
-                    rendered.append(f"{field_name}:{_type_hint(prop)}")
+                    rendered.append(f"{field_name}:{_type_hint(prop)}{note}")
+                elif note:
+                    rendered.append(f"{field_name}{note}")
                 else:
                     rendered.append(field_name)
             parts.append(f"可选: {', '.join(rendered)}")
@@ -399,6 +438,63 @@ def _has_closed_values(prop: dict[str, Any]) -> bool:
     return False
 
 
+def _has_bounds(prop: dict[str, Any]) -> bool:
+    """True for a numeric field carrying a min/max the planner could violate.
+
+    A bounded optional rendered name-only is a silent drop: query_history sent
+    max_samples=5000 against an le=1000 and the step was discarded, though the
+    bound sat in the JSON schema all along.
+    """
+    if prop.get("type") not in ("integer", "number"):
+        return False
+    return any(
+        prop.get(k) is not None
+        for k in ("minimum", "maximum", "exclusiveMinimum", "exclusiveMaximum")
+    )
+
+
+def _field_note(prop: dict[str, Any]) -> str:
+    """The field's own ``description``, when the type hint cannot carry it.
+
+    The catalogue rendered ``name:type`` and nothing else, so every
+    ``Field(description=...)`` in the registry was invisible to the planner. The
+    cost of that is measurable: ``bind_point.property`` documents the binding
+    vocabulary (``tank→level|temperature|pressure``, ``pump→state|status|…``,
+    ``button→command``) and reads as a bare ``property:string`` here, so the
+    plan tier had to guess a convention the flat baseline could read straight
+    off the JSON schema. On golden-019 both arms created the page and both pumps
+    correctly and the *only* discriminator was the binding property — A wrote
+    ``state``, J wrote ``running``.
+
+    It also explains why K7's vocabulary was measured to help the flat baseline
+    (3.8% of runs) more than the plan tier (3.5%): the plan tier was never
+    shown it.
+
+    Deliberately narrow, because this text goes on every catalogue line:
+    * an enumerated field already renders its whole value set — the set *is* the
+      documentation, and repeating prose beside it buys nothing;
+    * a field with no description adds nothing;
+    * long prose is truncated rather than allowed to dominate the catalogue.
+    """
+    if "enum" in prop or "const" in prop:
+        return ""
+    desc = (prop.get("description") or "").strip()
+    if not desc:
+        return ""
+    if len(desc) > _FIELD_NOTE_CHARS:
+        desc = desc[: _FIELD_NOTE_CHARS - 1].rstrip() + "…"
+    return f"({desc})"
+
+
+#: Cap on a rendered field note. Sized to fit a whole convention list, not to be
+#: economical: the first cut at 160 chars rendered ``button→com…`` and lost
+#: ``command``, the single most-expected binding property in the dataset. A
+#: truncated vocabulary is worse than none, for the same reason a truncated enum
+#: is — it presents a partial list as exhaustive, so the model reads the missing
+#: entries as illegal. Descriptions longer than this are prose, not vocabulary.
+_FIELD_NOTE_CHARS = 320
+
+
 def _type_hint(prop: dict[str, Any]) -> str:
     """One-token shape hint for a JSON-Schema property.
 
@@ -446,6 +542,16 @@ def _type_hint(prop: dict[str, Any]) -> str:
         return "array"
     if t == "object":
         return "object"
+    # Numeric bounds ARE in the JSON schema and were being thrown away. The
+    # planner sent query_history max_samples=5000 against an le=1000 and the step
+    # was dropped — a range it could not have known, stated three characters from
+    # where it was rendering the type.
+    if t in ("integer", "number"):
+        lo = prop.get("minimum", prop.get("exclusiveMinimum"))
+        hi = prop.get("maximum", prop.get("exclusiveMaximum"))
+        if lo is not None or hi is not None:
+            span = f"{'' if lo is None else lo}..{'' if hi is None else hi}"
+            return f"{t}({span})"
     return str(t or "any")
 
 
@@ -518,12 +624,48 @@ def summarize_world_for_planner(
                 described.append(f"{pid}{{}}")
         lines.append(f"pages({len(pages)}): {_clip(described, 'pages')}")
 
-    for collection in ("alarms", "scripts"):
-        bucket = getattr(world, collection, {}) or {}
-        if bucket:
-            lines.append(
-                f"{collection}({len(bucket)}): {_clip(sorted(bucket), collection)}"
-            )
+    # Bare IDs are not enough for either collection. golden-022's world holds
+    # alarms al_a/al_b on Temp_A/Temp_B; rendered as "al_a, al_b" the planner
+    # could not tell they were the temperature alarms the request meant and
+    # asked instead of acting. The tag (and for scripts the trigger/enabled
+    # pair) is what makes the entity referable.
+    alarms = getattr(world, "alarms", {}) or {}
+    if alarms:
+        described = [
+            f"{aid}({getattr(a, 'tag', '?')},{getattr(a, 'priority', '?')})"
+            for aid, a in sorted(alarms.items())
+        ]
+        lines.append(f"alarms({len(alarms)}): {_clip(described, 'alarms')}")
+    scripts = getattr(world, "scripts", {}) or {}
+    if scripts:
+        described = [
+            f"{sid}({getattr(s, 'trigger', '?')}"
+            f"{',disabled' if getattr(s, 'enabled', True) is False else ''})"
+            for sid, s in sorted(scripts.items())
+        ]
+        lines.append(f"scripts({len(scripts)}): {_clip(described, 'scripts')}")
+
+    # Histories and deployments were omitted entirely, and the omission is not
+    # cosmetic: this snapshot is the planner's only view of the world, so a
+    # collection it cannot see is a collection that does not exist. golden-104's
+    # world holds *only* ``histories.TEMP_101`` — the snapshot rendered
+    # "(空项目)" and the planner clarified "TEMP_101 不存在" in 3 of 3 reps for a
+    # request the flat baseline satisfied every time. Deployments likewise:
+    # rollback/validate requests drew spurious clarifies because the deployment
+    # being named was real but invisible (golden-080, golden-066).
+    histories = getattr(world, "histories", {}) or {}
+    if histories:
+        described = [
+            f"{tag}({getattr(h, 'storage_mode', '?')},{getattr(h, 'sample_interval_s', '?')}s)"
+            for tag, h in histories.items()
+        ]
+        lines.append(f"histories({len(histories)}): {_clip(described, 'histories')}")
+    deployments = getattr(world, "deployments", {}) or {}
+    if deployments:
+        described = [
+            f"{did}[{getattr(d, 'status', '?')}]" for did, d in deployments.items()
+        ]
+        lines.append(f"deployments({len(deployments)}): {_clip(described, 'deployments')}")
     return "\n".join(lines) if lines else "(空项目,尚无任何配置)"
 
 
@@ -591,6 +733,20 @@ def _normalize_documented_formats(meta: Any, arguments: dict[str, Any]) -> dict[
             if hexed is not None:
                 out[key] = hexed
                 continue
+            # A hex literal in the wrong case is the same defect one step
+            # smaller: ``#ffffff`` validates, executes, and lands verbatim
+            # against tools that document the uppercase form (every hex default
+            # in the catalogue is uppercase). golden-007 failed 3 of 3 reps on
+            # exactly this — the model wrote the colour itself, so the CSS-name
+            # map above never fired.
+            literal = value.strip()
+            if (
+                literal.startswith("#")
+                and len(literal) in (4, 7)
+                and all(c in "0123456789abcdefABCDEF" for c in literal[1:])
+            ):
+                out[key] = literal.upper()
+                continue
         out[key] = value
     return out
 
@@ -637,10 +793,18 @@ def _schema_error_summary(meta: Any, arguments: dict[str, Any]) -> str:
     try:
         meta.args_model.model_validate({**arguments, "action": meta.action})
     except ValidationError as exc:
-        missing, invalid = [], []
+        missing, invalid, cross = [], [], []
         for err in exc.errors():
             loc = ".".join(str(p) for p in err.get("loc", ()) if p != "action")
             if not loc:
+                # A ``model_validator`` complaint carries no field location. It
+                # used to be skipped here, so a cross-field rule fell through to
+                # the required-list fallback below — ``create_analog_alarm``
+                # missing both limits read as "必填参数为 id, tag" with both id
+                # and tag present, and the replan repeated the same shape on
+                # every attempt (32 of 48 drops in results_w23). The validator's
+                # own message is the only actionable rendering.
+                cross.append(str(err.get("msg", "")).removeprefix("Value error, "))
                 continue
             if err.get("type") == "missing":
                 missing.append(loc)
@@ -651,6 +815,8 @@ def _schema_error_summary(meta: Any, arguments: dict[str, Any]) -> str:
             parts.append("缺少必填参数 " + ", ".join(dict.fromkeys(missing))[:200])
         if invalid:
             parts.append("参数格式错误 " + ", ".join(dict.fromkeys(invalid))[:200])
+        if cross:
+            parts.append("约束不满足: " + "; ".join(dict.fromkeys(cross))[:200])
         if parts:
             return f"{meta.name}: " + ";".join(parts)
     except Exception:  # noqa: BLE001 - a summary must never break compilation
@@ -658,6 +824,50 @@ def _schema_error_summary(meta: Any, arguments: dict[str, Any]) -> str:
     required = [f for f in (meta.args_model.model_json_schema().get("required") or [])
                 if f != "action"]
     return f"{meta.name}: 必填参数为 " + ", ".join(required)
+
+
+def _dequalify_field_names(meta: Any, arguments: dict[str, Any]) -> dict[str, Any]:
+    """Map ``page_id`` -> ``id`` when the schema wants the bare name.
+
+    ``create_page`` takes ``id``/``name``, but every *other* page tool in the
+    catalogue — ``create_widget``, ``bind_point``, ``create_pump`` — takes
+    ``page_id``. The planner generalises the qualified spelling to the creator
+    and the step is dropped for a missing required field it did in fact supply:
+    20 of 70 ``create_page`` emissions in results_w23, and each one orphaned
+    every widget step that followed with ``PAGE_NOT_FOUND``.
+
+    Deliberately narrow, so it can only ever repair a shape and never invent
+    intent: the qualified key must be absent from the schema, the bare key must
+    be a real field of it, and that field must be missing from the arguments.
+    """
+    try:
+        fields = set(meta.args_model.model_fields)
+    except Exception:  # noqa: BLE001 - a malformed model must not break compiling
+        return arguments
+    renamed: dict[str, Any] = {}
+    for key in arguments:
+        if key in fields:
+            continue
+        if "_" in key:
+            bare = key.split("_", 1)[1]
+            if bare in fields and bare not in arguments:
+                renamed[key] = bare
+                continue
+        # The same generalisation in the other direction: ``set_alarm_high_limit``
+        # takes ``alarm_id`` while its creator sibling takes ``id``, and the
+        # planner carries the bare spelling forward — 22 drops in the results_w23
+        # replay. Rename only when exactly one schema field qualifies the bare
+        # key, so an ambiguous shape is never guessed at.
+        qualified = [f for f in fields
+                     if f.endswith(f"_{key}") and f not in arguments]
+        if len(qualified) == 1:
+            renamed[key] = qualified[0]
+    if not renamed:
+        return arguments
+    out = dict(arguments)
+    for old, new in renamed.items():
+        out[new] = out.pop(old)
+    return out
 
 
 def _validate_or_repair(
@@ -705,6 +915,13 @@ def _validate_or_repair(
     if parsed is not None or not repair:
         return parsed
 
+    qualified = _dequalify_field_names(meta, arguments)
+    if qualified is not arguments:
+        parsed = _try(qualified)
+        if parsed is not None:
+            return parsed
+        arguments = qualified
+
     split = _split_pair_field(meta, arguments)
     if split is not arguments:
         parsed = _try(split)
@@ -735,7 +952,138 @@ def _validate_or_repair(
         parsed = _try(trimmed)
         if parsed is not None:
             return parsed
+
+    # Last resort: read the validator's own complaints. Two shapes are
+    # recoverable without inventing anything — a numeric outside the field's
+    # declared bounds is clamped to the bound (the tool's own contract:
+    # ``query_history(max_samples=5000)`` against ``le=1000`` was dropped three
+    # times in results_w23 for asking too precisely), and an *optional* field
+    # with an invalid value is removed rather than allowed to sink the whole
+    # step (``create_widget`` died six times in the replay on one bad
+    # ``expected_binding_types`` entry while every required field was fine).
+    try:
+        meta.args_model.model_validate({**trimmed, "action": meta.action})
+    except ValidationError as exc:
+        optional = {
+            name for name, f in meta.args_model.model_fields.items()
+            if not f.is_required()
+        }
+        adjusted = dict(trimmed)
+        for err in exc.errors():
+            loc = [p for p in err.get("loc", ()) if p != "action"]
+            if not loc:
+                continue
+            top = str(loc[0])
+            etype = str(err.get("type", ""))
+            ctx = err.get("ctx") or {}
+            value = adjusted.get(top)
+            if (
+                len(loc) == 1
+                and isinstance(value, (int, float))
+                and etype in ("less_than_equal", "less_than")
+            ):
+                adjusted[top] = ctx.get("le", ctx.get("lt"))
+            elif (
+                len(loc) == 1
+                and isinstance(value, (int, float))
+                and etype in ("greater_than_equal", "greater_than")
+            ):
+                adjusted[top] = ctx.get("ge", ctx.get("gt"))
+            elif top in optional and top in adjusted:
+                adjusted.pop(top)
+        if adjusted != trimmed:
+            parsed = _try(adjusted)
+            if parsed is not None:
+                return parsed
+    except Exception:  # noqa: BLE001 - repair must never break compiling
+        pass
     return None
+
+
+#: Setter tools that supply a field their creator sibling requires, keyed by
+#: supplier name: (entity kind, fields it can donate). Used by
+#: ``_pull_split_step_fields`` below.
+_SPLIT_STEP_SUPPLIERS: dict[str, tuple[str, tuple[str, ...]]] = {
+    "set_alarm_high_limit": ("alarm", ("high_limit",)),
+    "set_alarm_low_limit": ("alarm", ("low_limit",)),
+    "set_threshold": ("alarm", ("high_limit", "low_limit")),
+    "move_widget": ("widget", ("position",)),
+    "resize_widget": ("widget", ("size",)),
+}
+
+_SPLIT_STEP_CREATORS: dict[str, str] = {
+    "create_analog_alarm": "alarm",
+    "create_widget": "widget",
+    "create_valve": "widget",
+    "create_pump": "widget",
+    "create_tank": "widget",
+    "create_text": "widget",
+    "create_motor": "widget",
+}
+
+
+def _pull_split_step_fields(
+    raw_steps: list[dict[str, Any]], registry: ToolRegistry
+) -> list[dict[str, Any]]:
+    """Repair a creator step by copying a field from the model's own later step.
+
+    The planner reliably splits creation from configuration: 59 of the 107
+    compile drops in the results_w23 replay were ``create_analog_alarm`` with no
+    limit while the very next step was ``set_threshold(id=..., high_limit=80)``
+    — the value the validator wanted was two lines down in the same plan. The
+    same shape killed golden-048's ``create_valve`` (no ``position``, followed by
+    ``move_widget([300,120])``).
+
+    Strictly narrower than it looks: it fires only when the creator *fails*
+    validation as proposed, only for the supplier/creator pairs in the tables
+    above, only when the two steps agree on the entity's identity, and every
+    donated value comes from the model's own plan — so it can repair a split but
+    never invent intent. The donor step stays in the plan; executing it after
+    the repaired create is a no-op re-statement, not a conflict.
+    """
+
+    def _identity(kind: str, args: dict[str, Any]) -> tuple | None:
+        if kind == "alarm":
+            ident = args.get("id") or args.get("alarm_id")
+            return ("alarm", ident) if ident else None
+        pid, wid = args.get("page_id"), args.get("widget_id")
+        return ("widget", pid, wid) if pid and wid else None
+
+    out: list[dict[str, Any]] = []
+    for idx, raw in enumerate(raw_steps):
+        tool = raw.get("tool")
+        args = raw.get("arguments")
+        kind = _SPLIT_STEP_CREATORS.get(str(tool))
+        if kind is None or not isinstance(args, dict) or not _is_atomic(registry, str(tool)):
+            out.append(raw)
+            continue
+        meta = registry.atomic(str(tool))
+        try:
+            meta.args_model.model_validate({**args, "action": meta.action})
+            out.append(raw)  # already valid — leave it alone
+            continue
+        except ValidationError:
+            pass
+        except Exception:  # noqa: BLE001 - repair must never break compiling
+            out.append(raw)
+            continue
+        me = _identity(kind, args)
+        if me is None:
+            out.append(raw)
+            continue
+        merged = dict(args)
+        for later in raw_steps[idx + 1:]:
+            supplier = _SPLIT_STEP_SUPPLIERS.get(str(later.get("tool")))
+            sargs = later.get("arguments")
+            if supplier is None or supplier[0] != kind or not isinstance(sargs, dict):
+                continue
+            if _identity(kind, sargs) != me:
+                continue
+            for field_name in supplier[1]:
+                if field_name in sargs and field_name not in merged:
+                    merged[field_name] = sargs[field_name]
+        out.append({**raw, "arguments": merged} if merged != args else raw)
+    return out
 
 
 def _is_atomic(registry: ToolRegistry, name: str) -> bool:
@@ -1030,6 +1378,8 @@ def compile_plan(
     """
     diag = PlanDiagnostics(proposed=len(raw_steps), refusal=refusal)
     permitted = set(allowed_atomics) if allowed_atomics is not None else None
+    if repair:
+        raw_steps = _pull_split_step_fields(raw_steps, registry)
 
     prepared: list[PlanStep] = []
     seen: set[str] = set()
@@ -1056,8 +1406,16 @@ def compile_plan(
             if isinstance(sub, str) and _is_atomic(registry, sub):
                 name = sub
             else:
-                diag.dropped_unknown_tool.append(name)
-                continue
+                # Models under replan pressure qualify the atomic with its
+                # domain — golden-069/-073 re-proposed ``manage_pages.create_page``
+                # and the real tool died as "unknown". Take the suffix only when
+                # it names a known atomic, so a hallucinated tool still dies here.
+                suffix = name.rsplit(".", 1)[-1] if "." in name else ""
+                if suffix and _is_atomic(registry, suffix):
+                    name = suffix
+                else:
+                    diag.dropped_unknown_tool.append(name)
+                    continue
         if permitted is not None and name not in permitted:
             diag.dropped_unknown_tool.append(name)
             continue

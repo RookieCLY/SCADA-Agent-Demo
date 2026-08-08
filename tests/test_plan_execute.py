@@ -28,7 +28,13 @@ from agent.config import (
 )
 from agent.llm import LLMResponse, LLMToolCall, _extract_json_object
 from agent.orchestrator import Agent
-from agent.planner import compile_plan, describe_tools_for_planner, state_route, states_exposing
+from agent.planner import (
+    compile_plan,
+    describe_tools_for_planner,
+    state_route,
+    states_exposing,
+    summarize_world_for_planner,
+)
 from agent.tool_registry import build_default_registry
 from agent.tracer import Tracer
 from world import MockWorld, Point
@@ -213,6 +219,125 @@ def test_domain_style_step_is_accepted():
         MockWorld(),
     )
     assert [s.tool for s in plan.steps] == ["create_point"]
+
+
+def test_domain_prefixed_atomic_is_unwrapped_not_dropped():
+    """Under replan pressure models qualify the atomic with its domain
+    ("manage_pages.create_page") — the tool is real, the spelling is not.
+    results_w23 dropped it as *unknown* on golden-069/-073 and the page was
+    never created. A suffix that is not a known atomic must still die."""
+    plan = compile_plan(
+        [
+            {"tool": "manage_points.create_point",
+             "arguments": {"tag": "T1", "type": "analog"}},
+            {"tool": "manage_unicorns.summon_unicorn", "arguments": {}},
+        ],
+        REGISTRY,
+        MockWorld(),
+    )
+    assert [s.tool for s in plan.steps] == ["create_point"]
+    assert plan.diagnostics.dropped_unknown_tool == ["manage_unicorns.summon_unicorn"]
+
+
+def test_hex_literal_case_is_normalized_to_documented_form():
+    """golden-007, 3 of 3 reps: the model wrote ``#ffffff`` itself, so the
+    CSS-name map never fired, and the lowercase literal landed verbatim against
+    a catalogue whose every documented hex default is uppercase."""
+    plan = compile_plan(
+        [_step("set_page_background", page_id="main_page", background="#ffffff")],
+        REGISTRY,
+        MockWorld(),
+    )
+    assert plan.steps and plan.steps[0].arguments["background"] == "#FFFFFF"
+
+
+def test_world_summary_includes_histories_and_deployments():
+    """The snapshot is the planner's only view of the world, so an omitted
+    collection is an entity that does not exist: golden-104's world holds only
+    ``histories.TEMP_101`` and the planner clarified "TEMP_101 不存在" in 3 of 3
+    reps for a request the flat baseline satisfied every time."""
+    from world import Deployment, HistoryConfig
+
+    w = MockWorld()
+    w.histories["TEMP_101"] = HistoryConfig(tag="TEMP_101")
+    w.deployments["deploy_staging"] = Deployment(id="deploy_staging")
+    text = summarize_world_for_planner(w)
+    assert "TEMP_101" in text and "histories" in text
+    assert "deploy_staging" in text and "deployments" in text
+
+
+def test_split_limit_step_is_pulled_into_the_creator():
+    """59 of 107 replayed w23 drops: ``create_analog_alarm`` with no limit while
+    the model's own next step was ``set_threshold(id=..., high_limit=80)``. The
+    donated value comes from the plan itself, never from a guess."""
+    plan = compile_plan(
+        [
+            _step("create_point", tag="PT-100", type="analog"),
+            _step("create_analog_alarm", id="PT-100_H", tag="PT-100"),
+            _step("set_threshold", id="PT-100_H", high_limit=80),
+        ],
+        REGISTRY,
+        MockWorld(),
+    )
+    tools = [s.tool for s in plan.steps]
+    assert "create_analog_alarm" in tools
+    create = plan.steps[tools.index("create_analog_alarm")]
+    assert create.arguments["high_limit"] == 80
+    assert plan.diagnostics.dropped_schema_invalid == []
+
+
+def test_split_position_step_is_pulled_into_the_creator():
+    """golden-048: ``create_valve`` without the required position, followed by
+    ``move_widget([300,120])`` on the same widget."""
+    plan = compile_plan(
+        [
+            _step("create_valve", page_id="p1", widget_id="valve1"),
+            _step("move_widget", page_id="p1", widget_id="valve1", position=[300, 120]),
+        ],
+        REGISTRY,
+        MockWorld(),
+    )
+    tools = [s.tool for s in plan.steps]
+    assert "create_valve" in tools
+    create = plan.steps[tools.index("create_valve")]
+    assert tuple(create.arguments["position"]) == (300, 120)
+
+
+def test_bare_key_is_qualified_when_exactly_one_field_matches():
+    """``set_alarm_high_limit`` takes ``alarm_id``; the planner writes ``id`` —
+    22 drops in the w23 replay. Renamed only when unambiguous."""
+    plan = compile_plan(
+        [_step("set_alarm_high_limit", id="A1", high_limit=90)],
+        REGISTRY,
+        MockWorld(),
+    )
+    assert plan.steps and plan.steps[0].arguments["alarm_id"] == "A1"
+
+
+def test_out_of_bounds_numeric_is_clamped_to_the_documented_bound():
+    """``query_history(max_samples=5000)`` against ``le=1000``: dropped three
+    times in results_w23 for asking too precisely. The clamp is the tool's own
+    contract, not a guess."""
+    plan = compile_plan(
+        [_step("query_history", tag="T1", max_samples=5000)],
+        REGISTRY,
+        MockWorld(),
+    )
+    assert plan.steps and plan.steps[0].arguments["max_samples"] == 1000
+
+
+def test_invalid_optional_field_does_not_sink_the_step():
+    """A bad ``expected_binding_types`` entry killed six otherwise-valid
+    ``create_widget`` steps in the replay; required fields must win."""
+    plan = compile_plan(
+        [_step("create_widget", page_id="p1", widget_id="w1", type="pump",
+               position=[10, 10], size=[50, 50],
+               expected_binding_types={"status": "digital"})],
+        REGISTRY,
+        MockWorld(),
+    )
+    assert plan.steps and plan.steps[0].tool == "create_widget"
+    assert plan.steps[0].arguments.get("expected_binding_types") in (None, {})
 
 
 def test_every_rejection_is_named_in_the_diagnostics():
