@@ -402,6 +402,68 @@ def test_key_fields_accepts_generated_widget_id_within_same_page():
 	}
 
 
+def test_key_fields_assigns_identical_siblings_injectively():
+	"""golden-031: two expected pump widgets distinguished by *nothing* but
+	their generated IDs, two pumps created. Requiring a unique alias candidate
+	made the case unfalsifiable — each expected entity matched both actuals,
+	was declared ambiguous, and every arm failed on every rep. Any one-to-one
+	assignment is semantically valid, and a genuinely missing sibling must
+	still fail."""
+	from eval.metrics import _compare_final_state_from_diff
+
+	expected = {
+		"match_mode": "key_fields",
+		"added_or_modified": {
+			"pages.p1.widgets.pump_a.type": "pump",
+			"pages.p1.widgets.pump_b.type": "pump",
+		},
+	}
+	both = {
+		"added_or_modified": {
+			"pages.p1.widgets.cool_pump_1.type": "pump",
+			"pages.p1.widgets.cool_pump_2.type": "pump",
+		},
+		"removed": [],
+	}
+	matched, report = _compare_final_state_from_diff(both, expected)
+	assert matched is True
+	assert len(set(report["entity_aliases"].values())) == 2
+
+	only_one = {
+		"added_or_modified": {"pages.p1.widgets.cool_pump_1.type": "pump"},
+		"removed": [],
+	}
+	matched, report = _compare_final_state_from_diff(only_one, expected)
+	assert matched is False
+	assert report["missing"]
+
+
+def test_expected_change_does_not_violate_its_own_unchanged_constraint():
+	"""golden-043 expects ``alarms.TEMP_ZONE_1_H.priority`` to change AND lists
+	the alarm under ``unchanged_keys_must_remain`` — unsatisfiable by
+	construction until the demanded change is exempted. A different field under
+	the same protected entity must still violate."""
+	from eval.metrics import _compare_final_state_from_diff
+
+	expected = {
+		"match_mode": "subset",
+		"added_or_modified": {"alarms.A1.priority": "high"},
+		"removed": [],
+		"unchanged_keys_must_remain": ["alarms.A1"],
+	}
+	demanded = {"added_or_modified": {"alarms.A1.priority": "high"}, "removed": []}
+	matched, report = _compare_final_state_from_diff(demanded, expected)
+	assert matched is True and not report["unexpected"]
+
+	collateral = {
+		"added_or_modified": {"alarms.A1.priority": "high", "alarms.A1.high_limit": 99.0},
+		"removed": [],
+	}
+	matched, report = _compare_final_state_from_diff(collateral, expected)
+	assert matched is False
+	assert any("violated_unchanged" in item for item in report["unexpected"])
+
+
 def test_key_fields_does_not_alias_point_tags():
 	golden = _golden(
 		{

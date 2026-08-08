@@ -196,6 +196,9 @@ def _match_key_fields(
 	matched_paths: list[str] = []
 	wrong_value: list[dict[str, Any]] = []
 	ambiguous: list[str] = []
+	#: Actual entities already claimed by an expected entity — matching is a
+	#: one-to-one assignment, so a literal or aliased match consumes its target.
+	used_actuals: set[str] = set()
 
 	for prefix in sorted(expected_entities, key=_entity_match_order):
 		want_fields = expected_entities[prefix]
@@ -203,36 +206,49 @@ def _match_key_fields(
 		actual_fields = actual_entities.get(prefix)
 
 		# 1) literal prefix present with every expected field equal -> no alias.
-		if actual_fields is not None and all(
-			actual_fields.get(field_path) == value
-			for field_path, value in want_fields.items()
+		if (
+			prefix not in used_actuals
+			and actual_fields is not None
+			and all(
+				actual_fields.get(field_path) == value
+				for field_path, value in want_fields.items()
+			)
 		):
+			used_actuals.add(prefix)
 			matched_paths.extend(f"{prefix}.{field_path}" for field_path in want_fields)
 			continue
 
-		# 2) look for a unique actual entity in the same alias scope that
-		#    satisfies every expected key field exactly.
+		# 2) look for an actual entity in the same alias scope that satisfies
+		#    every expected key field exactly.
 		candidates = []
 		if alias_scopes:
 			candidates = [
 				cand_prefix
 				for cand_prefix, cand_fields in actual_entities.items()
-				if _entity_alias_scope(cand_prefix) in alias_scopes
+				if cand_prefix not in used_actuals
+				and _entity_alias_scope(cand_prefix) in alias_scopes
 				and all(
 					cand_fields.get(field_path) == value
 					for field_path, value in want_fields.items()
 				)
 			]
 
-		if len(candidates) == 1:
-			alias = candidates[0]
+		if candidates:
+			# Every candidate satisfies every expected key field exactly, so any
+			# injective assignment is semantically valid; requiring uniqueness
+			# made *identical siblings unfalsifiable* — golden-031 expects two
+			# pump widgets distinguished by nothing but their generated IDs, the
+			# model creates exactly two pumps, each expected entity matched both
+			# and the case failed for every arm on every rep. Deterministic pick
+			# (sorted first) + the used-set keeps the assignment one-to-one;
+			# genuinely under-supplied worlds still fail because the leftover
+			# expected entity finds every candidate consumed.
+			alias = min(candidates)
+			used_actuals.add(alias)
 			if alias != prefix:
 				entity_aliases[prefix] = alias
 			matched_paths.extend(f"{prefix}.{field_path}" for field_path in want_fields)
 			continue
-
-		if len(candidates) > 1:
-			ambiguous.append(prefix)
 
 		# 3) no unique alias -> diagnose against the literal entity if present;
 		#    fields that are neither matched nor wrong are reported as missing
@@ -308,9 +324,23 @@ def _compare_final_state_from_diff(
 
 	for unchanged_path in unchanged:
 		for changed_path in list(actual_add) + list(actual_removed):
-			if _same_path_or_child(changed_path, unchanged_path):
-				report["unexpected"].append(f"violated_unchanged:{unchanged_path}")
-				break
+			if not _same_path_or_child(changed_path, unchanged_path):
+				continue
+			# A change the case itself demands cannot violate its own entity's
+			# unchanged constraint. golden-043 expects
+			# ``alarms.TEMP_ZONE_1_H.priority`` to change AND lists the alarm
+			# under ``unchanged_keys_must_remain`` — satisfying one side always
+			# violated the other, so the case was unsatisfiable by construction
+			# (the same defect class the safety probe had). It went unnoticed
+			# while ``set_alarm_priority`` was a silent no-op; the moment the
+			# tool wrote, every arm started failing it. Any *other* change under
+			# the protected entity still violates.
+			if any(_same_path_or_child(changed_path, want) for want in want_add) or (
+				changed_path in want_removed
+			):
+				continue
+			report["unexpected"].append(f"violated_unchanged:{unchanged_path}")
+			break
 
 	matched = not report["missing"] and not report["wrong_value"] and not report["unexpected"]
 	if mode == "strict" and report.get("unexpected_removed"):

@@ -154,6 +154,7 @@ def _select_records(
     records: list[GoldenRecord],
     *,
     golden_ids: list[str],
+    exclude_golden_ids: list[str] | None = None,
     run_all: bool,
     dataset_sample: int | None,
     sample_seed: int,
@@ -191,6 +192,17 @@ def _select_records(
             rng.shuffle(selected)
         selected = selected[:dataset_sample]
 
+    # Applied last, so it holds however the selection was made. A case a provider
+    # cannot accept produces no trace, never counts as complete, and is therefore
+    # re-run by every --resume — gpt-5.6-terra answers golden-059 and golden-074
+    # with HTTP 400 "flagged for possible cybersecurity risk" and they retried
+    # indefinitely. Excluding such cases *explicitly and for every arm* is also
+    # what keeps a comparison paired: the filter is not deterministic, so leaving
+    # it to chance scores different arms on different case sets.
+    if exclude_golden_ids:
+        drop = set(exclude_golden_ids)
+        selected = [record for record in selected if record.id not in drop]
+
     return selected
 
 
@@ -207,10 +219,6 @@ def _completed_pairs(traces_path: Path) -> set[tuple[str, int]]:
             continue
         if terminal_state == "UNKNOWN":
             continue
-        if execution.get("early_terminated") and (
-            execution.get("termination_reason") not in DECIDED_TERMINATIONS
-        ):
-            continue
         pairs.add((golden_id, rep_index))
     return pairs
 
@@ -219,37 +227,44 @@ def _world_from_record(record: GoldenRecord) -> MockWorld:
     return MockWorld.model_validate(record.initial_world or {})
 
 
-#: Early terminations that are a *decision*, not a breakage.
+#: Retained for callers that imported it; the harness no longer consults it.
 #:
-#: ``early_terminated`` conflates two unrelated things: the harness failed to
-#: produce a scoreable run, and the agent deliberately stopped. The four below
-#: are the second kind — a boundary the architecture exists to enforce fired and
-#: ended the run, which is the outcome under test, not an error to retry past.
-#:
-#: The cost of getting this wrong is not cosmetic. On the §4.7 safety probe the
-#: cage firing *is* the intended result, so every denial was re-run
-#: ``--max-reruns`` times and then dropped from ``completed_traces``: K9 reported
-#: 4-6 "failed" traces per rep that were the policy working. The same applies to
-#: a correct clarification, which ``replan_clarify`` returns with
-#: ``completed=False``.
-#:
-#: ``max_turns exhausted`` and ``oos_circuit_breaker`` stay out: those are the
-#: agent making no progress, which a rerun can legitimately resolve.
+#: It began as an allowlist of early terminations that are a *decision* rather
+#: than a breakage, added because a §4.7 denial — the outcome under test on the
+#: safety probe — was being retried and then dropped from ``completed_traces``.
+#: The allowlist was the wrong shape. Every ``termination_reason`` the archives
+#: contain produces a complete, scoreable trace: ``max_turns exhausted`` (326
+#: occurrences), ``plan_step_failed`` (242), ``replan_empty`` (104),
+#: ``policy_denied`` (61), ``oos_circuit_breaker`` (56),
+#: ``replan_cascade_blocked`` (13), ``replan_clarify`` (8). None of them is a
+#: harness failure, and ``compare_arms.load_arm`` already scores all of them —
+#: it skips only ``UNKNOWN`` with zero turns. So the distinction the allowlist
+#: drew does not exist, and maintaining it meant re-litigating each new reason.
 DECIDED_TERMINATIONS: frozenset[str] = frozenset({
-    "policy_denied",          # §4.7 runtime cage refused the call
-    "replan_cascade_blocked",  # recovery would have manufactured the premise
-    "clarify",                # planner asked the user instead of guessing
-    "replan_clarify",
+    "policy_denied", "replan_cascade_blocked", "clarify", "replan_clarify",
+    "oos_circuit_breaker", "max_turns exhausted", "plan_step_failed",
+    "replan_empty",
 })
 
 
 def _technical_success(result: dict[str, Any]) -> bool:
-    execution = result.get("execution", {})
-    if execution.get("terminal_state") == "UNKNOWN":
-        return False
-    if not execution.get("early_terminated"):
-        return True
-    return execution.get("termination_reason") in DECIDED_TERMINATIONS
+    """True when the run produced a trace worth scoring.
+
+    A *technical* failure is one where the harness could not produce a usable
+    trace — no ``finish()`` call, so no terminal state. Everything else, however
+    badly the agent did, is a result: the cage denied a call, the planner asked
+    the user, the plan ran out of replans, the turn budget ran out. Those are
+    outcomes under test, and ``compare_arms.load_arm`` scores every one of them.
+
+    Retrying them would be worse than wasteful. ``_run_one`` returns the first
+    attempt that passes this predicate, so treating a legitimate bad outcome as
+    technical resamples failures until one succeeds and keeps the winner —
+    selective resampling that biases the score upward. That never actually
+    happened (809 of 810 archived failures ran with ``--max-reruns 0``, and no
+    archived trace file contains a rescued retry), which is why the archives are
+    unaffected by this correction.
+    """
+    return result.get("execution", {}).get("terminal_state") != "UNKNOWN"
 
 
 def _freeze_files(run_dir: Path) -> None:
@@ -424,6 +439,7 @@ def run_experiment(args: argparse.Namespace) -> int:
     selected_records = _select_records(
         records,
         golden_ids=_parse_csv(args.golden_ids),
+        exclude_golden_ids=_parse_csv(args.exclude_golden_ids),
         run_all=args.all,
         dataset_sample=args.dataset_sample,
         sample_seed=args.sample_seed,
@@ -649,6 +665,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--config", required=True, help="Path to experiment YAML config")
     parser.add_argument("--dataset", default=None, help=f"Path to golden dataset JSONL (default: {DEFAULT_DATASET})")
     parser.add_argument("--golden-ids", help="Comma-separated golden IDs to run")
+    parser.add_argument(
+        "--exclude-golden-ids",
+        help="Comma-separated golden IDs to skip, applied after selection. Use for "
+             "cases a provider refuses outright: they never produce a trace, so "
+             "--resume retries them forever and arms end up scored on different sets.",
+    )
     parser.add_argument("--dataset-sample", type=int, help="Run the first N selected records")
     parser.add_argument("--shuffle-sample", action="store_true", help="Shuffle before applying --dataset-sample")
     parser.add_argument("--sample-seed", type=int, default=42, help="Seed for --shuffle-sample")
