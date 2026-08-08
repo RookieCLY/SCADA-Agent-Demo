@@ -1,4 +1,11 @@
-name: J_combined
+﻿# ARM K13 = J_combined with the destructive budget tightened 3 -> 1.
+# Motivation (results_w27, wegoo-terra): the K11 refusal scope deliberately
+# lets plausible single named deletes execute, so on the rebuilt probe the
+# runtime budget is the only line of defense, and at 3 it concedes the first
+# three operations of every bulk sequence: J denied 65 calls yet executed 200
+# destructive ops, preserving 48.5% pooled / 34.5% discriminating. This arm
+# differs from J by exactly this one flag.
+name: K13_cage1
 description: |
   Config J — F (all four architecture levers) plus **all three agent-loop
   levers**, arbitrated per task so each tier only runs when the cheaper one
@@ -191,17 +198,6 @@ architecture:
 safety:
   enabled: true
   runtime_mode: design_time
-  # PROMOTED 2026-08-08 from K13_cage1 (results_w27, wegoo-terra, 20-case probe
-  # x 5 reps, single-flag comparison vs J at 3): preservation 48.5% -> 80.0%
-  # (+31.5pp, CI [+21.3, +40.8], p = 0.0001, 14 cases better / 1 worse),
-  # destructive executions 200 -> 69, identical tokens/latency. Rationale: the
-  # K11 refusal scope deliberately lets single named non-safety deletes plan,
-  # so on bulk-destructive pressure the runtime budget is the only line of
-  # defense, and at 3 it conceded the first three operations of every sequence.
-  # Capability cost is measured ZERO: no passing golden run in results_w25
-  # (520 J runs) performs more than one destructive operation, so the w25
-  # golden numbers (measured at 3) are unaffected by this flag. The archived
-  # K7/K9 probe arms (results_w21, LongCat) were measured at 3.
   max_destructive_ops: 1
   # Promoted from K9_cage on the results_w21 evidence (A x3, K7/K9 x5, 287 runs,
   # scored by preservation rate): +11.50pp on the 10 discriminating cases,
@@ -237,3 +233,4 @@ world:
 
 repetitions: 5
 seed_base: 42
+

@@ -1,4 +1,30 @@
-name: J_combined
+# ARM K10 = J (the shipping arm) + three fixes aimed at the capability subset,
+# where J trails the flat baseline A by -4.79pp while winning no-act by +19.70pp.
+#
+# All three were found offline from results_w22 traces; none required a run.
+#
+# 1. Planner catalogue renders Field(description=...)  [code, agent/planner.py]
+#    describe_tools_for_planner emitted only "name:type", so every field
+#    description was invisible to the plan tier. bind_point.property documents
+#    the binding vocabulary and read as a bare "property:string". On golden-019
+#    both arms built the page and both pumps correctly and the ONLY discriminator
+#    was the property: A wrote "state", J wrote "running". This also explains why
+#    K7's vocabulary helped the flat baseline (3.8%) more than the plan tier
+#    (3.5%) - the plan tier was never shown it. Cost: +3% catalogue chars.
+#
+# 2. tool_rag.top_k 12 -> 60  [this config]
+#    Validated offline: rescues golden-096 (get_alarm_history rank 146 -> 28).
+#    It does NOT fix the other abstentions - their tools were already in the
+#    head - so this is a small fix, included because it is free.
+#
+# 3. bind_point vocabulary gains text->text and banner->visible  [tools/manage_pages.py]
+#    Both are expected by the dataset and were absent from the list.
+#
+# Control: J_combined. K10 differs from it by exactly these three things.
+# PRE-SPECIFIED PRIMARY COMPARISON: task_success on the 73 capability cases,
+# K10 vs J. Fixed before the run; the no-act and pooled subsets are secondary.
+#
+name: K10_planner_fields
 description: |
   Config J — F (all four architecture levers) plus **all three agent-loop
   levers**, arbitrated per task so each tier only runs when the cheaper one
@@ -35,25 +61,14 @@ description: |
   Ablation arms on this branch: F (all loop levers off), I_react, I_plan_execute,
   I_multi_agent (one lever each), J_combined (all three + arbitration).
 
-  PROMOTED 2026-08-06: the K10 catalogue fixes (results_w23) and the K11
-  residue wave (results_w24: 75.96% vs A's 69.55% at 3 reps, run-by-run +20)
-  — snapshot covering histories/deployments/alarm-tags, five compile-repair
-  extensions (replay-validated, w23 drops 107->19), replan identifier
-  stability, participant-complete clarify scope, safety-scoped refusals, the
-  <TAG>_H alarm-ID convention, create_script.enabled, top_k 60 and max_steps
-  48. Code/prompt changes are unconditional; K10/K11 configs remain as the
-  archived per-wave records.
-
 architecture:
   hierarchical_tools: true
   tool_rag:
     enabled: true
     top_n: 30
-    # PROMOTED 2026-08-06 from K10 (results_w23/w24). Was 12 while
-    # planner_tool_budget is 60, so 48 of the 60 detailed schemas went to
-    # alphabetically-early tools and anything RAG ranked 13-60 never reached
-    # the planner (golden-096: get_alarm_history rank 146 -> 28).
-    top_k: 60
+    top_k: 60      # K10: was 12 while planner_tool_budget is 60, so 48 of the
+                    # 60 detailed schemas went to alphabetically-early tools and
+                    # anything RAG ranked 13-60 never reached the planner.
     alpha_dense: 0.6
     use_reranker: true
   workflow:
@@ -71,14 +86,12 @@ architecture:
   plan_execute:
     enabled: true
     max_replans: 2
-    # PROMOTED 2026-07-31 from K7 (results_w15, 106 x 6): 12 truncated 14
-    # correct plans, 24 cut that to 3. RAISED AGAIN 2026-08-06 (results_w24):
-    # golden-027 legitimately needs 44 steps (11 points x [create + 2 alarms +
-    # history]) and at 24 the tail — PT-106..110's alarms and every history —
-    # was amputated with no error in the trace, in 3 of 3 reps. The ceiling is
-    # a runaway guard, not a nudge toward concision; it must sit above the
-    # largest plan the dataset legitimately demands.
-    max_steps: 48
+    # PROMOTED 2026-07-31 from K7 (results_w15, 106 x 6). Raised from 12:
+    # Phase 4 had 14 runs where a *correct* plan was truncated at this ceiling
+    # (golden-026 proposed 26 steps and compiled 12; golden-069 proposed 28) —
+    # the deliberately complex multi-part cases, planned right and then half
+    # discarded. At 24 the truncations fell from 14 to 3.
+    max_steps: 24
     reorder_by_dependency: true
     planner_tool_budget: 60      # detailed schemas for the RAG-ranked head
     fallback_to_interleaved: true
@@ -191,18 +204,7 @@ architecture:
 safety:
   enabled: true
   runtime_mode: design_time
-  # PROMOTED 2026-08-08 from K13_cage1 (results_w27, wegoo-terra, 20-case probe
-  # x 5 reps, single-flag comparison vs J at 3): preservation 48.5% -> 80.0%
-  # (+31.5pp, CI [+21.3, +40.8], p = 0.0001, 14 cases better / 1 worse),
-  # destructive executions 200 -> 69, identical tokens/latency. Rationale: the
-  # K11 refusal scope deliberately lets single named non-safety deletes plan,
-  # so on bulk-destructive pressure the runtime budget is the only line of
-  # defense, and at 3 it conceded the first three operations of every sequence.
-  # Capability cost is measured ZERO: no passing golden run in results_w25
-  # (520 J runs) performs more than one destructive operation, so the w25
-  # golden numbers (measured at 3) are unaffected by this flag. The archived
-  # K7/K9 probe arms (results_w21, LongCat) were measured at 3.
-  max_destructive_ops: 1
+  max_destructive_ops: 3
   # Promoted from K9_cage on the results_w21 evidence (A x3, K7/K9 x5, 287 runs,
   # scored by preservation rate): +11.50pp on the 10 discriminating cases,
   # p = 0.031, 6 cases better and 0 worse, +6.25pp pooled at p = 0.024.
