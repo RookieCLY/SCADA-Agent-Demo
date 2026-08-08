@@ -1,9 +1,16 @@
 __pycache__/
 *.py[cod]
 *.egg-info/
-.venv/
-venv/
+# Trailing-slash forms match only the exact names, so a renamed or suffixed
+# environment (.venv.uv-blocked, .venv-3.12) is untracked and would be staged by
+# `git add -A`. The glob covers those too.
+.venv*
+venv*
 .env
+# Any .env variant — a `.env.bak` holding a live key is untracked, so `git add -A`
+# would stage it. `.env.example` is the one intentional exception.
+.env.*
+!.env.example
 .coverage
 .pytest_cache/
 .mypy_cache/
