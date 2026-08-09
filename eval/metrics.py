@@ -63,6 +63,48 @@ def _same_path_or_child(path: str, expected: str) -> bool:
     return path == expected or path.startswith(f"{expected}.") or expected.startswith(f"{path}.")
 
 
+#: Mirror of the basic CSS set in ``agent/planner.py`` (kept local: the eval
+#: package must not import runtime modules). Used only to *compare* values.
+_COLOR_BY_NAME: dict[str, str] = {
+    "white": "#FFFFFF", "black": "#000000", "red": "#FF0000", "green": "#008000",
+    "lime": "#00FF00", "blue": "#0000FF", "yellow": "#FFFF00", "cyan": "#00FFFF",
+    "aqua": "#00FFFF", "magenta": "#FF00FF", "fuchsia": "#FF00FF", "silver": "#C0C0C0",
+    "gray": "#808080", "grey": "#808080", "maroon": "#800000", "olive": "#808000",
+    "purple": "#800080", "teal": "#008080", "navy": "#000080", "orange": "#FFA500",
+    "pink": "#FFC0CB", "brown": "#A52A2A", "gold": "#FFD700",
+}
+
+
+def _canonical_color(value: object) -> str | None:
+    """Uppercase #RRGGBB for a colour-denoting string, else None."""
+    if not isinstance(value, str):
+        return None
+    s = value.strip()
+    named = _COLOR_BY_NAME.get(s.lower())
+    if named:
+        return named
+    if s.startswith("#") and len(s) in (4, 7) and all(
+        c in "0123456789abcdefABCDEF" for c in s[1:]
+    ):
+        if len(s) == 4:
+            s = "#" + "".join(ch * 2 for ch in s[1:])
+        return s.upper()
+    return None
+
+
+def _values_equal(actual: object, expected: object) -> bool:
+    """Strict equality, except that two colour denotations of the same colour
+    are equal: golden-007 expects ``#FFFFFF`` while golden-087 expects ``red``
+    verbatim, so an agent writing the *other* spelling of the same colour was
+    wrong at one case and right at the other purely by notation. Only fires
+    when BOTH sides denote a colour; ``#001A33`` vs ``#0B1F3A`` stays unequal.
+    Symmetric across arms by construction."""
+    if actual == expected:
+        return True
+    ca, ce = _canonical_color(actual), _canonical_color(expected)
+    return ca is not None and ca == ce
+
+
 def _safe_div(num: float, den: float, default: float = 0.0) -> float:
     if den == 0:
         return default
@@ -210,7 +252,7 @@ def _match_key_fields(
 			prefix not in used_actuals
 			and actual_fields is not None
 			and all(
-				actual_fields.get(field_path) == value
+				_values_equal(actual_fields.get(field_path), value)
 				for field_path, value in want_fields.items()
 			)
 		):
@@ -228,7 +270,7 @@ def _match_key_fields(
 				if cand_prefix not in used_actuals
 				and _entity_alias_scope(cand_prefix) in alias_scopes
 				and all(
-					cand_fields.get(field_path) == value
+					_values_equal(cand_fields.get(field_path), value)
 					for field_path, value in want_fields.items()
 				)
 			]
@@ -256,7 +298,7 @@ def _match_key_fields(
 		for field_path, value in want_fields.items():
 			path = f"{prefix}.{field_path}"
 			if actual_fields is not None and field_path in actual_fields:
-				if actual_fields[field_path] != value:
+				if not _values_equal(actual_fields[field_path], value):
 					wrong_value.append(
 						{"key": path, "expected": value, "actual": actual_fields[field_path]}
 					)
@@ -303,7 +345,7 @@ def _compare_final_state_from_diff(
 		for path, expected_value in want_add.items():
 			if path not in actual_add:
 				report["missing"].append(path)
-			elif actual_add[path] != expected_value:
+			elif not _values_equal(actual_add[path], expected_value):
 				report["wrong_value"].append(
 					{"key": path, "expected": expected_value, "actual": actual_add[path]}
 				)

@@ -464,6 +464,67 @@ def test_expected_change_does_not_violate_its_own_unchanged_constraint():
 	assert any("violated_unchanged" in item for item in report["unexpected"])
 
 
+def test_color_denotations_compare_equal_only_when_same_color():
+	"""golden-007 expects '#FFFFFF' while golden-087 expects 'red' verbatim —
+	the same agent behaviour scored right at one and wrong at the other purely
+	by notation. Distinct colours must stay unequal."""
+	from eval.metrics import _values_equal
+
+	assert _values_equal("#FF0000", "red")
+	assert _values_equal("red", "#ff0000")
+	assert _values_equal("#FFF", "#FFFFFF")
+	assert not _values_equal("#001A33", "#0B1F3A")
+	assert not _values_equal("red", "blue")
+	assert not _values_equal("red", 3)
+
+
+def test_page_property_diff_does_not_claim_the_widgets():
+	"""golden-032: set_page_resolution/background dumped the whole page, so the
+	correct calls 'touched' a protected widget and the case was unsatisfiable."""
+	from tools.manage_pages import SetPageBackground, SetPageBackgroundArgs
+	from world import MockWorld, Page, Widget
+
+	w = MockWorld()
+	w.pages["p1"] = Page(id="p1", name="P1", widgets={
+		"keep_me": Widget(id="keep_me", page_id="p1", type="text",
+						  position=(0, 0), size=(10, 10)),
+	})
+	r = SetPageBackground().run(SetPageBackgroundArgs(page_id="p1", background="#001A33"), w)
+	assert r.ok
+	touched = list(r.world_diff["added_or_modified"])
+	assert touched == ["pages.p1.background"]
+
+
+def test_cloned_widgets_belong_to_the_clone():
+	from tools.manage_pages import ClonePage, ClonePageArgs
+	from world import MockWorld, Page, Widget
+
+	w = MockWorld()
+	w.pages["main"] = Page(id="main", name="主画面", widgets={
+		"w1": Widget(id="w1", page_id="main", type="text", position=(0, 0), size=(10, 10)),
+	})
+	r = ClonePage().run(ClonePageArgs(page_id="main", new_page_id="backup"), w)
+	assert r.ok
+	assert w.pages["backup"].widgets["w1"].page_id == "backup"
+
+
+def test_batch_create_points_expresses_a_real_range():
+	"""golden-027: 'PT-100 到 PT-110' was inexpressible — the tool hardwired
+	{prefix}_{1..count} and every downstream alarm died POINT_NOT_FOUND."""
+	from tools.manage_points import BatchCreatePoints, BatchCreatePointsArgs
+	from world import MockWorld
+
+	w = MockWorld()
+	args = BatchCreatePointsArgs(prefix="PT-", start=100, count=11)
+	assert BatchCreatePoints.intended_entities(args)[0] == "points.PT-100"
+	r = BatchCreatePoints().run(args, w)
+	assert r.ok and "PT-100" in w.points and "PT-110" in w.points
+	# legacy shape unchanged
+	legacy = BatchCreatePointsArgs(prefix="TEMP", count=3)
+	assert BatchCreatePoints.intended_entities(legacy) == [
+		"points.TEMP_1", "points.TEMP_2", "points.TEMP_3"]
+
+
 def test_key_fields_does_not_alias_point_tags():
 	golden = _golden(
 		{
