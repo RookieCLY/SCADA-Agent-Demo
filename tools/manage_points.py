@@ -385,21 +385,44 @@ class CopyPoint(MockTool):
 
 class BatchCreatePointsArgs(BaseModel):
     action: Literal["batch_create_points"] = "batch_create_points"
-    prefix: str
+    prefix: str = Field(
+        description=(
+            "Tag prefix. A trailing separator is used as-is ('PT-' → PT-100); "
+            "otherwise '_' is inserted ('TEMP' → TEMP_1)."
+        )
+    )
     count: int = Field(ge=1, le=1000)
+    start: int = Field(
+        default=1,
+        ge=0,
+        description="First number in the range, e.g. start=100, count=11 → 100..110.",
+    )
     type: Literal["analog", "digital", "string"] = "analog"
+
+
+def _batch_tags(args: "BatchCreatePointsArgs") -> list[str]:
+    # The old construction was hardwired to ``{prefix}_{1..count}``: asked for
+    # PT-100..PT-110, the model's only expressible call produced PT_1..PT_11 and
+    # every downstream alarm on PT-100 died POINT_NOT_FOUND (golden-027, 4 of 5
+    # reps). A range tool that cannot state where the range starts is a trap.
+    sep = "" if args.prefix and args.prefix[-1] in "-_." else "_"
+    return [f"{args.prefix}{sep}{args.start + i}" for i in range(args.count)]
 
 
 class BatchCreatePoints(MockTool):
     name = "batch_create_points"
     domain = DOMAIN; action = "batch_create_points"
-    description = "Create many points at once with a numbered prefix (e.g. TEMP_1..TEMP_50)."
+    description = (
+        "Create many numbered points at once: prefix='PT-', start=100, count=11 "
+        "→ PT-100..PT-110; prefix='TEMP', count=50 → TEMP_1..TEMP_50."
+    )
     args_model = BatchCreatePointsArgs
-    examples = ["批量创建 50 个温度点位", "bulk create TEMP_1 through TEMP_20", "一次性生成一批点位"]
+    examples = ["批量创建 50 个温度点位", "bulk create TEMP_1 through TEMP_20",
+                "批量生成PT-100到PT-110", "一次性生成一批点位"]
 
     @staticmethod
     def intended_entities(args: BaseModel) -> list[str]:  # pyright: ignore[reportArgumentType]
-        return [f"points.{args.prefix}_{i + 1}" for i in range(args.count)]
+        return [f"points.{t}" for t in _batch_tags(args)]
     @staticmethod
     def referenced_entities(args: BaseModel) -> list[str]:  # pyright: ignore[reportArgumentType]
         return []
@@ -407,8 +430,7 @@ class BatchCreatePoints(MockTool):
     def run(self, args: BatchCreatePointsArgs, world: MockWorld) -> ToolResult:
         from world.models import Point
         added = {}
-        for i in range(args.count):
-            tag = f"{args.prefix}_{i + 1}"
+        for tag in _batch_tags(args):
             if tag in world.points:
                 continue
             world.points[tag] = Point(tag=tag, type=args.type)

@@ -28,7 +28,8 @@ class CreateAnalogAlarmArgs(BaseModel):
     id: str = Field(
         description=(
             "Unique alarm ID. Convention: <TAG>_<LEVEL> where LEVEL is "
-            "H|HH|L|LL, e.g. 'TEMP_101_H', 'FT-200_HH'."
+            "H|HH|L|LL, e.g. 'TEMP_101_H', 'FT-200_HH'. HH/LL are the critical "
+            "levels: set priority='high' for them unless told otherwise."
         )
     )
     tag: str = Field(description="The SCADA point tag to monitor, e.g. 'TEMP_101'")

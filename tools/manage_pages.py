@@ -340,8 +340,23 @@ __all__ = [
 
 
 # ============================================================ extension tools
-def _page_diff(page_id, page):
-    return {"added_or_modified": {f"pages.{page_id}": page.model_dump()}, "removed": []}
+def _page_diff(page_id, page, *fields):
+    """Whole-page diff for creation/clone; field-level diff for property setters.
+
+    A setter that dumps the entire page claims to have modified every widget on
+    it, and ``unchanged_keys_must_remain`` believes the claim: golden-032 asks
+    for a resolution+background change while protecting an existing widget, and
+    the correct two `set_page_*` calls scored as violations in 5 of 5 reps —
+    the case was unsatisfiable via exactly the tools built for it. A diff is a
+    statement of what changed, not a snapshot of what exists.
+    """
+    if not fields:
+        return {"added_or_modified": {f"pages.{page_id}": page.model_dump()}, "removed": []}
+    dump = page.model_dump()
+    return {
+        "added_or_modified": {f"pages.{page_id}.{f}": dump[f] for f in fields},
+        "removed": [],
+    }
 
 
 def _need_page(world, page_id):
@@ -387,6 +402,12 @@ class ClonePage(MockTool):
         new = world.pages[args.page_id].model_copy(deep=True, update={"id": args.new_page_id})
         if args.new_name is not None:
             new.name = args.new_name
+        # The clone kept every widget's ``page_id`` pointing at the *source*
+        # page — a widget on the clone claimed to live somewhere else, and any
+        # case asserting ``widgets.<id>.page_id`` on a cloned page could not
+        # pass (golden-020).
+        for w in (new.widgets or {}).values():
+            w.page_id = args.new_page_id
         world.pages[args.new_page_id] = new
         return ok(data={"page_id": args.new_page_id}, world_diff=_page_diff(args.new_page_id, new))
 
@@ -416,7 +437,7 @@ class SetPageResolution(MockTool):
         err = _need_page(world, args.page_id)
         if err: return err
         p = world.pages[args.page_id]; p.resolution = (args.width, args.height)
-        return ok(data={"page_id": args.page_id}, world_diff=_page_diff(args.page_id, p))
+        return ok(data={"page_id": args.page_id}, world_diff=_page_diff(args.page_id, p, "resolution"))
 
 
 class SetPageBackgroundArgs(BaseModel):
@@ -443,7 +464,7 @@ class SetPageBackground(MockTool):
         err = _need_page(world, args.page_id)
         if err: return err
         p = world.pages[args.page_id]; p.background = args.background
-        return ok(data={"page_id": args.page_id}, world_diff=_page_diff(args.page_id, p))
+        return ok(data={"page_id": args.page_id}, world_diff=_page_diff(args.page_id, p, "background"))
 
 
 class SetHomePageArgs(BaseModel):
