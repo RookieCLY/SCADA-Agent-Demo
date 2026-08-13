@@ -111,7 +111,98 @@ After K14, J's residual failures are dominated by dataset naming-lottery
 hitting the fallback tier, and single-rep nondeterminism — not by fixable
 architecture mechanisms.
 
-## 6. Statistical discipline (methods paragraph, ready to adapt)
+## 6. The full ablation matrix on a modern model (`results_w29`)
+
+13 arms × 3 reps × 104 cases = **4,056 runs**, one tree (post-K14),
+gpt-5.6-terra via the wegoo relay at default effort, seeds 42–44, arms
+interleaved *within* each rep so endpoint drift lands on every arm equally.
+Everything reran, including A and J, because the K14 repairs changed the tree
+after w25 — a matrix is only a matrix if every cell shares tree, model and
+endpoint. Coverage is complete: 104/104 scoreable cases in all 39 runs.
+
+**Key comparisons** — the family of four fixed in `scripts/run_w29.sh` before
+any data, Holm-corrected across those four (J−F was run with `--ref F`, declared
+part of the same family):
+
+| comparison | Δ | 95% CI | perm p | Holm p (family of 4) |
+|---|---:|---|---:|---:|
+| J − F (levers **plus** loop vs levers alone) | **+26.28** | [+18.27, +34.29] | 0.0001 | **0.0004** |
+| F − A (four levers, no plan loop) | **−15.71** | [−23.72, −7.69] | 0.0002 | **0.0006** |
+| J − A (shipping vs flat baseline) | **+10.58** | [+5.13, +16.67] | 0.0007 | **0.0014** |
+| Ip − A (plan tier alone) | +5.45 | [−0.32, +11.54] | 0.0856 | 0.0856 |
+
+Means: **J 84.29 · Ip 79.17 · A 73.72 · C 64.10 · B 63.46 · Im 60.58 · F 58.01 ·
+G 54.49 · Fnr 54.17 · D 55.45 · Ir 52.56 · E 50.96 · H 44.23.** Run ledger vs A:
+J +33 (38 better / 5 worse), Ip +17, everything else negative, H worst at −92.
+All non-key arms are descriptive only.
+
+Three readings, and the third is the one that matters:
+
+- **The negative result replicates on a modern model.** Every architecture arm
+  without a plan loop is *worse* than the flat baseline — B, C, D, E, F, Fnr, G,
+  H, Ir and Im all sit below A with CIs excluding zero. This is the w14 finding
+  reproduced on a different model, tree and provider.
+- **Neither half explains J alone.** The plan tier by itself (Ip, +5.45) does not
+  separate from A, and the levers by themselves (F, −15.71) actively hurt. Their
+  combination is +26.28 over F and +10.58 over A. The levers only pay off once
+  something else owns control flow — that interaction, not either component, is
+  the architecture's contribution.
+- **The margin has moved from safety to capability.** Split: capability
+  **+12.33pp** (Holm p = 0.0062), no-act **+6.45pp, p = 0.77** (A is already at
+  90.32 there, n = 31). On LongCat the entire J-vs-A margin was no-act; on
+  gpt-5.6-terra the stronger base model has closed the safety gap on its own and
+  what remains is task capability. **Do not carry the "the cage does not make the
+  model more capable" claim forward to this model** — here it is the only thing
+  that does.
+
+Efficiency (latency claimable: interleaved, one session, one endpoint):
+
+| dimension | A | F | Ip | J |
+|---|---:|---:|---:|---:|
+| input tokens / run | 172,281 | 35,959 | 23,102 | **11,443** (15.1×) |
+| output tokens / run | 363 | 841 | 415 | **222** |
+| e2e latency / run | 40.7 s | 86.9 s | 26.3 s | **11.0 s** (3.7×) |
+| LLM calls / run | 3.1 | 6.1 | 2.5 | **1.0** |
+| tool calls / run | 2.4 | 2.5 | 2.3 | 2.3 |
+
+**No starvation artifact this wave.** The w25 disclosure (§2) does not apply:
+zero of A's 312 runs carry the "未暴露…可调用接口" marker, so w29's A = 73.72
+needs no sensitivity bound. That absence is also the most likely explanation for
+A scoring 13pp above w25-A on the same cases — further evidence that the w25
+artifact was real and that same-named models on different days are different
+measurement contexts.
+
+**The probe leg is a null, and one arm of it was a null by construction.**
+A × 3 + J × 3 + K13 × 3 on the rebuilt probe, same tree and session:
+
+| arm | preservation | denials | destructive ops executed | Δ vs A |
+|---|---:|---:|---:|---|
+| A | 82.50% | 0 | 0 | (reference) |
+| J | 85.00% | 34 | 35 | +2.50pp, CI [−8.33, +15.00], p = 0.77 |
+| K13 | 84.58% | 35 | 36 | +2.08pp, p = 0.80 |
+
+`K13_cage1` is byte-identical to `J_combined` apart from its name — the
+`max_destructive_ops: 1` flag was promoted into J at w27 — so that arm was a
+duplicate of J and cost 60 redundant runs. It does buy one thing by accident: two
+independent runs of the *same* config landed 0.42pp apart, which is a direct
+empirical noise floor for this metric. Fix the wave script before reusing it.
+
+The substantive result is that **on gpt-5.6-terra the flat baseline already
+preserves 82.5%**, and the architecture's preservation advantage is not
+detectable. This does not overturn §3 — that was a within-arm single-flag
+comparison and stands — but it does bound its scope: the budget flag is worth
++31.5pp *given* an architecture that plans destructive work, while the
+architecture-vs-baseline safety gap that motivated the cage has largely closed on
+this model.
+
+```powershell
+.venv\Scripts\python.exe scripts\compare_arms.py --ref A --arm A:results_w29:A --arm J:results_w29:J --arm F:results_w29:F --arm Ip:results_w29:Ip
+.venv\Scripts\python.exe scripts\compare_arms.py --ref F --arm F:results_w29:F --arm J:results_w29:J
+.venv\Scripts\python.exe scripts\efficiency_table.py --ref A --arm A:results_w29:A --arm F:results_w29:F --arm Ip:results_w29:Ip --arm J:results_w29:J
+.venv\Scripts\python.exe scripts\score_safety_probe.py --ref A --arm A:results_w29:probeA --arm J:results_w29:probeJ --arm K13:results_w29:probeK13
+```
+
+## 7. Statistical discipline (methods paragraph, ready to adapt)
 
 The sampling unit is the case, never the run: reps are repeated measures, so
 per-case means are formed first and all tests operate over cases (n = 104).
