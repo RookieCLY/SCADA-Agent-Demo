@@ -20,6 +20,8 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any, Literal, Protocol
 
+from loguru import logger
+
 from agent.config import ArchitectureConfig, ModelConfig
 
 # Synthetic tool name for Resource reads (§4.5). Defined here rather than in the
@@ -528,6 +530,94 @@ def _env(*names: str) -> str | None:
     return None
 
 
+#: HTTP statuses on which the failover client rotates to the next endpoint:
+#: auth/billing (401/402/403), model-not-served (404), rate limit (429), and
+#: server-side failures, including Cloudflare's 524 origin timeout. Anything
+#: else (400 content filter, schema errors) is a *request* problem every
+#: endpoint would reproduce, so it propagates.
+_ROTATE_STATUS = frozenset({401, 402, 403, 404, 408, 429, 500, 502, 503, 504, 524})
+
+
+def _parse_docode_endpoints(raw: str | None) -> list[tuple[str, str]]:
+    """Parse ``DOCODE_API_KEYS`` — comma-separated ``key@url`` pairs."""
+    endpoints: list[tuple[str, str]] = []
+    for chunk in (raw or "").split(","):
+        chunk = chunk.strip()
+        if not chunk or "@" not in chunk:
+            continue
+        key, url = chunk.split("@", 1)
+        if key.strip() and url.strip():
+            endpoints.append((key.strip(), url.strip()))
+    return endpoints
+
+
+class _FailoverCompletions:
+    def __init__(self, owner: _FailoverClients) -> None:
+        self._owner = owner
+
+    def create(self, **kwargs: Any):
+        from openai import APIConnectionError, APITimeoutError
+
+        owner = self._owner
+        n = len(owner.clients)
+        last: Exception | None = None
+        for i in range(n):
+            idx = (_FailoverClients.sticky + i) % n
+            try:
+                resp = owner.clients[idx].chat.completions.create(**kwargs)
+                _FailoverClients.sticky = idx
+                return resp
+            except Exception as exc:  # noqa: BLE001 - classify then re-raise
+                rotate = (
+                    getattr(exc, "status_code", None) in _ROTATE_STATUS
+                    or isinstance(exc, (APIConnectionError, APITimeoutError))
+                )
+                if rotate and i < n - 1:
+                    logger.warning(
+                        "docode endpoint {} failed ({}); rotating to next",
+                        idx, type(exc).__name__,
+                    )
+                    last = exc
+                    continue
+                if rotate:
+                    last = exc
+                    break
+                raise
+        assert last is not None
+        raise last
+
+
+class _FailoverChat:
+    def __init__(self, owner: _FailoverClients) -> None:
+        self.completions = _FailoverCompletions(owner)
+
+
+class _FailoverClients:
+    """Duck-types the one OpenAI-client surface this adapter uses
+    (``.chat.completions.create``) over an ordered list of endpoints.
+
+    Rotation happens on billing/auth/availability failures only (the wegoo
+    balance ran dry mid-wave twice; the 小鹿 relay's upstream flaps), and the
+    working index is **sticky at class level** so every Agent constructed in
+    the same process starts from the endpoint that last worked instead of
+    re-walking the dead ones on all ~104 cases of a rep.
+
+    Consistency guarantee the wave design depends on: the model name and the
+    ``reasoning_effort`` tier live in the *request* (built once by
+    ``OpenAICompatibleLLM``), so a mid-run rotation can change neither — every
+    endpoint receives byte-identical requests.
+    """
+
+    sticky: int = 0
+
+    def __init__(self, endpoints: list[tuple[str, str]]) -> None:
+        from openai import OpenAI
+
+        self.endpoints = endpoints
+        self.clients = [OpenAI(api_key=k, base_url=u) for k, u in endpoints]
+        self.chat = _FailoverChat(self)
+
+
 class OpenAICompatibleLLM:
     """Adapter for any provider speaking the OpenAI Chat-Completions wire format.
 
@@ -549,10 +639,17 @@ class OpenAICompatibleLLM:
         registry: Any | None = None,
         hierarchical: bool = False,
         reasoning_effort: str | None = None,
+        endpoints: list[tuple[str, str]] | None = None,
     ) -> None:
         from openai import OpenAI
 
-        self._client = OpenAI(api_key=api_key, base_url=base_url)
+        # With ``endpoints`` the adapter fails over between them on
+        # billing/availability errors; model and effort live in the request,
+        # so a rotation cannot change what is measured.
+        if endpoints:
+            self._client: Any = _FailoverClients(endpoints)
+        else:
+            self._client = OpenAI(api_key=api_key, base_url=base_url)
         self.model_name = model
         self.temperature = temperature
         self.max_tokens = max_tokens
@@ -1184,18 +1281,21 @@ def build_llm(
         )
     if cfg.provider == "docode":
         _load_dotenv_into_environ()
+        # DOCODE_API_KEYS ("key@url,key@url,...") enables endpoint failover;
+        # the single DOCODE_API_KEY/URL pair remains as the one-endpoint form.
+        endpoints = _parse_docode_endpoints(_env("DOCODE_API_KEYS"))
         api_key = _env("DOCODE_API_KEY")
         base_url = _env("DOCODE_API_URL") or "https://docode.cc/v1"
-        model_name = cfg.name or _env("DOCODE_MODEL") or "gpt-5.6-luna"
-        if not api_key:
+        model_name = cfg.name or _env("DOCODE_MODEL") or "gpt-5.6-terra"
+        if not endpoints and not api_key:
             raise RuntimeError(
-                "docode: missing DOCODE_API_KEY (set it in .env or env)."
+                "docode: set DOCODE_API_KEYS (key@url,...) or DOCODE_API_KEY in .env."
             )
         hierarchical = arch.hierarchical_tools if arch is not None else False
         return OpenAICompatibleLLM(
             model=model_name,
-            api_key=api_key,
-            base_url=base_url,
+            api_key=api_key or endpoints[0][0],
+            base_url=base_url if api_key else endpoints[0][1],
             temperature=cfg.temperature,
             max_tokens=cfg.max_tokens,
             registry=registry,
@@ -1203,6 +1303,7 @@ def build_llm(
             # Env wins over config so a run script can pin the tier for both
             # arms uniformly without touching every config file.
             reasoning_effort=_env("DOCODE_REASONING_EFFORT") or cfg.reasoning_effort,
+            endpoints=endpoints or None,
         )
     if cfg.provider == "nvidia":
         _load_dotenv_into_environ()
