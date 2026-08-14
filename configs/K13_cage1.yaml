@@ -1,4 +1,20 @@
-﻿# ARM K13 = J_combined with the destructive budget tightened 3 -> 1.
+﻿# ============================================================================
+# SUPERSEDED — DO NOT RUN THIS AS A SEPARATE ARM.
+#
+# This file is now BYTE-IDENTICAL to J_combined.yaml apart from its `name:`.
+# The max_destructive_ops:1 flag it existed to test was promoted into
+# J_combined on 2026-08-08 (results_w27), so K13 and J are the same config.
+#
+# Running both measures J twice: results_w29's probe leg did exactly that and
+# spent 60 redundant runs on it. (The accident was not worthless — the two
+# runs landed 0.42pp apart, which is an empirical noise floor for preservation
+# rate — but do not repeat it deliberately.)
+#
+# Kept only so results_w27 stays reproducible. For any new wave, use
+# J_combined.yaml.
+# ============================================================================
+#
+# ARM K13 = J_combined with the destructive budget tightened 3 -> 1.
 # Motivation (results_w27, wegoo-terra): the K11 refusal scope deliberately
 # lets plausible single named deletes execute, so on the rebuilt probe the
 # runtime budget is the only line of defense, and at 3 it concedes the first
