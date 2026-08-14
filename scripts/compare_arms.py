@@ -100,7 +100,16 @@ def load_arm(root: Path, prefix: str) -> dict[tuple[str, int], dict]:
                 continue
             trace = json.loads(line)
             execution = trace.get("execution") or {}
-            if execution.get("total_turns", 0) == 0 and execution.get("terminal_state") == "UNKNOWN":
+            # A run that never reached a terminal state is not a result, it is a
+            # breakage, and scoring it as a failure attributes an infrastructure
+            # fault to the arm. The old rule also required total_turns == 0,
+            # which silently exempted exactly one class: the plan tier records a
+            # turn for its single plan request *before* the API rejects it, so a
+            # provider outage left UNKNOWN/turns=1 rows that were scored as
+            # failures. In results_w30 that was 416 phantom failures landing on
+            # J and Ip alone — the two plan-tier arms — and it inverted the
+            # headline comparison. Terminal state is the whole test now.
+            if execution.get("terminal_state") in (None, "UNKNOWN"):
                 void += 1
                 continue
             traces[(trace["query"]["golden_id"], rep)] = trace
