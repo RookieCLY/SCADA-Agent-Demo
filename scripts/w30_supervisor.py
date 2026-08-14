@@ -31,13 +31,13 @@ import subprocess
 import sys
 import time
 import urllib.request
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
 ROOT = REPO.parent / "results_w30"
 PY = str(REPO / ".venv" / "Scripts" / "python.exe")
-LOG = REPO.parent / "results_w30_supervisor.log"
+LOG = ROOT / "_supervisor.log"          # lives with the traces it describes
 STOP_FLAG = REPO.parent / "results_w30.STOP"
 
 PROVIDER = "deepseek"
@@ -67,7 +67,7 @@ CRASH_SLEEP = 30         # process died for a non-billing reason
 
 
 def log(msg: str) -> None:
-    line = f"{datetime.now(timezone.utc).isoformat(timespec='seconds')}  {msg}"
+    line = f"{datetime.now(UTC).isoformat(timespec='seconds')}  {msg}"
     print(line, flush=True)
     with LOG.open("a", encoding="utf-8") as fh:
         fh.write(line + "\n")
