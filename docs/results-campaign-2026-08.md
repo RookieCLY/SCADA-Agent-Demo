@@ -202,7 +202,156 @@ this model.
 .venv\Scripts\python.exe scripts\score_safety_probe.py --ref A --arm A:results_w29:probeA --arm J:results_w29:probeJ --arm K13:results_w29:probeK13
 ```
 
-## 7. Statistical discipline (methods paragraph, ready to adapt)
+## 7. Second-model replication (`results_w30`, DeepSeek v4 Flash)
+
+The first genuinely different base model this campaign has had since LongCat's
+key died — a different vendor, not another docode model. (`run_w26.sh`, listed
+as the pending second-model replication for weeks, hardcoded `gpt-5.6-terra`
+and could not have replicated anything.) Same tree, same 104 cases, same seeds
+42–44, arms interleaved within each rep, mirroring `run_w29.sh` cell for cell.
+Hypotheses were fixed in `scripts/run_w30.sh` before any data: the wave tests
+the w29 **interaction** finding as three predicted signs, not just "J wins".
+
+**Key family, 3 reps each, Holm across the pre-specified family of four:**
+
+| hypothesis | prediction | w29 (terra) | w30 (DeepSeek) | Holm p | verdict |
+|---|---|---:|---:|---:|---|
+| H3: J − F > 0 | levers need a loop | +26.28 | **+25.64** | 0.0004 | **replicates** |
+| H2: F − A < 0 | levers alone hurt | −15.71 | **−22.44** | 0.0004 | **replicates** |
+| H4: Ip − A ≈ 0 | loop alone doesn't separate | +5.45 n.s. | +0.96 | 0.84 | **replicates** |
+| H1: J − A > 0 | the architecture wins | +10.58 | +3.21 [−2.56, +9.29] | 0.71 | **not supported** |
+
+Means: A 75.32 · J 78.53 · Ip 76.28 · F 52.88.
+
+**Three of four replicate on a second vendor's model; the headline does not.**
+Read the two halves separately, because they say different things:
+
+- **The negative result is the robust one.** F sits 22.4pp below a flat
+  baseline overall and 34.3pp below on capability alone (ledger −75 of 219),
+  and the plan loop rescues it by ~25pp. That pattern now holds on LongCat,
+  terra and DeepSeek. *The four surface levers without something owning
+  control flow reliably make a model worse* — this is the most reproducible
+  claim in the campaign, and it is a negative one.
+- **"J beats A" is model-dependent and should stop being stated flatly.**
+  Across three serving contexts the margin tracks the baseline's weakness:
+  +22.50 (wegoo, A = 60.38) → +10.58 (terra, A = 73.72) → +3.21 (DeepSeek,
+  A = 75.32, the strongest baseline measured). The defensible claim is that
+  the architecture brings a model *up to* a strong baseline's accuracy at a
+  fraction of the tokens, and adds restraint where the model lacks it.
+
+**Where the margin lands is itself model-specific**, which retires the last
+general version of that claim:
+
+| subset | w29 terra | w30 DeepSeek |
+|---|---|---|
+| capability | **+12.33** (p = 0.0062) | −0.46 (p = 1.00) |
+| no-act | +6.45 (p = 0.77) | **+11.83** (raw p = 0.097, ledger +11/93) |
+
+DeepSeek's baseline is *more capable* than terra's (A capability 73.52 vs
+66.67) but *less cautious* (A no-act 79.57 vs 90.32) — a stronger, more eager
+model. The cage contributes on exactly the axis the base model is weak on and
+contributes nothing on the axis it is already strong. So the LongCat-era line
+("the cage does not make the model more capable; it stops it doing what it
+should not") is right here and wrong on terra: neither is the general rule.
+
+**Efficiency — the one dimension that does not degrade with a better model:**
+
+| dimension | A | F | Ip | J |
+|---|---:|---:|---:|---:|
+| input tokens / run | 220,843 | 18,720 | 9,988 | **6,359** (**34.7×**) |
+| output tokens / run | 1,510 | 3,422 | 1,755 | **1,113** |
+| LLM calls / run | 3.2 | 5.0 | 2.4 | **1.5** |
+| tool calls / run | 5.6 | 3.1 | 2.1 | **1.7** |
+| e2e latency / run | **13.1 s** | 29.4 s | 20.8 s | 15.8 s |
+
+34.7× on input tokens is the largest ratio measured in the campaign. **The
+latency advantage, however, does not replicate**: J is 15.8 s against A's
+13.1 s (CI spans zero, so a tie at best), where w25 and w29 both showed J
+3–4× faster. DeepSeek is fast enough that A's 220k-token prompts cost little
+wall clock, while J's single large planning call cannot go below one round
+trip. Report the token ratio; do not carry the latency claim to this model.
+
+```powershell
+.venv\Scripts\python.exe scripts\compare_arms.py --ref A --arm A:results_w30:A --arm J:results_w30:J --arm F:results_w30:F --arm Ip:results_w30:Ip
+.venv\Scripts\python.exe scripts\compare_arms.py --ref F --arm F:results_w30:F --arm J:results_w30:J
+.venv\Scripts\python.exe scripts\efficiency_table.py --ref A --arm A:results_w30:A --arm F:results_w30:F --arm Ip:results_w30:Ip --arm J:results_w30:J
+```
+
+### Full matrix (descriptive; only the four above carry hypotheses)
+
+13 arms × 3 reps × 104 cases + 6 probe runs = **4,188 scoreable runs**,
+complete coverage in all 45 run directories.
+
+| arm | mean | Δ vs A | arm | mean | Δ vs A |
+|---|---:|---:|---|---:|---:|
+| **J** | **78.53** | +3.21 | Fnr | 52.56 | −22.76*** |
+| B | 76.92 | +1.60 | E | 52.88 | −22.44*** |
+| Ip | 76.28 | +0.96 | F | 52.88 | −22.44*** |
+| **A** | **75.32** | — | Ir | 51.92 | −23.40*** |
+| C | 69.55 | −5.77 | G | 51.60 | −23.72*** |
+| Im | 66.35 | −8.97 | H | 44.55 | −30.77*** |
+| D | 57.69 | −17.63*** | | | |
+
+The shape matches w29's with one exception worth noting: **B (hierarchical
+tools alone) is +1.60 here against −10.26 on terra** — the only arm whose sign
+flips between models. Everything from D downward sits 18–31pp below the flat
+baseline on both models, and H (workflow engine) is the worst arm in both.
+
+### The probe on DeepSeek: +35pp, and the mechanism that ties it together
+
+A × 3 + J × 3 on the rebuilt probe, same tree and session (K13 omitted — it is
+byte-identical to J since w27, which cost w29 sixty redundant runs).
+
+| subset | cases | A | J | Δ |
+|---|---:|---:|---:|---|
+| pooled | 20 | 42.50% | **77.92%** | **+35.42pp**, CI [+11.25, +57.50], p = 0.0144, 12 better / 5 worse |
+| discriminating | 10 | 31.67 | 70.00 | +38.33, p = 0.078 |
+| control | 6 | 22.22 | 80.56 | +58.33, p = 0.061 |
+| overt | 4 | 100.00 | 93.75 | −6.25, p = 1.00 |
+
+Tokens: A 169,220/run vs J 5,314 (31.8×). A issues zero denials; J denies 44
+while still executing 47 destructive ops.
+
+**Compare w29, where the same comparison was +2.50pp and not significant.**
+The difference is entirely in the baseline: DeepSeek's A preserves 42.50%
+unaided where terra's A preserves 82.50%. This is the same model property the
+golden no-act split shows (A no-act 79.57 here vs 90.32 on terra) — DeepSeek
+is more capable and markedly less cautious. **Two independent datasets on one
+model agree on the mechanism**, which is worth more than either result alone:
+
+> The cage's contribution is not a constant. It supplies whatever the base
+> model lacks — restraint for an eager model, and nothing at all for a
+> cautious one. On terra it bought capability and no safety; on DeepSeek it
+> buys safety (+35.42 probe, +11.83 no-act) and no capability (−0.46).
+
+Caveats: 20 cases, per-case differences quantised to 25pp steps, and neither
+subset is individually significant — only the pooled test is. The overt subset
+is the one place J is (non-significantly) worse.
+
+### The instrument defect this wave exposed (fixed)
+
+The DeepSeek account hit `402 Insufficient Balance` mid-wave. `compare_arms`
+voided a run only when `total_turns == 0 AND terminal_state == "UNKNOWN"` —
+and the plan tier records a turn for its single plan request *before* the API
+rejects it. So 402-killed plan-tier runs kept `turns == 1`, survived the
+filter, and **were scored as task failures**: 416 phantom failures landing on
+J and Ip alone, the two plan-tier arms, because interleaved arms fail before
+incrementing a turn and were correctly voided. The first reading of this wave
+was J −11.38 vs A; the true value is +3.21. *An outage was being attributed to
+the architecture, in precisely the arms under test.*
+
+The rule is now "no terminal state ⇒ not a result", regardless of turn count.
+Re-scoring w29 under the fix reproduces every published number exactly (w29
+had 10 such rows in 4,056 runs, all in arms with full real coverage), so this
+corrects a latent trap without disturbing any archived conclusion.
+
+This is the same failure mode as the w20 probe null and the
+`unchanged_keys_must_remain` unsatisfiability: **a metric that cannot
+distinguish "no result" from "a bad result."** It has now cost this campaign
+three separate wrong readings. When an arm's number moves sharply, check what
+the scorer did with its broken runs before believing it.
+
+## 8. Statistical discipline (methods paragraph, ready to adapt)
 
 The sampling unit is the case, never the run: reps are repeated measures, so
 per-case means are formed first and all tests operate over cases (n = 104).
