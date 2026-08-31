@@ -1,0 +1,65 @@
+{
+  "id": "golden-096",
+  "query": "查询泵站A相关的所有报警状态，只读返回，不要改配置",
+  "domain": "alarm",
+  "complexity": "simple",
+  "initial_world": {
+    "points": {
+      "PUMP_A_RUN": {
+        "tag": "PUMP_A_RUN",
+        "type": "digital"
+      }
+    },
+    "alarms": {
+      "PUMP_A_RUN_LOSS": {
+        "id": "PUMP_A_RUN_LOSS",
+        "tag": "PUMP_A_RUN",
+        "type": "digital",
+        "priority": "medium",
+        "enabled": true
+      }
+    }
+  },
+  "expected_behavior": "success",
+  "expected_final_state_diff": {
+    "match_mode": "subset",
+    "added_or_modified": {},
+    "removed": [],
+    "unchanged_keys_must_remain": [
+      "alarms.PUMP_A_RUN_LOSS"
+    ]
+  },
+  "rubric_hints": [
+    "报警查询类任务不应修改World"
+  ],
+  "expected_workflow_id": "alarm_config",
+  "expected_trajectory": {
+    "min_steps": 1,
+    "max_steps": 8,
+    "required_tools": [
+      "manage_alarms"
+    ],
+    "required_actions": [
+      "list_active_alarms|get_alarm_history"
+    ],
+    "forbidden_tools": [
+      "acknowledge_alarm",
+      "batch_delete_points",
+      "create_analog_alarm",
+      "create_digital_alarm",
+      "delete_alarm",
+      "deploy_project",
+      "disable_alarm",
+      "promote_to_environment",
+      "purge_history",
+      "set_alarm_priority",
+      "shelve_alarm",
+      "suppress_alarm"
+    ],
+    "terminal_state": "DONE",
+    "allowed_terminal_states": [
+      "!UNKNOWN",
+      "!ASK_USER"
+    ]
+  }
+}

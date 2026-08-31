@@ -42,14 +42,15 @@ from __future__ import annotations
 
 import math
 import re
+from collections import OrderedDict
+from collections.abc import Iterable
 from dataclasses import dataclass
-from typing import Callable, Iterable, Protocol
+from typing import Protocol
 
 import numpy as np
 from rank_bm25 import BM25Okapi
 
 from agent.tool_registry import ToolMeta, ToolRegistry
-
 
 # ============================================================ tokenisation
 _TOKEN_RE = re.compile(r"[A-Za-z0-9_]+|[一-鿿]")  # alnum-ish + each CJK char
@@ -152,6 +153,16 @@ class ToolIndex:
         self.encoder = encoder or HashingTfIdfEncoder()
         self.dense_matrix = self.encoder.encode(self.docs)
 
+        # ---- per-query channel-score cache -------------------------------
+        # The dense matmul and BM25 scoring run over the *whole* corpus and
+        # depend only on the query, not on the per-turn candidate set. Within a
+        # single agent run the query is constant, so recomputing them every turn
+        # (up to max_turns times) is pure waste. Cache the normalised channels
+        # keyed on the query; bound the cache so a long-lived index reused
+        # across many queries can't grow without limit.
+        self._channel_cache: OrderedDict[str, tuple[np.ndarray, np.ndarray]] = OrderedDict()
+        self._channel_cache_max = 16
+
     # ----------------------------------------- corpus composition
     @staticmethod
     def _compose_text(m: ToolMeta) -> str:
@@ -183,6 +194,22 @@ class ToolIndex:
             return np.zeros_like(arr)
         return (arr - lo) / (hi - lo)
 
+    def _normalised_channels(self, query: str) -> tuple[np.ndarray, np.ndarray]:
+        """Return the min-max-normalised (dense, sparse) score vectors for the
+        whole corpus, memoised per query. These are candidate-independent, so a
+        run that filters different candidate sets each turn still hits the cache.
+        """
+        cached = self._channel_cache.get(query)
+        if cached is not None:
+            self._channel_cache.move_to_end(query)
+            return cached
+        dn = self._minmax(self._dense_scores(query))
+        sn = self._minmax(self._sparse_scores(query))
+        self._channel_cache[query] = (dn, sn)
+        if len(self._channel_cache) > self._channel_cache_max:
+            self._channel_cache.popitem(last=False)
+        return dn, sn
+
     # ----------------------------------------- ranking
     def rank(
         self,
@@ -201,11 +228,18 @@ class ToolIndex:
         alpha : weight on the dense channel; ``score = α·dense + (1−α)·sparse``.
         top_n : truncation.
         """
-        dense = self._dense_scores(query)
-        sparse = self._sparse_scores(query)
-        dn = self._minmax(dense)
-        sn = self._minmax(sparse)
+        dn, sn = self._normalised_channels(query)
         hybrid = alpha * dn + (1.0 - alpha) * sn
+
+        # §4.2.4: an exact whole tool-name mention in the query must be recalled,
+        # not diluted out by a large corpus. Both channels are min-max
+        # normalised to [0, 1], so a +1.0 bump guarantees such a tool clears the
+        # noise floor and survives Top-N truncation (the reranker then pins it).
+        q_tokens = set(tokenise(query))
+        if q_tokens:
+            for i, name in enumerate(self.names):
+                if name in q_tokens:
+                    hybrid[i] += 1.0
 
         keep = set(self.names) if candidates is None else set(candidates)
         scored: list[ScoredTool] = []

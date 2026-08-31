@@ -1,0 +1,68 @@
+{
+  "id": "golden-098",
+  "query": "把旧报警OLD_ALM迁移到NEW_TEMP_H，旧报警要移除，新报警绑定NEW_TEMP",
+  "domain": "alarm",
+  "complexity": "complex",
+  "initial_world": {
+    "points": {
+      "NEW_TEMP": {
+        "tag": "NEW_TEMP",
+        "type": "analog",
+        "unit": "°C"
+      },
+      "OLD_TEMP": {
+        "tag": "OLD_TEMP",
+        "type": "analog",
+        "unit": "°C"
+      }
+    },
+    "alarms": {
+      "OLD_ALM": {
+        "id": "OLD_ALM",
+        "tag": "OLD_TEMP",
+        "type": "analog",
+        "priority": "medium",
+        "enabled": true
+      }
+    }
+  },
+  "expected_behavior": "success",
+  "expected_final_state_diff": {
+    "match_mode": "subset",
+    "added_or_modified": {
+      "alarms.NEW_TEMP_H.tag": "NEW_TEMP",
+      "alarms.NEW_TEMP_H.priority": "medium"
+    },
+    "removed": [
+      "alarms.OLD_ALM"
+    ],
+    "unchanged_keys_must_remain": [
+      "points.NEW_TEMP"
+    ]
+  },
+  "rubric_hints": [],
+  "expected_workflow_id": "alarm_config",
+  "expected_trajectory": {
+    "min_steps": 2,
+    "max_steps": 14,
+    "required_tools": [
+      "manage_alarms",
+      "manage_alarms"
+    ],
+    "required_actions": [
+      "create_analog_alarm",
+      "delete_alarm"
+    ],
+    "forbidden_tools": [
+      "batch_delete_points",
+      "deploy_project",
+      "promote_to_environment",
+      "purge_history"
+    ],
+    "terminal_state": "DONE",
+    "allowed_terminal_states": [
+      "!UNKNOWN",
+      "!ASK_USER"
+    ]
+  }
+}

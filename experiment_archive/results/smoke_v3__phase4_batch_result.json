@@ -1,0 +1,20 @@
+{
+  "prefix": "smoke_v3",
+  "results": [
+    {
+      "run_id": "smoke_v3_A_flat",
+      "status": "exit-1",
+      "exit_code": 1,
+      "elapsed_s": 114.3,
+      "cmd": "C:\\Users\\20906\\.gemini\\antigravity\\worktrees\\SCADA-Agent-Demo\\implement-golden-dataset-schema\\.venv\\Scripts\\python.exe -m eval.runner --config configs/A_flat_baseline.yaml --dataset-sample=10 --reps 1 --provider xiaomi-mimo --run-id smoke_v3_A_flat -w 3 --model mimo-v2.5-pro"
+    },
+    {
+      "run_id": "smoke_v3_F_full",
+      "status": "ok",
+      "exit_code": 0,
+      "elapsed_s": 247.4,
+      "cmd": "C:\\Users\\20906\\.gemini\\antigravity\\worktrees\\SCADA-Agent-Demo\\implement-golden-dataset-schema\\.venv\\Scripts\\python.exe -m eval.runner --config configs/F_full_four_in_one.yaml --dataset-sample=10 --reps 1 --provider xiaomi-mimo --run-id smoke_v3_F_full -w 6 --model mimo-v2.5-pro --rate-limit 3"
+    }
+  ],
+  "elapsed_s": 361.8
+}

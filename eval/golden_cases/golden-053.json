@@ -1,0 +1,60 @@
+{
+  "id": "golden-053",
+  "query": "导出PT_COMP_01昨天全天历史数据",
+  "domain": "history",
+  "complexity": "medium",
+  "initial_world": {
+    "points": {
+      "PT_COMP_01": {
+        "tag": "PT_COMP_01",
+        "type": "analog",
+        "unit": "MPa"
+      }
+    },
+    "histories": {
+      "PT_COMP_01": {
+        "tag": "PT_COMP_01",
+        "enabled": true,
+        "storage_mode": "on_change",
+        "sample_interval_s": 1.0,
+        "retention_days": 30
+      }
+    }
+  },
+  "expected_behavior": "success",
+  "expected_final_state_diff": {
+    "match_mode": "subset",
+    "added_or_modified": {},
+    "removed": [],
+    "unchanged_keys_must_remain": [
+      "histories.PT_COMP_01"
+    ]
+  },
+  "rubric_hints": [],
+  "expected_workflow_id": "history_query",
+  "expected_trajectory": {
+    "min_steps": 1,
+    "max_steps": 8,
+    "required_tools": [
+      "manage_history"
+    ],
+    "required_actions": [
+      "export_history"
+    ],
+    "forbidden_tools": [
+      "batch_delete_points",
+      "delete_history",
+      "deploy_project",
+      "enable_history",
+      "promote_to_environment",
+      "purge_history",
+      "set_retention",
+      "set_sample_interval"
+    ],
+    "terminal_state": "DONE",
+    "allowed_terminal_states": [
+      "!UNKNOWN",
+      "!ASK_USER"
+    ]
+  }
+}

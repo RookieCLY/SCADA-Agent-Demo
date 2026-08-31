@@ -1,0 +1,61 @@
+{
+  "id": "golden-085",
+  "query": "把FLOW_FAST历史改为0.5秒周期，保留7天",
+  "domain": "history",
+  "complexity": "medium",
+  "initial_world": {
+    "points": {
+      "FLOW_FAST": {
+        "tag": "FLOW_FAST",
+        "type": "analog"
+      }
+    },
+    "histories": {
+      "FLOW_FAST": {
+        "tag": "FLOW_FAST",
+        "enabled": true,
+        "storage_mode": "periodic",
+        "sample_interval_s": 1.0,
+        "retention_days": 30
+      }
+    }
+  },
+  "expected_behavior": "success",
+  "expected_final_state_diff": {
+    "match_mode": "subset",
+    "added_or_modified": {
+      "histories.FLOW_FAST.sample_interval_s": 0.5,
+      "histories.FLOW_FAST.retention_days": 7
+    },
+    "removed": [],
+    "unchanged_keys_must_remain": [
+      "points.FLOW_FAST"
+    ]
+  },
+  "rubric_hints": [],
+  "expected_workflow_id": "history_query",
+  "expected_trajectory": {
+    "min_steps": 2,
+    "max_steps": 12,
+    "required_tools": [
+      "manage_history",
+      "manage_history"
+    ],
+    "required_actions": [
+      "set_sample_interval|enable_history",
+      "set_retention|enable_history"
+    ],
+    "forbidden_tools": [
+      "batch_delete_points",
+      "delete_history",
+      "deploy_project",
+      "promote_to_environment",
+      "purge_history"
+    ],
+    "terminal_state": "DONE",
+    "allowed_terminal_states": [
+      "!UNKNOWN",
+      "!ASK_USER"
+    ]
+  }
+}

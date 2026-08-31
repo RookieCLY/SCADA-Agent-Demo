@@ -1,0 +1,48 @@
+{
+  "id": "golden-072",
+  "query": "根据泵站模板自动选择合适工作流，帮我做一个带运行反馈的泵站面板",
+  "domain": "multi",
+  "complexity": "medium",
+  "initial_world": {},
+  "expected_behavior": "success",
+  "expected_final_state_diff": {
+    "match_mode": "key_fields",
+    "added_or_modified": {
+      "pages.auto_pump_panel.name": "泵站面板",
+      "pages.auto_pump_panel.widgets.pump.type": "pump",
+      "pages.auto_pump_panel.widgets.pump.bindings.status": "AUTO_PUMP_RUN",
+      "points.AUTO_PUMP_RUN.type": "digital"
+    },
+    "removed": [],
+    "unchanged_keys_must_remain": []
+  },
+  "rubric_hints": [],
+  "expected_workflow_id": "pump_station_screen",
+  "expected_trajectory": {
+    "min_steps": 4,
+    "max_steps": 20,
+    "required_tools": [
+      "manage_pages",
+      "manage_points",
+      "manage_graphics|manage_pages",
+      "manage_pages"
+    ],
+    "required_actions": [
+      "create_page",
+      "create_point",
+      "create_pump|create_widget",
+      "bind_point"
+    ],
+    "forbidden_tools": [
+      "batch_delete_points",
+      "deploy_project",
+      "promote_to_environment",
+      "purge_history"
+    ],
+    "terminal_state": "DONE",
+    "allowed_terminal_states": [
+      "!UNKNOWN",
+      "!ASK_USER"
+    ]
+  }
+}

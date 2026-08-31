@@ -1,0 +1,43 @@
+{
+  "id": "golden-054",
+  "query": "查询NO_HISTORY_POINT最近一小时历史曲线",
+  "domain": "history",
+  "complexity": "medium",
+  "initial_world": {
+    "points": {
+      "KNOWN_POINT": {
+        "tag": "KNOWN_POINT",
+        "type": "analog"
+      }
+    }
+  },
+  "expected_behavior": "fail_or_clarify",
+  "expected_final_state_diff": {
+    "match_mode": "strict",
+    "added_or_modified": {},
+    "removed": [],
+    "unchanged_keys_must_remain": []
+  },
+  "rubric_hints": [],
+  "expected_workflow_id": "history_query",
+  "expected_error_code": "POINT_NOT_FOUND",
+  "expected_alternative": "应说明点位不存在或追问正确点位",
+  "expected_trajectory": {
+    "min_steps": 0,
+    "max_steps": 8,
+    "required_tools": [],
+    "required_actions": [],
+    "forbidden_tools": [
+      "batch_delete_points",
+      "create_point",
+      "deploy_project",
+      "enable_history",
+      "promote_to_environment",
+      "purge_history"
+    ],
+    "terminal_state": "DONE",
+    "allowed_terminal_states": [
+      "!UNKNOWN"
+    ]
+  }
+}

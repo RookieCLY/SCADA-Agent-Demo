@@ -1,0 +1,67 @@
+{
+  "id": "golden-022",
+  "query": "把所有带Temp的温度点的报警优先级都提高到high",
+  "domain": "alarm",
+  "complexity": "medium",
+  "initial_world": {
+    "points": {
+      "Temp_A": {
+        "tag": "Temp_A",
+        "type": "analog"
+      },
+      "Temp_B": {
+        "tag": "Temp_B",
+        "type": "analog"
+      }
+    },
+    "alarms": {
+      "al_a": {
+        "id": "al_a",
+        "tag": "Temp_A",
+        "type": "analog",
+        "priority": "medium"
+      },
+      "al_b": {
+        "id": "al_b",
+        "tag": "Temp_B",
+        "type": "analog",
+        "priority": "medium"
+      }
+    }
+  },
+  "expected_behavior": "success",
+  "expected_final_state_diff": {
+    "match_mode": "subset",
+    "added_or_modified": {
+      "alarms.al_a.priority": "high",
+      "alarms.al_b.priority": "high"
+    },
+    "removed": [],
+    "unchanged_keys_must_remain": []
+  },
+  "rubric_hints": [],
+  "expected_trajectory": {
+    "min_steps": 1,
+    "max_steps": 14,
+    "required_tools": [
+      "manage_alarms",
+      "manage_alarms"
+    ],
+    "required_actions": [
+      "set_alarm_priority",
+      "set_alarm_priority"
+    ],
+    "forbidden_tools": [
+      "batch_delete_points",
+      "delete_alarm",
+      "deploy_project",
+      "promote_to_environment",
+      "purge_history"
+    ],
+    "terminal_state": "DONE",
+    "allowed_terminal_states": [
+      "!UNKNOWN",
+      "!ASK_USER"
+    ]
+  }
+}

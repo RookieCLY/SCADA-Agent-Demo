@@ -1,0 +1,9 @@
+
+name: Bad
+trigger:
+  keywords: ["x"]
+steps:
+  - id: a
+    type: llm_step
+    state: NOT_A_STATE
+    allowed_tools: [list_pages]

@@ -1,0 +1,60 @@
+{
+  "id": "golden-073",
+  "query": "根据化工模板自动生成带罐体和温压液位的反应釜面板",
+  "domain": "multi",
+  "complexity": "medium",
+  "initial_world": {},
+  "expected_behavior": "success",
+  "expected_final_state_diff": {
+    "match_mode": "key_fields",
+    "added_or_modified": {
+      "pages.auto_reactor_panel.name": "反应釜面板",
+      "pages.auto_reactor_panel.widgets.tank.type": "tank",
+      "pages.auto_reactor_panel.widgets.tank.bindings.temperature": "AUTO_TT",
+      "pages.auto_reactor_panel.widgets.tank.bindings.pressure": "AUTO_PT",
+      "pages.auto_reactor_panel.widgets.tank.bindings.level": "AUTO_LT",
+      "points.AUTO_TT.type": "analog",
+      "points.AUTO_PT.type": "analog",
+      "points.AUTO_LT.type": "analog"
+    },
+    "removed": [],
+    "unchanged_keys_must_remain": []
+  },
+  "rubric_hints": [],
+  "expected_workflow_id": "chemical_screen",
+  "expected_trajectory": {
+    "min_steps": 4,
+    "max_steps": 32,
+    "required_tools": [
+      "manage_pages",
+      "manage_points",
+      "manage_points",
+      "manage_points",
+      "manage_graphics|manage_pages",
+      "manage_pages",
+      "manage_pages",
+      "manage_pages"
+    ],
+    "required_actions": [
+      "create_page",
+      "create_point",
+      "create_point",
+      "create_point",
+      "create_tank|create_widget",
+      "bind_point",
+      "bind_point",
+      "bind_point"
+    ],
+    "forbidden_tools": [
+      "batch_delete_points",
+      "deploy_project",
+      "promote_to_environment",
+      "purge_history"
+    ],
+    "terminal_state": "DONE",
+    "allowed_terminal_states": [
+      "!UNKNOWN",
+      "!ASK_USER"
+    ]
+  }
+}

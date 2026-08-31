@@ -1,0 +1,75 @@
+{
+  "id": "golden-061",
+  "query": "把PT_COMP_01绑定到compressor_page的pressure_gauge数值属性",
+  "domain": "graphics",
+  "complexity": "simple",
+  "initial_world": {
+    "pages": {
+      "compressor_page": {
+        "id": "compressor_page",
+        "name": "空压机",
+        "widgets": {
+          "pressure_gauge": {
+            "id": "pressure_gauge",
+            "page_id": "compressor_page",
+            "type": "gauge",
+            "position": [
+              0,
+              0
+            ],
+            "size": [
+              80,
+              40
+            ],
+            "expected_binding_types": {
+              "value": [
+                "analog"
+              ]
+            }
+          }
+        }
+      }
+    },
+    "points": {
+      "PT_COMP_01": {
+        "tag": "PT_COMP_01",
+        "type": "analog",
+        "unit": "MPa"
+      }
+    }
+  },
+  "expected_behavior": "success",
+  "expected_final_state_diff": {
+    "match_mode": "subset",
+    "added_or_modified": {
+      "pages.compressor_page.widgets.pressure_gauge.bindings.value": "PT_COMP_01"
+    },
+    "removed": [],
+    "unchanged_keys_must_remain": [
+      "points.PT_COMP_01"
+    ]
+  },
+  "rubric_hints": [],
+  "expected_workflow_id": "point_binding",
+  "expected_trajectory": {
+    "min_steps": 1,
+    "max_steps": 10,
+    "required_tools": [
+      "manage_pages"
+    ],
+    "required_actions": [
+      "bind_point"
+    ],
+    "forbidden_tools": [
+      "batch_delete_points",
+      "deploy_project",
+      "promote_to_environment",
+      "purge_history"
+    ],
+    "terminal_state": "DONE",
+    "allowed_terminal_states": [
+      "!UNKNOWN",
+      "!ASK_USER"
+    ]
+  }
+}

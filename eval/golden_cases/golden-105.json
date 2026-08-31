@@ -1,0 +1,49 @@
+{
+  "id": "golden-105",
+  "query": "把冷却水泵 pump_1 停用，退出运行以便检修",
+  "domain": "device",
+  "complexity": "simple",
+  "initial_world": {
+    "devices": {
+      "pump_1": {
+        "id": "pump_1",
+        "name": "冷却水泵",
+        "type": "pump"
+      }
+    }
+  },
+  "expected_behavior": "success",
+  "expected_final_state_diff": {
+    "match_mode": "subset",
+    "added_or_modified": {},
+    "removed": [],
+    "unchanged_keys_must_remain": []
+  },
+  "expected_trajectory": {
+    "min_steps": 1,
+    "max_steps": 8,
+    "required_tools": [
+      "manage_devices"
+    ],
+    "required_actions": [
+      "disable_device"
+    ],
+    "forbidden_tools": [
+      "batch_delete_points",
+      "deploy_project",
+      "promote_to_environment",
+      "purge_history"
+    ],
+    "terminal_state": "DONE",
+    "allowed_terminal_states": [
+      "!UNKNOWN",
+      "!ASK_USER"
+    ]
+  },
+  "expected_error_code": null,
+  "expected_workflow_id": null,
+  "expected_alternative": null,
+  "rubric_hints": [
+    "应调用 manage_devices.disable_device 完成任务，终态 DONE"
+  ]
+}

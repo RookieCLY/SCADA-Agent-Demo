@@ -1,0 +1,47 @@
+{
+  "pages": {
+    "p1": {
+      "id": "p1",
+      "name": "Main",
+      "resolution": [
+        1920,
+        1080
+      ],
+      "background": "#000000",
+      "widgets": {
+        "w1": {
+          "id": "w1",
+          "page_id": "p1",
+          "type": "thermometer",
+          "position": [
+            10,
+            20
+          ],
+          "size": [
+            80,
+            200
+          ],
+          "bindings": {},
+          "expected_binding_types": {},
+          "style": {}
+        }
+      }
+    }
+  },
+  "points": {
+    "TEMP_201": {
+      "tag": "TEMP_201",
+      "type": "analog",
+      "unit": "°C",
+      "min": 0.0,
+      "max": 200.0,
+      "description": null
+    }
+  },
+  "alarms": {},
+  "devices": {},
+  "histories": {},
+  "scripts": {},
+  "deployments": {},
+  "project_meta": {}
+}

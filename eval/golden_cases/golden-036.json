@@ -1,0 +1,43 @@
+{
+  "id": "golden-036",
+  "query": "新增模拟量点位PT_COMP_01，单位MPa，量程0到3.5，描述为空压机出口压力",
+  "domain": "point",
+  "complexity": "simple",
+  "initial_world": {},
+  "expected_behavior": "success",
+  "expected_final_state_diff": {
+    "match_mode": "subset",
+    "added_or_modified": {
+      "points.PT_COMP_01.type": "analog",
+      "points.PT_COMP_01.unit": "MPa",
+      "points.PT_COMP_01.min": 0.0,
+      "points.PT_COMP_01.max": 3.5,
+      "points.PT_COMP_01.description": "空压机出口压力"
+    },
+    "removed": [],
+    "unchanged_keys_must_remain": []
+  },
+  "rubric_hints": [],
+  "expected_workflow_id": "point_creation",
+  "expected_trajectory": {
+    "min_steps": 1,
+    "max_steps": 10,
+    "required_tools": [
+      "manage_points"
+    ],
+    "required_actions": [
+      "create_point"
+    ],
+    "forbidden_tools": [
+      "batch_delete_points",
+      "deploy_project",
+      "promote_to_environment",
+      "purge_history"
+    ],
+    "terminal_state": "DONE",
+    "allowed_terminal_states": [
+      "!UNKNOWN",
+      "!ASK_USER"
+    ]
+  }
+}

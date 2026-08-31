@@ -1,0 +1,54 @@
+{
+  "id": "golden-014",
+  "query": "加三个IO点: TI-201, PI-201, FI-201, 全是AI，带历史",
+  "domain": "point",
+  "complexity": "medium",
+  "initial_world": {},
+  "expected_behavior": "success",
+  "expected_final_state_diff": {
+    "match_mode": "subset",
+    "added_or_modified": {
+      "points.TI-201.type": "analog",
+      "points.PI-201.type": "analog",
+      "points.FI-201.type": "analog",
+      "histories.TI-201.enabled": true,
+      "histories.PI-201.enabled": true,
+      "histories.FI-201.enabled": true
+    },
+    "removed": [],
+    "unchanged_keys_must_remain": []
+  },
+  "expected_workflow_id": "point_creation",
+  "rubric_hints": [],
+  "expected_trajectory": {
+    "min_steps": 2,
+    "max_steps": 30,
+    "required_tools": [
+      "manage_points",
+      "manage_points",
+      "manage_points",
+      "manage_history",
+      "manage_history",
+      "manage_history"
+    ],
+    "required_actions": [
+      "create_point",
+      "create_point",
+      "create_point",
+      "enable_history",
+      "enable_history",
+      "enable_history"
+    ],
+    "forbidden_tools": [
+      "batch_delete_points",
+      "deploy_project",
+      "promote_to_environment",
+      "purge_history"
+    ],
+    "terminal_state": "DONE",
+    "allowed_terminal_states": [
+      "!UNKNOWN",
+      "!ASK_USER"
+    ]
+  }
+}

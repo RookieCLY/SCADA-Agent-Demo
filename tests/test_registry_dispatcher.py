@@ -47,8 +47,8 @@ def test_visible_to_llm_hierarchical(registry: ToolRegistry):
     arch = ArchitectureConfig(hierarchical_tools=True)
     view = registry.visible_to_llm(arch)
     assert all(t["kind"] == "domain" for t in view)
-    # 7 domains: alarms / points / pages / graphics / history / scripts / deployment
-    assert len(view) == 7
+    # 17 domains registered in build_default_registry
+    assert len(view) == 17
     names = {t["name"] for t in view}
     assert names == {
         "manage_alarms",
@@ -58,6 +58,16 @@ def test_visible_to_llm_hierarchical(registry: ToolRegistry):
         "manage_history",
         "manage_scripts",
         "deployment",
+        "manage_devices",
+        "manage_trends",
+        "manage_recipes",
+        "manage_users",
+        "manage_communication",
+        "manage_reports",
+        "manage_schedules",
+        "manage_security",
+        "manage_databases",
+        "manage_notifications",
     }
 
 
@@ -176,3 +186,38 @@ def test_merge_generated_examples_missing_file_is_noop(tmp_path: Path):
     assert out == {}
     for m in reg.all_atomics():
         assert m.examples == snapshot[m.name]
+
+
+def test_build_default_registry_with_tool_counts():
+    core_tool_names = {
+        'apply_flow_layout', 'bind_point', 'create_analog_alarm', 'create_circle',
+        'create_digital_alarm', 'create_line', 'create_page', 'create_point',
+        'create_rect', 'create_script', 'create_text', 'create_widget',
+        'delete_alarm', 'delete_page', 'delete_point', 'delete_script',
+        'delete_widget', 'deploy_project', 'disable_alarm', 'disable_history',
+        'disable_script', 'enable_alarm', 'enable_history', 'enable_script',
+        'group_widgets', 'list_history', 'list_pages', 'list_points',
+        'list_scripts', 'query_history', 'rename_page', 'rollback_deployment',
+        'set_retention', 'set_threshold', 'set_widget_style', 'show_deployment_status',
+        'update_point', 'update_script_body', 'validate_project'
+    }
+    
+    # The core domains are always fully included, so they form a floor below
+    # which tool_count cannot shrink the registry. That floor is the real core
+    # count (computed here rather than hardcoded, so growing the tool library
+    # doesn't silently break this test).
+    core_floor = len(build_default_registry(tool_count=1).all_atomics())
+    assert core_floor >= len(core_tool_names)
+
+    # 1. tool_count below the floor: clamped up to the full core set.
+    reg30 = build_default_registry(tool_count=30)
+    all_names30 = {t.name for t in reg30.all_atomics()}
+    assert len(all_names30) == core_floor
+    assert core_tool_names.issubset(all_names30)
+
+    # 2. tool_count at/above the floor: exactly tool_count, core always present.
+    for tc in (core_floor, core_floor + 50, 300, 500, 1000):
+        reg = build_default_registry(tool_count=tc)
+        names = {t.name for t in reg.all_atomics()}
+        assert len(names) == tc, f"tool_count={tc} -> {len(names)}"
+        assert core_tool_names.issubset(names)

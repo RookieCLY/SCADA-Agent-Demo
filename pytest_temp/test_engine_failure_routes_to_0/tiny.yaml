@@ -1,0 +1,16 @@
+
+name: TinyFlow
+version: "1.0.0"
+trigger:
+  keywords: ["tiny"]
+steps:
+  - id: a
+    type: llm_step
+    state: ANALYZE_INTENT
+    allowed_tools: [list_pages]
+  - id: b
+    type: llm_step
+    state: BIND_POINTS
+    depends_on: [a]
+    allowed_tools: [bind_point]
+    on_failure: a

@@ -1,0 +1,26 @@
+[
+  {
+    "model": "glm-4-flash",
+    "status": "SUCCESS",
+    "early_terminated": false,
+    "total_turns": 2,
+    "tool_calls": 1,
+    "input_tokens": 19331,
+    "output_tokens": 73,
+    "e2e_latency_s": 10.12243650003802,
+    "avg_llm_latency_ms": 5047.3585999861825,
+    "error": null
+  },
+  {
+    "model": "glm-4v-flash",
+    "status": "FAILED",
+    "early_terminated": false,
+    "total_turns": 1,
+    "tool_calls": 0,
+    "input_tokens": 1039,
+    "output_tokens": 29,
+    "e2e_latency_s": 1.5398055999539793,
+    "avg_llm_latency_ms": 1525.6829999852926,
+    "error": null
+  }
+]

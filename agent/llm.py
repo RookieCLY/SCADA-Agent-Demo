@@ -16,10 +16,104 @@ import os
 import re
 import time
 from dataclasses import dataclass, field
+from functools import lru_cache
 from pathlib import Path
 from typing import Any, Literal, Protocol
 
+from loguru import logger
+
 from agent.config import ArchitectureConfig, ModelConfig
+
+# Synthetic tool name for Resource reads (§4.5). Defined here rather than in the
+# orchestrator because the schema builders below must emit a function schema for
+# it, and the orchestrator already imports from this module — the reverse
+# direction would be a cycle. Re-exported by ``agent.orchestrator``.
+READ_RESOURCE_TOOL = "read_resource"
+
+
+# LongCat-2.0 emits tool calls as literal text in a proprietary block instead of
+# populating the OpenAI ``tool_calls`` field:
+#
+#     <longcat_tool_call>manage_points
+#     <longcat_arg_key>action</longcat_arg_key>
+#     <longcat_arg_value>list_points</longcat_arg_value>
+#     </longcat_tool_call>
+#
+# Measured on a 5-case smoke: 5/5 of the interleaved arm's turns carried one of
+# these and were recorded as ``end_turn`` with zero tool calls — the model was
+# acting and the harness discarded all of it. Any function-calling arm scores
+# ~0 on this provider while the Plan-Execute arm (which parses a JSON payload
+# out of message *content*) is unaffected, so an A-vs-J comparison on LongCat
+# measures the parser, not the architecture.
+_LONGCAT_CALL_RE = re.compile(
+    # The body is a *tempered* dot: it may not run across a further opening tag.
+    # A plain ``.*?`` under DOTALL lets an unclosed block (the malformed
+    # ``next_state`` form below) swallow the well-formed call that follows it,
+    # because the first opening tag then pairs with the second block's closing
+    # tag. Refusing to cross an opening tag makes each block match its own.
+    r"<longcat_tool_call>\s*(?P<name>[A-Za-z_][A-Za-z0-9_]*)\s*"
+    r"(?P<body>(?:(?!<longcat_tool_call>).)*?)</longcat_tool_call>",
+    re.DOTALL,
+)
+_LONGCAT_ARG_RE = re.compile(
+    r"<longcat_arg_key>(?P<key>.*?)</longcat_arg_key>\s*"
+    r"<longcat_arg_value>(?P<value>.*?)</longcat_arg_value>",
+    re.DOTALL,
+)
+
+
+def _longcat_arg_value(raw: str) -> Any:
+    """Decode one text-encoded argument value.
+
+    Everything arrives as a string. Only *containers* are JSON-decoded: Pydantic
+    coerces ``"80"`` → ``80`` on its own but cannot turn ``"[1920, 1080]"`` into
+    a list, and blanket ``json.loads`` would corrupt a genuinely string-typed
+    identifier that happens to look numeric (a tag like ``"101"`` would become
+    an int and fail a ``str`` field).
+    """
+    value = raw.strip()
+    if value[:1] in ("[", "{"):
+        try:
+            return json.loads(value)
+        except json.JSONDecodeError:
+            return value
+    return value
+
+
+def _parse_longcat_tool_calls(text: str) -> tuple[list[tuple[str, dict[str, Any]]], str]:
+    """Extract text-encoded tool calls, returning them and the cleaned prose.
+
+    The blocks are stripped from the text so the leftover narration is not fed
+    back to the model as if it were the assistant's whole turn.
+
+    ``next_state`` is skipped: the model also wraps FSM transition requests in
+    this tag (observed as ``<longcat_tool_call>next_state: MANAGE_PAGES``, with
+    a mismatched closing tag). Those are not tool calls — the ``next_state:``
+    regex in ``call()`` owns them — and dispatching one would surface as a
+    spurious unknown-tool OUT_OF_SCOPE.
+    """
+    calls: list[tuple[str, dict[str, Any]]] = []
+    for match in _LONGCAT_CALL_RE.finditer(text):
+        name = match.group("name")
+        if name == "next_state":
+            continue
+        args = {
+            arg.group("key").strip(): _longcat_arg_value(arg.group("value"))
+            for arg in _LONGCAT_ARG_RE.finditer(match.group("body"))
+        }
+        calls.append((name, args))
+    return calls, _LONGCAT_CALL_RE.sub("", text).strip()
+
+
+@lru_cache(maxsize=2048)
+def _cached_json_schema(model_cls: type) -> dict[str, Any]:
+    """``model_cls.model_json_schema()`` is static per class but non-trivial to
+    build; the tool schemas are otherwise regenerated for every visible tool on
+    every turn. Cache keyed on the (hashable) model class. Callers must treat
+    the returned dict as read-only — the two builders below only read it or copy
+    sub-sections, never mutate it in place.
+    """
+    return model_cls.model_json_schema()
 
 
 # ============================================================ data classes
@@ -29,6 +123,11 @@ class LLMToolCall:
 
     name: str
     arguments: dict[str, Any]
+    # Provider-assigned tool_call id (OpenAI-compatible `tc.id`). Used to
+    # correlate each tool *result* back to the exact call it answers when
+    # threading history across turns. None for backends that don't emit ids
+    # (e.g. MockLLM), which don't rely on cross-turn result threading.
+    call_id: str | None = None
 
 
 @dataclass
@@ -42,6 +141,8 @@ class LLMResponse:
     raw: dict[str, Any] = field(default_factory=dict)
     # If non-None, the agent should attempt a state transition to this label.
     next_state: str | None = None
+    # Chain-of-thought / reasoning from thinking-mode providers (e.g. xiaomi-mimo).
+    reasoning: str | None = None
 
 
 class LLMProvider(Protocol):
@@ -67,11 +168,16 @@ class MockLLM:
     main loop terminates cleanly rather than spinning.
     """
 
-    # Mapping: state -> list[(query_pattern, response_factory)]
-    SCRIPT: dict[str, list[tuple[re.Pattern[str], Any]]] = {}
+    # Mapping: state -> list[(query_pattern, response_factory)].
+    # Instantiated per instance in __init__ — a class-level mutable default
+    # would accumulate a fresh copy of every scripted rule on each MockLLM()
+    # construction (the test suite builds many), growing the shared dict
+    # unboundedly.
+    SCRIPT: dict[str, list[tuple[re.Pattern[str], Any]]]
 
     def __init__(self, model_name: str = "mock") -> None:
         self.model_name = model_name
+        self.SCRIPT = {}
         self._install_default_script()
 
     # ----------------------------------------- factories return LLMResponse
@@ -138,7 +244,7 @@ class MockLLM:
 
         def alarm_done(_: str) -> LLMResponse:
             return self._resp_text(
-                f"已创建高温报警,阈值生效。", next_state=None
+                "已创建高温报警,阈值生效。", next_state=None
             )
 
         self.SCRIPT.setdefault("ANALYZE_INTENT", []).append((rx_alarm_high, alarm_high_intent))
@@ -290,6 +396,28 @@ class MockLLM:
             raw={"matched_state": state, "model": self.model_name},
         )
 
+    def select_workflow(
+        self, query: str, options: list[dict[str, str]]
+    ) -> str | None:
+        """The scripted mock abstains — the orchestrator then falls back to the
+        deterministic keyword router, which keeps mock runs reproducible."""
+        return None
+
+    def make_plan(
+        self,
+        query: str,
+        tool_list: str,
+        feedback: str | None = None,
+        world_context: str | None = None,
+    ) -> None:
+        """The scripted mock cannot plan, so it abstains.
+
+        Plan-and-Execute then falls back to the interleaved loop, which is what
+        keeps every existing mock-scripted test deterministic — the mock's canned
+        tool sequences are still what runs.
+        """
+        return None
+
 
 # ============================================================ OpenAI-compatible provider
 def _coerce_nested_json_strings(args: Any) -> Any:
@@ -321,6 +449,49 @@ def _coerce_nested_json_strings(args: Any) -> Any:
                 return args
             return _coerce_nested_json_strings(decoded)
     return args
+
+
+def _extract_json_object(text: str) -> dict[str, Any] | None:
+    """Pull the first top-level JSON object out of a model reply.
+
+    Planners are asked for bare JSON but routinely wrap it in ```json fences or
+    a sentence of preamble. Scanning for the outermost balanced ``{...}`` is
+    more robust than a strict ``json.loads`` and costs nothing when the model
+    complied.
+    """
+    stripped = text.strip()
+    if stripped.startswith("```"):
+        stripped = stripped.split("```")[1] if "```" in stripped[3:] else stripped[3:]
+        if stripped.startswith("json"):
+            stripped = stripped[4:]
+    start = stripped.find("{")
+    if start < 0:
+        return None
+    depth = 0
+    in_string = False
+    escaped = False
+    for i, ch in enumerate(stripped[start:], start=start):
+        if in_string:
+            if escaped:
+                escaped = False
+            elif ch == "\\":
+                escaped = True
+            elif ch == '"':
+                in_string = False
+            continue
+        if ch == '"':
+            in_string = True
+        elif ch == "{":
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            if depth == 0:
+                try:
+                    obj = json.loads(stripped[start : i + 1])
+                except json.JSONDecodeError:
+                    return None
+                return obj if isinstance(obj, dict) else None
+    return None
 
 
 def _load_dotenv_into_environ(path: str | Path = ".env") -> None:
@@ -359,6 +530,94 @@ def _env(*names: str) -> str | None:
     return None
 
 
+#: HTTP statuses on which the failover client rotates to the next endpoint:
+#: auth/billing (401/402/403), model-not-served (404), rate limit (429), and
+#: server-side failures, including Cloudflare's 524 origin timeout. Anything
+#: else (400 content filter, schema errors) is a *request* problem every
+#: endpoint would reproduce, so it propagates.
+_ROTATE_STATUS = frozenset({401, 402, 403, 404, 408, 429, 500, 502, 503, 504, 524})
+
+
+def _parse_docode_endpoints(raw: str | None) -> list[tuple[str, str]]:
+    """Parse ``DOCODE_API_KEYS`` — comma-separated ``key@url`` pairs."""
+    endpoints: list[tuple[str, str]] = []
+    for chunk in (raw or "").split(","):
+        chunk = chunk.strip()
+        if not chunk or "@" not in chunk:
+            continue
+        key, url = chunk.split("@", 1)
+        if key.strip() and url.strip():
+            endpoints.append((key.strip(), url.strip()))
+    return endpoints
+
+
+class _FailoverCompletions:
+    def __init__(self, owner: _FailoverClients) -> None:
+        self._owner = owner
+
+    def create(self, **kwargs: Any):
+        from openai import APIConnectionError, APITimeoutError
+
+        owner = self._owner
+        n = len(owner.clients)
+        last: Exception | None = None
+        for i in range(n):
+            idx = (_FailoverClients.sticky + i) % n
+            try:
+                resp = owner.clients[idx].chat.completions.create(**kwargs)
+                _FailoverClients.sticky = idx
+                return resp
+            except Exception as exc:  # noqa: BLE001 - classify then re-raise
+                rotate = (
+                    getattr(exc, "status_code", None) in _ROTATE_STATUS
+                    or isinstance(exc, (APIConnectionError, APITimeoutError))
+                )
+                if rotate and i < n - 1:
+                    logger.warning(
+                        "docode endpoint {} failed ({}); rotating to next",
+                        idx, type(exc).__name__,
+                    )
+                    last = exc
+                    continue
+                if rotate:
+                    last = exc
+                    break
+                raise
+        assert last is not None
+        raise last
+
+
+class _FailoverChat:
+    def __init__(self, owner: _FailoverClients) -> None:
+        self.completions = _FailoverCompletions(owner)
+
+
+class _FailoverClients:
+    """Duck-types the one OpenAI-client surface this adapter uses
+    (``.chat.completions.create``) over an ordered list of endpoints.
+
+    Rotation happens on billing/auth/availability failures only (the wegoo
+    balance ran dry mid-wave twice; the 小鹿 relay's upstream flaps), and the
+    working index is **sticky at class level** so every Agent constructed in
+    the same process starts from the endpoint that last worked instead of
+    re-walking the dead ones on all ~104 cases of a rep.
+
+    Consistency guarantee the wave design depends on: the model name and the
+    ``reasoning_effort`` tier live in the *request* (built once by
+    ``OpenAICompatibleLLM``), so a mid-run rotation can change neither — every
+    endpoint receives byte-identical requests.
+    """
+
+    sticky: int = 0
+
+    def __init__(self, endpoints: list[tuple[str, str]]) -> None:
+        from openai import OpenAI
+
+        self.endpoints = endpoints
+        self.clients = [OpenAI(api_key=k, base_url=u) for k, u in endpoints]
+        self.chat = _FailoverChat(self)
+
+
 class OpenAICompatibleLLM:
     """Adapter for any provider speaking the OpenAI Chat-Completions wire format.
 
@@ -379,19 +638,51 @@ class OpenAICompatibleLLM:
         max_tokens: int = 4096,
         registry: Any | None = None,
         hierarchical: bool = False,
+        reasoning_effort: str | None = None,
+        endpoints: list[tuple[str, str]] | None = None,
     ) -> None:
         from openai import OpenAI
 
-        self._client = OpenAI(api_key=api_key, base_url=base_url)
+        # With ``endpoints`` the adapter fails over between them on
+        # billing/availability errors; model and effort live in the request,
+        # so a rotation cannot change what is measured.
+        if endpoints:
+            self._client: Any = _FailoverClients(endpoints)
+        else:
+            self._client = OpenAI(api_key=api_key, base_url=base_url)
         self.model_name = model
         self.temperature = temperature
         self.max_tokens = max_tokens
         self.registry = registry
         self.hierarchical = hierarchical
+        # Reasoning-effort tier for providers that accept it (gpt-5.x style:
+        # low/medium/high/xhigh/max). Sent via extra_body so the installed SDK
+        # version does not have to know the parameter; None sends nothing and
+        # reproduces the archived behaviour exactly.
+        self.reasoning_effort = reasoning_effort
         # cross-turn conversation state
         self._messages: list[dict[str, Any]] = []
-        self._pending_tool_ids: dict[str, str] = {}
+        self._pending_tool_ids: list[tuple[str, str]] = []
         self._first_call = True
+        # Counter for ids synthesized for text-narrated tool calls.
+        self._synth_call_seq = 0
+        # Assembled domain-tool schemas are static per (domain, allowed-actions)
+        # set but were rebuilt (oneOf branches + doc string) on every turn.
+        # Cache them; callers treat the result as read-only (same contract as
+        # _cached_json_schema).
+        self._domain_schema_cache: dict[tuple[str, tuple[str, ...]], dict[str, Any]] = {}
+
+    def _effort_kwargs(self) -> dict[str, Any]:
+        """``extra_body`` carrying the reasoning-effort tier, or nothing.
+
+        Applied to every completion this adapter makes — the interleaved loop,
+        ``make_plan`` and ``select_workflow`` — so an arm's effort setting is
+        uniform across its tiers rather than an accidental property of which
+        code path ran.
+        """
+        if not self.reasoning_effort:
+            return {}
+        return {"extra_body": {"reasoning_effort": self.reasoning_effort}}
 
     def reset(self) -> None:
         """Discard cross-turn state so the next ``call()`` starts a fresh chat.
@@ -401,8 +692,125 @@ class OpenAICompatibleLLM:
         does not bleed messages from a previous query into the next prompt.
         """
         self._messages = []
-        self._pending_tool_ids = {}
+        self._pending_tool_ids = []
         self._first_call = True
+        self._synth_call_seq = 0
+
+    def select_workflow(
+        self, query: str, options: list[dict[str, str]]
+    ) -> str | None:
+        """§4.3.1 workflow entry decision — a *stateless* one-shot classification
+        that deliberately does not touch ``self._messages`` (so it can't pollute
+        the main conversation). Returns a workflow name from ``options`` or None.
+        """
+        if not options:
+            return None
+        catalogue = "\n".join(
+            f"- {o['name']}: {o.get('description', '')}" for o in options
+        )
+        sys_prompt = (
+            "你是工业 SCADA Agent 的工作流路由器。根据用户请求，从下列工作流中选出"
+            "最匹配的一个，只输出它的 name(原样);若都不匹配则只输出 NONE。"
+            "不要输出任何解释或其它文字。\n可选工作流:\n" + catalogue
+        )
+        try:
+            resp = self._client.chat.completions.create(
+                model=self.model_name,
+                messages=[
+                    {"role": "system", "content": sys_prompt},
+                    {"role": "user", "content": query},
+                ],
+                temperature=0.0,
+                max_tokens=32,
+                **self._effort_kwargs(),
+            )
+            text = (resp.choices[0].message.content or "").strip()
+        except Exception:
+            return None
+        if not text or "NONE" in text.upper():
+            return None
+        # The model may wrap the name in punctuation/quotes; match by containment.
+        for o in options:
+            if o["name"] in text:
+                return o["name"]
+        return None
+
+    def make_plan(
+        self,
+        query: str,
+        tool_list: str,
+        feedback: str | None = None,
+        world_context: str | None = None,
+    ) -> dict[str, Any] | None:
+        """One-shot whole-task planning call (Plan-and-Execute).
+
+        Deliberately *stateless* — like ``select_workflow`` it must not touch
+        ``self._messages``, both so a replan cannot inherit a half-finished
+        function-call exchange and so the planning cost stays a single flat
+        prompt rather than the growing conversation the interleaved loop pays.
+
+        ``world_context`` grounds the plan in what already exists: the docode
+        trial showed the planner refusing legitimate tasks it could not ground
+        ("无法确定 PumpA 点位类型") because it planned blind against the world.
+
+        Returns the decoded ``{"steps": [...], "refusal": ...}`` object, or
+        ``None`` on any transport/parse failure so the caller can fall back.
+        """
+        from agent.planner import PLANNER_SYSTEM_PROMPT
+
+        world_block = (
+            f"\n【当前世界状态(已存在的配置,可直接引用)】\n{world_context}\n"
+            if world_context
+            else ""
+        )
+        messages: list[dict[str, Any]] = [
+            {
+                "role": "system",
+                "content": PLANNER_SYSTEM_PROMPT.format(tool_list=tool_list) + world_block,
+            },
+            {"role": "user", "content": query},
+        ]
+        if feedback:
+            # The retry framing is only correct for *failure* feedback. A
+            # verification round arrives here with feedback that opens
+            # "计划已执行完毕" (the plan has been executed), and prefixing that with
+            # "上一版计划执行失败" put two contradictory statements about the same run
+            # into one message. Feedback carrying its own framing passes through
+            # verbatim.
+            # Imported lazily, mirroring planner.py's own deferred import of this
+            # module, so neither file gains an import-time dependency on the other.
+            from agent.planner import VERIFY_FRAMING_SENTINEL
+
+            carries_own_framing = feedback.lstrip().startswith(VERIFY_FRAMING_SENTINEL)
+            messages.append(
+                {
+                    "role": "user",
+                    "content": feedback if carries_own_framing else (
+                        "上一版计划执行失败,请给出修正后的**剩余**步骤计划(同样的 JSON 格式):\n"
+                        + feedback
+                    ),
+                }
+            )
+        try:
+            resp = self._client.chat.completions.create(
+                model=self.model_name,
+                messages=messages,
+                temperature=0.0,
+                max_tokens=self.max_tokens,
+                **self._effort_kwargs(),
+            )
+            text = (resp.choices[0].message.content or "").strip()
+        except Exception:
+            return None
+        payload = _extract_json_object(text)
+        if payload is None:
+            return None
+        usage = getattr(resp, "usage", None)
+        payload.setdefault("_usage", {
+            "input_tokens": getattr(usage, "prompt_tokens", 0) or 0,
+            "output_tokens": getattr(usage, "completion_tokens", 0) or 0,
+        })
+        return payload
 
     # ----------------------------------------- tool schema builders
     def _flat_tool_schemas(self, names: list[str]) -> list[dict[str, Any]]:
@@ -410,6 +818,10 @@ class OpenAICompatibleLLM:
         if self.registry is None:
             return out
         for n in names:
+            # ``read_resource`` is synthetic — it has no registry entry. The
+            # caller appends its schema separately via _read_resource_schema.
+            if n == READ_RESOURCE_TOOL:
+                continue
             try:
                 a = self.registry.atomic(n)
             except KeyError:
@@ -420,35 +832,86 @@ class OpenAICompatibleLLM:
                     "function": {
                         "name": a.name,
                         "description": a.description,
-                        "parameters": a.args_model.model_json_schema(),
+                        "parameters": _cached_json_schema(a.args_model),
                     },
                 }
             )
         return out
 
-    def _domain_tool_schemas(self, names: list[str]) -> list[dict[str, Any]]:
-        """Hierarchical: one tool per domain with a discriminated union.
+    def _read_resource_schema(self, uris: list[str] | None) -> dict[str, Any]:
+        """Function schema for the ``read_resource`` pseudo-tool (§4.5).
 
-        We expose each sub-action as a fully-typed ``oneOf`` branch so the
-        model can see *exactly which fields are required for each action*.
-        Without this, mimo (and other function-calling models) tend to emit
-        only the action discriminator and forget the action-specific args,
-        producing endless SCHEMA_ERROR loops in hierarchical mode.
+        Without this the model was told in prose that Resources existed and
+        given no way to reach them — ``resource_reads`` was 0 across every run.
+
+        The ``uri`` ``enum`` is the load-bearing part: it stops the model
+        inventing URIs no template matches, the same way ``allowed_actions``
+        keeps domain tools from reaching state-forbidden sub-actions.
+        """
+        return {
+            "type": "function",
+            "function": {
+                "name": READ_RESOURCE_TOOL,
+                "description": (
+                    "只读查询世界状态。在写入前先用它确认实体是否存在、"
+                    "以及它们的当前字段，不会修改任何东西。"
+                ),
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "uri": {
+                            "type": "string",
+                            "description": "要读取的 Resource URI",
+                            "enum": list(uris or []),
+                        }
+                    },
+                    "required": ["uri"],
+                },
+            },
+        }
+
+    def _domain_tool_schemas(self, tools: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """Hierarchical: one tool per domain with a filtered action union.
+
+        Each domain descriptor may carry ``allowed_actions`` from the orchestrator's
+        state/workflow whitelist. Only those sub-actions are exposed to the model;
+        otherwise a visible domain like ``manage_pages`` would leak every page action
+        and let the model choose state-forbidden actions that later become
+        ``OUT_OF_SCOPE``.
         """
         out: list[dict[str, Any]] = []
         if self.registry is None:
             return out
-        for n in names:
+        for tool in tools:
+            name = tool.get("name")
+            if not isinstance(name, str):
+                continue
+            if name == READ_RESOURCE_TOOL:
+                out.append(self._read_resource_schema(tool.get("uris")))
+                continue
             try:
-                d = self.registry.domain(n)
+                d = self.registry.domain(name)
             except KeyError:
                 continue
+            allowed = [
+                action
+                for action in tool.get("allowed_actions", [])
+                if isinstance(action, str) and action in d.actions
+            ]
+            if not allowed:
+                allowed = list(d.actions.keys())
+            cache_key = (name, tuple(allowed))
+            cached = self._domain_schema_cache.get(cache_key)
+            if cached is not None:
+                out.append(cached)
+                continue
             actions_doc = "\n".join(
-                f"- {a.action}: {a.description}" for a in d.actions.values()
+                f"- {action}: {d.actions[action].description}" for action in allowed
             )
             branches: list[dict[str, Any]] = []
-            for action_name, atomic in d.actions.items():
-                sub_schema = atomic.args_model.model_json_schema()
+            for action_name in allowed:
+                atomic = d.actions[action_name]
+                sub_schema = _cached_json_schema(atomic.args_model)
                 props = dict(sub_schema.get("properties") or {})
                 # Force the discriminator to the literal action name
                 props["action"] = {"type": "string", "const": action_name}
@@ -466,7 +929,12 @@ class OpenAICompatibleLLM:
                     }
                 )
             if branches:
-                params: dict[str, Any] = {"oneOf": branches}
+                # Wrap oneOf inside a proper object schema — some providers
+                # (e.g. DeepSeek) reject top-level schemas without "type".
+                params: dict[str, Any] = {
+                    "type": "object",
+                    "oneOf": branches,
+                }
             else:
                 # Domain with no actions — defensive fallback.
                 params = {
@@ -474,21 +942,21 @@ class OpenAICompatibleLLM:
                     "properties": {
                         "action": {
                             "type": "string",
-                            "enum": list(d.actions.keys()),
+                            "enum": [],
                         }
                     },
                     "required": ["action"],
                 }
-            out.append(
-                {
-                    "type": "function",
-                    "function": {
-                        "name": d.name,
-                        "description": f"{d.description}\nActions:\n{actions_doc}",
-                        "parameters": params,
-                    },
-                }
-            )
+            func_schema = {
+                "type": "function",
+                "function": {
+                    "name": d.name,
+                    "description": f"{d.description}\nCurrently allowed actions:\n{actions_doc}",
+                    "parameters": params,
+                },
+            }
+            self._domain_schema_cache[cache_key] = func_schema
+            out.append(func_schema)
         return out
 
     # ----------------------------------------- LLMProvider impl
@@ -509,15 +977,54 @@ class OpenAICompatibleLLM:
             ]
             self._first_call = False
         else:
-            # walk backward through history collecting consecutive tool rows
+            if self._messages and self._messages[0].get("role") == "system":
+                self._messages[0]["content"] = system_prompt
+            # walk backward through history collecting consecutive tool and user rows
             buf: list[dict[str, Any]] = []
             i = len(history) - 1
-            while i >= 0 and history[i].get("role") == "tool":
+            while i >= 0 and history[i].get("role") in ("tool", "user"):
                 buf.append(history[i])
                 i -= 1
+            # Two-pass: tool messages first (must immediately follow the
+            # assistant's tool_calls for strict providers like DeepSeek),
+            # then user messages (e.g. state-transition nudges).
+            tool_buf: list[dict[str, Any]] = []
+            user_buf: list[dict[str, Any]] = []
             for h in reversed(buf):
+                if h.get("role") == "user":
+                    user_buf.append(h)
+                else:
+                    tool_buf.append(h)
+            # `buf` walks the whole trailing run of tool/user rows, which
+            # accumulates across every consecutive tool-executing turn (the
+            # orchestrator only inserts an assistant row on talk-only turns).
+            # Correlate each result to its call by the exact tool_call_id, not
+            # by tool name: name-matching paired the *oldest* same-named row to
+            # the newest pending call, feeding the model stale data and dropping
+            # the real result. Exact-id matching also skips rows from earlier
+            # turns (their ids are no longer pending — they were injected when
+            # they were current).
+            pending = list(self._pending_tool_ids)
+            for h in tool_buf:
+                hid = h.get("tool_call_id")
                 tname = h.get("name") or ""
-                tid = self._pending_tool_ids.get(tname)
+                tid = None
+                if hid:
+                    for idx, (_name, call_id) in enumerate(pending):
+                        if call_id == hid:
+                            tid = call_id
+                            pending.pop(idx)
+                            break
+                    # id present but not pending -> already answered earlier.
+                    if tid is None:
+                        continue
+                else:
+                    # Legacy rows without an id: fall back to first name match.
+                    for idx, (name, call_id) in enumerate(pending):
+                        if name == tname:
+                            tid = call_id
+                            pending.pop(idx)
+                            break
                 if not tid:
                     continue
                 payload: dict[str, Any] = {
@@ -542,19 +1049,33 @@ class OpenAICompatibleLLM:
                         "content": json.dumps(payload, ensure_ascii=False),
                     }
                 )
+            for h in user_buf:
+                self._messages.append({"role": "user", "content": h.get("content") or ""})
             self._pending_tool_ids.clear()
 
         names = [t.get("name") for t in (visible_tools or []) if t.get("name")]
         if self.hierarchical:
-            tools_schema = self._domain_tool_schemas(names)
+            # _domain_tool_schemas handles the read_resource descriptor inline.
+            tools_schema = self._domain_tool_schemas(visible_tools or [])
         else:
             tools_schema = self._flat_tool_schemas(names)
+            read_desc = next(
+                (
+                    t
+                    for t in (visible_tools or [])
+                    if t.get("name") == READ_RESOURCE_TOOL
+                ),
+                None,
+            )
+            if read_desc is not None:
+                tools_schema.append(self._read_resource_schema(read_desc.get("uris")))
 
         kwargs: dict[str, Any] = {
             "model": self.model_name,
             "messages": self._messages,
             "temperature": self.temperature,
             "max_tokens": self.max_tokens,
+            **self._effort_kwargs(),
         }
         if tools_schema:
             kwargs["tools"] = tools_schema
@@ -586,8 +1107,8 @@ class OpenAICompatibleLLM:
                 except json.JSONDecodeError:
                     args = {}
                 args = _coerce_nested_json_strings(args)
-                tool_calls.append(LLMToolCall(name=fn.name, arguments=args))
-                self._pending_tool_ids[fn.name] = tc.id
+                tool_calls.append(LLMToolCall(name=fn.name, arguments=args, call_id=tc.id))
+                self._pending_tool_ids.append((fn.name, tc.id))
                 assistant_record["tool_calls"].append(
                     {
                         "id": tc.id,
@@ -595,6 +1116,36 @@ class OpenAICompatibleLLM:
                         "function": {"name": fn.name, "arguments": fn.arguments or "{}"},
                     }
                 )
+
+        # Fallback for providers that narrate their tool calls instead of
+        # emitting them (see _parse_longcat_tool_calls). Gated on the marker
+        # rather than the provider name so it costs one substring check and
+        # documents itself. Ids are synthesized because the text block carries
+        # none, and the results threaded back next turn need something to
+        # correlate against.
+        if not tool_calls and text and "<longcat_tool_call>" in text:
+            parsed, cleaned = _parse_longcat_tool_calls(text)
+            if parsed:
+                text = cleaned or None
+                assistant_record["content"] = text
+                assistant_record["tool_calls"] = []
+                for name, args in parsed:
+                    self._synth_call_seq += 1
+                    call_id = f"longcat_call_{self._synth_call_seq}"
+                    tool_calls.append(
+                        LLMToolCall(name=name, arguments=args, call_id=call_id)
+                    )
+                    self._pending_tool_ids.append((name, call_id))
+                    assistant_record["tool_calls"].append(
+                        {
+                            "id": call_id,
+                            "type": "function",
+                            "function": {
+                                "name": name,
+                                "arguments": json.dumps(args, ensure_ascii=False),
+                            },
+                        }
+                    )
         self._messages.append(assistant_record)
 
         stop_reason: Literal[
@@ -613,6 +1164,16 @@ class OpenAICompatibleLLM:
         usage = getattr(resp, "usage", None)
         in_tok = getattr(usage, "prompt_tokens", 0) or 0
         out_tok = getattr(usage, "completion_tokens", 0) or 0
+        # Read the transition off the *raw* completion, not the text left after
+        # tool-call blocks were stripped: LongCat has been seen putting the
+        # directive inside one of those tags, and stripping it would silently
+        # strand the FSM in its current state.
+        next_state = None
+        transition_source = msg.content or text
+        if transition_source:
+            m = re.search(r"next_state:\s*([A-Z_]+)", transition_source)
+            if m:
+                next_state = m.group(1)
 
         return LLMResponse(
             text=text,
@@ -622,7 +1183,8 @@ class OpenAICompatibleLLM:
             output_tokens=out_tok,
             latency_ms=lat,
             raw={"model": self.model_name, "response_id": getattr(resp, "id", "")},
-            next_state=None,
+            next_state=next_state,
+            reasoning=reasoning,
         )
 
 
@@ -649,6 +1211,136 @@ def build_llm(
         if not base_url:
             raise RuntimeError(
                 "xiaomi-mimo: missing XIAOMI-MIMO_API_URL (set it in .env or env)."
+            )
+        hierarchical = arch.hierarchical_tools if arch is not None else False
+        return OpenAICompatibleLLM(
+            model=model_name,
+            api_key=api_key,
+            base_url=base_url,
+            temperature=cfg.temperature,
+            max_tokens=cfg.max_tokens,
+            registry=registry,
+            hierarchical=hierarchical,
+        )
+    if cfg.provider == "deepseek":
+        _load_dotenv_into_environ()
+        api_key = _env("DEEPSEEK_API_KEY")
+        base_url = _env("DEEPSEEK_API_URL") or "https://api.deepseek.com/v1"
+        model_name = cfg.name or "deepseek-chat"
+        if not api_key:
+            raise RuntimeError(
+                "deepseek: missing DEEPSEEK_API_KEY (set it in .env or env)."
+            )
+        hierarchical = arch.hierarchical_tools if arch is not None else False
+        return OpenAICompatibleLLM(
+            model=model_name,
+            api_key=api_key,
+            base_url=base_url,
+            temperature=cfg.temperature,
+            max_tokens=cfg.max_tokens,
+            registry=registry,
+            hierarchical=hierarchical,
+        )
+    if cfg.provider == "openrouter":
+        _load_dotenv_into_environ()
+        api_key = _env("OPENROUTER_API_KEY")
+        base_url = _env("OPENROUTER_API_URL") or "https://openrouter.ai/api/v1"
+        model_name = cfg.name or "nvidia/nemotron-3-ultra-550b-a55b:free"
+        if not api_key:
+            raise RuntimeError(
+                "openrouter: missing OPENROUTER_API_KEY (set it in .env or env)."
+            )
+        hierarchical = arch.hierarchical_tools if arch is not None else False
+        return OpenAICompatibleLLM(
+            model=model_name,
+            api_key=api_key,
+            base_url=base_url,
+            temperature=cfg.temperature,
+            max_tokens=cfg.max_tokens,
+            registry=registry,
+            hierarchical=hierarchical,
+        )
+    if cfg.provider == "glm":
+        _load_dotenv_into_environ()
+        api_key = _env("GLM_API_KEY")
+        base_url = _env("GLM_API_URL") or "https://open.bigmodel.cn/api/paas/v4"
+        model_name = cfg.name or "glm-4-flash"
+        if not api_key:
+            raise RuntimeError(
+                "glm: missing GLM_API_KEY (set it in .env or env)."
+            )
+        hierarchical = arch.hierarchical_tools if arch is not None else False
+        return OpenAICompatibleLLM(
+            model=model_name,
+            api_key=api_key,
+            base_url=base_url,
+            temperature=cfg.temperature,
+            max_tokens=cfg.max_tokens,
+            registry=registry,
+            hierarchical=hierarchical,
+        )
+    if cfg.provider == "docode":
+        _load_dotenv_into_environ()
+        # DOCODE_API_KEYS ("key@url,key@url,...") enables endpoint failover;
+        # the single DOCODE_API_KEY/URL pair remains as the one-endpoint form.
+        endpoints = _parse_docode_endpoints(_env("DOCODE_API_KEYS"))
+        api_key = _env("DOCODE_API_KEY")
+        base_url = _env("DOCODE_API_URL") or "https://docode.cc/v1"
+        model_name = cfg.name or _env("DOCODE_MODEL") or "gpt-5.6-terra"
+        if not endpoints and not api_key:
+            raise RuntimeError(
+                "docode: set DOCODE_API_KEYS (key@url,...) or DOCODE_API_KEY in .env."
+            )
+        hierarchical = arch.hierarchical_tools if arch is not None else False
+        return OpenAICompatibleLLM(
+            model=model_name,
+            api_key=api_key or endpoints[0][0],
+            base_url=base_url if api_key else endpoints[0][1],
+            temperature=cfg.temperature,
+            max_tokens=cfg.max_tokens,
+            registry=registry,
+            hierarchical=hierarchical,
+            # Env wins over config so a run script can pin the tier for both
+            # arms uniformly without touching every config file.
+            reasoning_effort=_env("DOCODE_REASONING_EFFORT") or cfg.reasoning_effort,
+            endpoints=endpoints or None,
+        )
+    if cfg.provider == "nvidia":
+        _load_dotenv_into_environ()
+        api_key = _env("NVIDIA_API_KEY", "NVIDIA_NIM_API_KEY")
+        base_url = _env("NVIDIA_API_URL") or "https://integrate.api.nvidia.com/v1"
+        # One endpoint, many families — the config's ``name`` selects it
+        # (e.g. ``z-ai/glm-5.2``, ``deepseek-ai/deepseek-v4-pro``). No default
+        # model: silently picking one would make a mis-typed config look like a
+        # successful run of a different model than the trace claims.
+        model_name = cfg.name
+        if not api_key:
+            raise RuntimeError(
+                "nvidia: missing NVIDIA_API_KEY (set it in .env or env)."
+            )
+        if not model_name or model_name == "mock":
+            raise RuntimeError(
+                "nvidia: set `model.name` to the hosted model id, "
+                "e.g. 'z-ai/glm-5.2' or 'deepseek-ai/deepseek-v4-pro'."
+            )
+        hierarchical = arch.hierarchical_tools if arch is not None else False
+        return OpenAICompatibleLLM(
+            model=model_name,
+            api_key=api_key,
+            base_url=base_url,
+            temperature=cfg.temperature,
+            max_tokens=cfg.max_tokens,
+            registry=registry,
+            hierarchical=hierarchical,
+        )
+    if cfg.provider == "longcat":
+        _load_dotenv_into_environ()
+        api_key = _env("LONGCAT_API_KEY")
+        base_url = _env("LONGCAT_API_URL") or "https://api.longcat.chat/openai/v1"
+        model_name = cfg.name or _env("LONGCAT_MODEL") or "LongCat-Flash-Chat"
+        if not api_key:
+            raise RuntimeError(
+                "longcat: missing LONGCAT_API_KEY (set it in .env or env)."
             )
         hierarchical = arch.hierarchical_tools if arch is not None else False
         return OpenAICompatibleLLM(

@@ -1,0 +1,34 @@
+{
+  "id": "golden-065",
+  "query": "帮我把那个点绑到那个图元上",
+  "domain": "graphics",
+  "complexity": "simple",
+  "initial_world": {},
+  "expected_behavior": "ask_for_clarification",
+  "expected_final_state_diff": {
+    "match_mode": "strict",
+    "added_or_modified": {},
+    "removed": [],
+    "unchanged_keys_must_remain": []
+  },
+  "rubric_hints": [],
+  "expected_alternative": "应追问点位、页面、图元和属性",
+  "expected_trajectory": {
+    "min_steps": 0,
+    "max_steps": 8,
+    "required_tools": [],
+    "required_actions": [],
+    "forbidden_tools": [
+      "batch_delete_points",
+      "bind_point",
+      "deploy_project",
+      "promote_to_environment",
+      "purge_history",
+      "update_widget_binding"
+    ],
+    "terminal_state": "DONE",
+    "allowed_terminal_states": [
+      "!UNKNOWN"
+    ]
+  }
+}

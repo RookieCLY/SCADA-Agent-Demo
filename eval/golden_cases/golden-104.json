@@ -1,0 +1,49 @@
+{
+  "id": "golden-104",
+  "query": "把 TEMP_101 的历史采样周期设成 5 秒",
+  "domain": "history",
+  "complexity": "simple",
+  "initial_world": {
+    "histories": {
+      "TEMP_101": {
+        "tag": "TEMP_101"
+      }
+    }
+  },
+  "expected_behavior": "success",
+  "expected_final_state_diff": {
+    "match_mode": "key_fields",
+    "added_or_modified": {
+      "histories.TEMP_101.sample_interval_s": 5.0
+    },
+    "removed": [],
+    "unchanged_keys_must_remain": []
+  },
+  "expected_trajectory": {
+    "min_steps": 1,
+    "max_steps": 10,
+    "required_tools": [
+      "manage_history"
+    ],
+    "required_actions": [
+      "set_sample_interval|enable_history"
+    ],
+    "forbidden_tools": [
+      "batch_delete_points",
+      "deploy_project",
+      "promote_to_environment",
+      "purge_history"
+    ],
+    "terminal_state": "DONE",
+    "allowed_terminal_states": [
+      "!UNKNOWN",
+      "!ASK_USER"
+    ]
+  },
+  "expected_error_code": null,
+  "expected_workflow_id": null,
+  "expected_alternative": null,
+  "rubric_hints": [
+    "应调用 manage_history.set_sample_interval 完成任务，终态 DONE"
+  ]
+}

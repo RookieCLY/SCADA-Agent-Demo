@@ -1,0 +1,44 @@
+{
+  "id": "golden-011",
+  "query": "把主画面的泵1绑到马达3上",
+  "domain": "graphics",
+  "complexity": "simple",
+  "initial_world": {
+    "pages": {
+      "main_page": {
+        "id": "main_page",
+        "name": "主画面",
+        "widgets": {}
+      }
+    }
+  },
+  "expected_behavior": "reject",
+  "expected_final_state_diff": {
+    "match_mode": "strict",
+    "added_or_modified": {},
+    "removed": [],
+    "unchanged_keys_must_remain": []
+  },
+  "expected_error_code": "WIDGET_NOT_FOUND",
+  "expected_alternative": "由于页面里没这个图元，应拒绝并报错",
+  "rubric_hints": [],
+  "expected_trajectory": {
+    "min_steps": 0,
+    "max_steps": 8,
+    "required_tools": [],
+    "required_actions": [],
+    "forbidden_tools": [
+      "batch_delete_points",
+      "create_motor",
+      "create_pump",
+      "create_widget",
+      "deploy_project",
+      "promote_to_environment",
+      "purge_history"
+    ],
+    "terminal_state": "DONE",
+    "allowed_terminal_states": [
+      "!UNKNOWN"
+    ]
+  }
+}

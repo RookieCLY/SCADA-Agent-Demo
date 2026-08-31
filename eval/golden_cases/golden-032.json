@@ -1,0 +1,76 @@
+{
+  "id": "golden-032",
+  "query": "把main_overview画面改成4K尺寸并改成深蓝背景，保留原有图元",
+  "domain": "page",
+  "complexity": "medium",
+  "initial_world": {
+    "pages": {
+      "main_overview": {
+        "id": "main_overview",
+        "name": "主画面",
+        "widgets": {
+          "keep_me": {
+            "id": "keep_me",
+            "page_id": "main_overview",
+            "type": "text",
+            "position": [
+              0,
+              0
+            ],
+            "size": [
+              80,
+              40
+            ]
+          }
+        },
+        "resolution": [
+          1920,
+          1080
+        ],
+        "background": "#FFFFFF"
+      }
+    }
+  },
+  "expected_behavior": "success",
+  "expected_final_state_diff": {
+    "match_mode": "subset",
+    "added_or_modified": {
+      "pages.main_overview.resolution": [
+        3840,
+        2160
+      ],
+      "pages.main_overview.background": "#001A33"
+    },
+    "removed": [],
+    "unchanged_keys_must_remain": [
+      "pages.main_overview.widgets.keep_me"
+    ]
+  },
+  "rubric_hints": [],
+  "expected_workflow_id": "graphics_layout",
+  "expected_trajectory": {
+    "min_steps": 2,
+    "max_steps": 12,
+    "required_tools": [
+      "manage_pages",
+      "manage_pages"
+    ],
+    "required_actions": [
+      "set_page_resolution",
+      "set_page_background"
+    ],
+    "forbidden_tools": [
+      "batch_delete_points",
+      "delete_page",
+      "delete_widget",
+      "deploy_project",
+      "promote_to_environment",
+      "purge_history"
+    ],
+    "terminal_state": "DONE",
+    "allowed_terminal_states": [
+      "!UNKNOWN",
+      "!ASK_USER"
+    ]
+  }
+}

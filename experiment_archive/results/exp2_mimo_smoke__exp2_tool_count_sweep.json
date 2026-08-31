@@ -1,0 +1,24 @@
+{
+  "experiment": "exp2_tool_count_sweep",
+  "prefix": "exp2_mimo_smoke",
+  "tool_counts": [
+    100
+  ],
+  "results": [
+    {
+      "run_id": "exp2_mimo_smoke_tc100_A_flat",
+      "status": "ok",
+      "exit_code": 0,
+      "elapsed_s": 34.2,
+      "cmd": "C:\\Python313\\python.exe -m eval.runner --config C:\\Users\\20906\\AppData\\Local\\Temp\\exp2_sweep_y125nlxk.yaml --dataset-sample=1 --reps 1 --provider xiaomi-mimo --run-id exp2_mimo_smoke_tc100_A_flat -w 3 --results-root results/exp2_mimo_smoke --model mimo-v2.5-pro --max-reruns 10"
+    },
+    {
+      "run_id": "exp2_mimo_smoke_tc100_D_wf",
+      "status": "ok",
+      "exit_code": 0,
+      "elapsed_s": 24.6,
+      "cmd": "C:\\Python313\\python.exe -m eval.runner --config C:\\Users\\20906\\AppData\\Local\\Temp\\exp2_sweep_ia0_1g0f.yaml --dataset-sample=1 --reps 1 --provider xiaomi-mimo --run-id exp2_mimo_smoke_tc100_D_wf -w 3 --results-root results/exp2_mimo_smoke --model mimo-v2.5-pro --max-reruns 10"
+    }
+  ],
+  "elapsed_s": 58.8
+}

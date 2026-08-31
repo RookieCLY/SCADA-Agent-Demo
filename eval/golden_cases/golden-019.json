@@ -1,0 +1,62 @@
+{
+  "id": "golden-019",
+  "query": "新建泵站画面，添加2个泵图元，分别绑定PumpA和PumpB点位",
+  "domain": "multi",
+  "complexity": "medium",
+  "initial_world": {
+    "points": {
+      "PumpA": {
+        "tag": "PumpA",
+        "type": "digital"
+      },
+      "PumpB": {
+        "tag": "PumpB",
+        "type": "digital"
+      }
+    }
+  },
+  "expected_behavior": "success",
+  "expected_final_state_diff": {
+    "match_mode": "key_fields",
+    "added_or_modified": {
+      "pages.pump_station.name": "泵站画面",
+      "pages.pump_station.widgets.pump1.type": "pump",
+      "pages.pump_station.widgets.pump1.bindings.state": "PumpA",
+      "pages.pump_station.widgets.pump2.type": "pump",
+      "pages.pump_station.widgets.pump2.bindings.state": "PumpB"
+    },
+    "removed": [],
+    "unchanged_keys_must_remain": []
+  },
+  "expected_workflow_id": "pump_station_screen",
+  "rubric_hints": [],
+  "expected_trajectory": {
+    "min_steps": 3,
+    "max_steps": 22,
+    "required_tools": [
+      "manage_pages",
+      "manage_graphics|manage_pages",
+      "manage_graphics|manage_pages",
+      "manage_pages",
+      "manage_pages"
+    ],
+    "required_actions": [
+      "create_page",
+      "create_pump|create_widget",
+      "create_pump|create_widget",
+      "bind_point",
+      "bind_point"
+    ],
+    "forbidden_tools": [
+      "batch_delete_points",
+      "deploy_project",
+      "promote_to_environment",
+      "purge_history"
+    ],
+    "terminal_state": "DONE",
+    "allowed_terminal_states": [
+      "!UNKNOWN",
+      "!ASK_USER"
+    ]
+  }
+}

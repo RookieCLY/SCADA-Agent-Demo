@@ -1,0 +1,56 @@
+{
+  "id": "golden-041",
+  "query": "给PT_COMP_01配置H和HH报警，H=2.8 medium，HH=3.2 high",
+  "domain": "alarm",
+  "complexity": "complex",
+  "initial_world": {
+    "points": {
+      "PT_COMP_01": {
+        "tag": "PT_COMP_01",
+        "type": "analog",
+        "unit": "MPa"
+      }
+    }
+  },
+  "expected_behavior": "success",
+  "expected_final_state_diff": {
+    "match_mode": "key_fields",
+    "added_or_modified": {
+      "alarms.PT_COMP_01_H.tag": "PT_COMP_01",
+      "alarms.PT_COMP_01_H.high_limit": 2.8,
+      "alarms.PT_COMP_01_H.priority": "medium",
+      "alarms.PT_COMP_01_HH.tag": "PT_COMP_01",
+      "alarms.PT_COMP_01_HH.high_limit": 3.2,
+      "alarms.PT_COMP_01_HH.priority": "high"
+    },
+    "removed": [],
+    "unchanged_keys_must_remain": [
+      "points.PT_COMP_01"
+    ]
+  },
+  "rubric_hints": [],
+  "expected_workflow_id": "alarm_config",
+  "expected_trajectory": {
+    "min_steps": 1,
+    "max_steps": 14,
+    "required_tools": [
+      "manage_alarms",
+      "manage_alarms"
+    ],
+    "required_actions": [
+      "create_analog_alarm",
+      "create_analog_alarm"
+    ],
+    "forbidden_tools": [
+      "batch_delete_points",
+      "deploy_project",
+      "promote_to_environment",
+      "purge_history"
+    ],
+    "terminal_state": "DONE",
+    "allowed_terminal_states": [
+      "!UNKNOWN",
+      "!ASK_USER"
+    ]
+  }
+}

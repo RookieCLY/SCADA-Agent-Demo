@@ -1,0 +1,61 @@
+{
+  "id": "golden-069",
+  "query": "生成泵站A控制台：画面、运行点、启停命令、报警和校验都做完",
+  "domain": "multi",
+  "complexity": "complex",
+  "initial_world": {},
+  "expected_behavior": "success",
+  "expected_final_state_diff": {
+    "match_mode": "key_fields",
+    "added_or_modified": {
+      "pages.pump_a_console.name": "泵站A控制台",
+      "points.PUMP_A_RUN.type": "digital",
+      "points.PUMP_A_CMD.type": "digital",
+      "pages.pump_a_console.widgets.start_button.bindings.command": "PUMP_A_CMD",
+      "pages.pump_a_console.widgets.stop_button.bindings.command": "PUMP_A_CMD",
+      "alarms.PUMP_A_RUN_LOSS.tag": "PUMP_A_RUN",
+      "deployments.default.status": "validated"
+    },
+    "removed": [],
+    "unchanged_keys_must_remain": []
+  },
+  "rubric_hints": [],
+  "expected_workflow_id": "pump_station_screen",
+  "expected_trajectory": {
+    "min_steps": 6,
+    "max_steps": 38,
+    "required_tools": [
+      "manage_pages",
+      "manage_points",
+      "manage_points",
+      "manage_pages",
+      "manage_pages",
+      "manage_pages",
+      "manage_pages",
+      "manage_alarms",
+      "deployment"
+    ],
+    "required_actions": [
+      "create_page",
+      "create_point",
+      "create_point",
+      "create_widget",
+      "create_widget",
+      "bind_point",
+      "bind_point",
+      "create_digital_alarm|create_analog_alarm",
+      "validate_project"
+    ],
+    "forbidden_tools": [
+      "batch_delete_points",
+      "deploy_project",
+      "promote_to_environment",
+      "purge_history"
+    ],
+    "terminal_state": "DONE",
+    "allowed_terminal_states": [
+      "!UNKNOWN",
+      "!ASK_USER"
+    ]
+  }
+}

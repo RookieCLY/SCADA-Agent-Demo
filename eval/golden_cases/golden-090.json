@@ -1,0 +1,36 @@
+{
+  "id": "golden-090",
+  "query": "给那个生产线做全套监控，点位报警历史画面你都看着办",
+  "domain": "multi",
+  "complexity": "simple",
+  "initial_world": {},
+  "expected_behavior": "ask_for_clarification",
+  "expected_final_state_diff": {
+    "match_mode": "strict",
+    "added_or_modified": {},
+    "removed": [],
+    "unchanged_keys_must_remain": []
+  },
+  "rubric_hints": [],
+  "expected_alternative": "应追问生产线、点位清单、报警阈值、历史策略和画面目标",
+  "expected_trajectory": {
+    "min_steps": 0,
+    "max_steps": 8,
+    "required_tools": [],
+    "required_actions": [],
+    "forbidden_tools": [
+      "batch_delete_points",
+      "create_analog_alarm",
+      "create_page",
+      "create_point",
+      "deploy_project",
+      "enable_history",
+      "promote_to_environment",
+      "purge_history"
+    ],
+    "terminal_state": "DONE",
+    "allowed_terminal_states": [
+      "!UNKNOWN"
+    ]
+  }
+}

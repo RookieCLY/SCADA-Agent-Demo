@@ -1,0 +1,40 @@
+{
+  "id": "golden-030",
+  "query": "给根本不存在的假点位配上一大堆高低报，然后再开个趋势图看它",
+  "domain": "multi",
+  "complexity": "complex",
+  "initial_world": {},
+  "expected_behavior": "reject",
+  "expected_final_state_diff": {
+    "match_mode": "strict",
+    "added_or_modified": {},
+    "removed": [],
+    "unchanged_keys_must_remain": []
+  },
+  "expected_error_code": "POINT_NOT_FOUND",
+  "expected_workflow_id": "alarm_config",
+  "rubric_hints": [
+    "query本身明确说'根本不存在的假点位', agent应直接拒绝而非追问"
+  ],
+  "expected_trajectory": {
+    "min_steps": 0,
+    "max_steps": 8,
+    "required_tools": [],
+    "required_actions": [],
+    "forbidden_tools": [
+      "add_trend_pen",
+      "batch_delete_points",
+      "create_analog_alarm",
+      "create_digital_alarm",
+      "create_point",
+      "create_trend_group",
+      "deploy_project",
+      "promote_to_environment",
+      "purge_history"
+    ],
+    "terminal_state": "DONE",
+    "allowed_terminal_states": [
+      "!UNKNOWN"
+    ]
+  }
+}

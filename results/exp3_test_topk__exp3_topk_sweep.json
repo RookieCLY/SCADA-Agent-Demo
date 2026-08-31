@@ -1,0 +1,17 @@
+{
+  "experiment": "exp3_topk_sweep",
+  "prefix": "exp3_test_topk",
+  "top_k_values": [
+    5
+  ],
+  "results": [
+    {
+      "run_id": "exp3_test_topk_k5_D_wf_mock",
+      "status": "ok",
+      "exit_code": 0,
+      "elapsed_s": 1.1,
+      "cmd": "C:\\Users\\5004\\OneDrive - University of Illinois - Urbana\\桌面\\Code\\202605\\Current_Demo\\.venv\\Scripts\\python.exe -m eval.runner --config C:\\Users\\5004\\AppData\\Local\\Temp\\exp3_sweep_vvy8yc06.yaml --dataset-sample=1 --reps 1 --provider mock --run-id exp3_test_topk_k5_D_wf_mock -w 3 --results-root results/exp3_test_topk --max-reruns 10"
+    }
+  ],
+  "elapsed_s": 1.1
+}

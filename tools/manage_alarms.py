@@ -20,10 +20,35 @@ DOMAIN = "manage_alarms"
 # ---------------------------------------------------------------- create_analog
 class CreateAnalogAlarmArgs(BaseModel):
     action: Literal["create_analog_alarm"] = "create_analog_alarm"
-    id: str = Field(description="Unique alarm ID, e.g. 'alarm_temp_high_101'")
+    # The old example here ('alarm_temp_high_101') taught the *wrong* shape: in
+    # results_w23 the planner copied it as `alarm_ft_200_high` on every rep of
+    # golden-071/-092 while the project convention is `<TAG>_<LEVEL>`. An example
+    # in a schema is a vocabulary, and this one was the only vocabulary the model
+    # had. Conventional-ID disclosure, same precedent as bind_point.property.
+    id: str = Field(
+        description=(
+            "Unique alarm ID. Convention: <TAG>_<LEVEL> where LEVEL is "
+            "H|HH|L|LL, e.g. 'TEMP_101_H', 'FT-200_HH'. HH/LL are the critical "
+            "levels: set priority='high' for them unless told otherwise."
+        )
+    )
     tag: str = Field(description="The SCADA point tag to monitor, e.g. 'TEMP_101'")
-    high_limit: float | None = None
-    low_limit: float | None = None
+    # The "at least one limit" rule lives in a model_validator, which Pydantic
+    # does NOT express in model_json_schema() — so the planning catalogue rendered
+    # these as ordinary optional fields and the planner omitted both. That was the
+    # single largest compile drop on results_w23: 32 of 48, every one killing the
+    # alarm entity outright and taking its dependent steps with it. The flat
+    # baseline survives the same mistake because it calls the tool, reads the
+    # error text, and retries; the plan tier drops the step and replans blind.
+    # Stating the constraint on the fields themselves is what reaches the model.
+    high_limit: float | None = Field(
+        default=None,
+        description="High alarm limit. At least one of high_limit / low_limit is REQUIRED.",
+    )
+    low_limit: float | None = Field(
+        default=None,
+        description="Low alarm limit. At least one of high_limit / low_limit is REQUIRED.",
+    )
     deadband: float = Field(default=0.0, ge=0)
     priority: Priority = "medium"
 
@@ -312,3 +337,465 @@ __all__ = [
     "SetThreshold",
     "SetThresholdArgs",
 ]
+
+
+# ============================================================ extension tools
+def _al_diff(alarm_id, alarm):
+    return {"added_or_modified": {f"alarms.{alarm_id}": alarm.model_dump()}, "removed": []}
+
+
+def _need_alarm(world, alarm_id):
+    if alarm_id not in world.alarms:
+        return fail(ErrorCode.ALARM_NOT_FOUND, f"alarm {alarm_id} not found")
+    return None
+
+
+class SetAlarmHighLimitArgs(BaseModel):
+    action: Literal["set_alarm_high_limit"] = "set_alarm_high_limit"
+    alarm_id: str
+    high_limit: float
+
+
+class SetAlarmHighLimit(MockTool):
+    name = "set_alarm_high_limit"
+    domain = DOMAIN; action = "set_alarm_high_limit"
+    description = "Set the high trigger limit of an existing analog alarm."
+    args_model = SetAlarmHighLimitArgs
+    examples = ["把高限报警值改成 90", "set the high alarm limit to 90", "调整报警上限"]
+
+    @staticmethod
+    def intended_entities(args: BaseModel) -> list[str]:  # pyright: ignore[reportArgumentType]
+        return [f"alarms.{args.alarm_id}"]
+    @staticmethod
+    def referenced_entities(args: BaseModel) -> list[str]:  # pyright: ignore[reportArgumentType]
+        return [f"alarms.{args.alarm_id}"]
+
+    def run(self, args: SetAlarmHighLimitArgs, world: MockWorld) -> ToolResult:
+        err = _need_alarm(world, args.alarm_id)
+        if err: return err
+        a = world.alarms[args.alarm_id]; a.high_limit = args.high_limit
+        return ok(data={"alarm_id": args.alarm_id}, world_diff=_al_diff(args.alarm_id, a))
+
+
+class SetAlarmLowLimitArgs(BaseModel):
+    action: Literal["set_alarm_low_limit"] = "set_alarm_low_limit"
+    alarm_id: str
+    low_limit: float
+
+
+class SetAlarmLowLimit(MockTool):
+    name = "set_alarm_low_limit"
+    domain = DOMAIN; action = "set_alarm_low_limit"
+    description = "Set the low trigger limit of an existing analog alarm."
+    args_model = SetAlarmLowLimitArgs
+    examples = ["把低限报警值设为 5", "set the low alarm limit to 5", "调整报警下限"]
+
+    @staticmethod
+    def intended_entities(args: BaseModel) -> list[str]:  # pyright: ignore[reportArgumentType]
+        return [f"alarms.{args.alarm_id}"]
+    @staticmethod
+    def referenced_entities(args: BaseModel) -> list[str]:  # pyright: ignore[reportArgumentType]
+        return [f"alarms.{args.alarm_id}"]
+
+    def run(self, args: SetAlarmLowLimitArgs, world: MockWorld) -> ToolResult:
+        err = _need_alarm(world, args.alarm_id)
+        if err: return err
+        a = world.alarms[args.alarm_id]; a.low_limit = args.low_limit
+        return ok(data={"alarm_id": args.alarm_id}, world_diff=_al_diff(args.alarm_id, a))
+
+
+class SetAlarmDeadbandArgs(BaseModel):
+    action: Literal["set_alarm_deadband"] = "set_alarm_deadband"
+    alarm_id: str
+    deadband: float = Field(ge=0)
+
+
+class SetAlarmDeadband(MockTool):
+    name = "set_alarm_deadband"
+    domain = DOMAIN; action = "set_alarm_deadband"
+    description = "Set the deadband (hysteresis) of an alarm to stop chattering."
+    args_model = SetAlarmDeadbandArgs
+    examples = ["给报警设置死区防抖", "set a 1.0 deadband to avoid chattering", "报警一直跳，加个死区"]
+
+    @staticmethod
+    def intended_entities(args: BaseModel) -> list[str]:  # pyright: ignore[reportArgumentType]
+        return [f"alarms.{args.alarm_id}"]
+    @staticmethod
+    def referenced_entities(args: BaseModel) -> list[str]:  # pyright: ignore[reportArgumentType]
+        return [f"alarms.{args.alarm_id}"]
+
+    def run(self, args: SetAlarmDeadbandArgs, world: MockWorld) -> ToolResult:
+        err = _need_alarm(world, args.alarm_id)
+        if err: return err
+        a = world.alarms[args.alarm_id]; a.deadband = args.deadband
+        return ok(data={"alarm_id": args.alarm_id}, world_diff=_al_diff(args.alarm_id, a))
+
+
+class AcknowledgeAlarmArgs(BaseModel):
+    action: Literal["acknowledge_alarm"] = "acknowledge_alarm"
+    alarm_id: str
+    operator: str | None = None
+
+
+class AcknowledgeAlarm(MockTool):
+    name = "acknowledge_alarm"
+    domain = DOMAIN; action = "acknowledge_alarm"
+    description = "Acknowledge an active alarm (design-time test / config context)."
+    args_model = AcknowledgeAlarmArgs
+    examples = ["确认这条报警", "acknowledge the high-temp alarm", "签收报警"]
+
+    @staticmethod
+    def intended_entities(args: BaseModel) -> list[str]:  # pyright: ignore[reportArgumentType]
+        return [f"alarms.{args.alarm_id}.ack"]
+    @staticmethod
+    def referenced_entities(args: BaseModel) -> list[str]:  # pyright: ignore[reportArgumentType]
+        return [f"alarms.{args.alarm_id}"]
+
+    def run(self, args: AcknowledgeAlarmArgs, world: MockWorld) -> ToolResult:
+        err = _need_alarm(world, args.alarm_id)
+        if err: return err
+        a = world.alarms[args.alarm_id]; a.acknowledged = True
+        return ok(data={"alarm_id": args.alarm_id, "acknowledged": True},
+                  world_diff=_al_diff(args.alarm_id, a))
+
+
+class ShelveAlarmArgs(BaseModel):
+    action: Literal["shelve_alarm"] = "shelve_alarm"
+    alarm_id: str
+    minutes: int = Field(default=60, ge=1, le=10080)
+
+
+class ShelveAlarm(MockTool):
+    name = "shelve_alarm"
+    domain = DOMAIN; action = "shelve_alarm"
+    description = "Temporarily shelve an alarm for a fixed duration."
+    args_model = ShelveAlarmArgs
+    examples = ["把这条报警临时搁置一小时", "shelve this alarm for 30 minutes", "暂时屏蔽这个报警"]
+
+    @staticmethod
+    def intended_entities(args: BaseModel) -> list[str]:  # pyright: ignore[reportArgumentType]
+        return [f"alarms.{args.alarm_id}.shelved"]
+    @staticmethod
+    def referenced_entities(args: BaseModel) -> list[str]:  # pyright: ignore[reportArgumentType]
+        return [f"alarms.{args.alarm_id}"]
+
+    def run(self, args: ShelveAlarmArgs, world: MockWorld) -> ToolResult:
+        err = _need_alarm(world, args.alarm_id)
+        if err: return err
+        a = world.alarms[args.alarm_id]; a.shelved_minutes = args.minutes
+        return ok(data={"alarm_id": args.alarm_id, "shelved_minutes": args.minutes},
+                  world_diff=_al_diff(args.alarm_id, a))
+
+
+class UnshelveAlarmArgs(BaseModel):
+    action: Literal["unshelve_alarm"] = "unshelve_alarm"
+    alarm_id: str
+
+
+class UnshelveAlarm(MockTool):
+    name = "unshelve_alarm"
+    domain = DOMAIN; action = "unshelve_alarm"
+    description = "Return a shelved alarm to active monitoring."
+    args_model = UnshelveAlarmArgs
+    examples = ["取消报警的搁置", "unshelve this alarm now", "恢复这个报警的监视"]
+
+    @staticmethod
+    def intended_entities(args: BaseModel) -> list[str]:  # pyright: ignore[reportArgumentType]
+        return [f"alarms.{args.alarm_id}.shelved"]
+    @staticmethod
+    def referenced_entities(args: BaseModel) -> list[str]:  # pyright: ignore[reportArgumentType]
+        return [f"alarms.{args.alarm_id}"]
+
+    def run(self, args: UnshelveAlarmArgs, world: MockWorld) -> ToolResult:
+        err = _need_alarm(world, args.alarm_id)
+        if err: return err
+        a = world.alarms[args.alarm_id]; a.shelved_minutes = None
+        return ok(data={"alarm_id": args.alarm_id, "shelved": False},
+                  world_diff=_al_diff(args.alarm_id, a))
+
+
+class SetAlarmPriorityArgs(BaseModel):
+    action: Literal["set_alarm_priority"] = "set_alarm_priority"
+    alarm_id: str
+    #: Must match ``world.Alarm.priority`` and the two alarm-creating tools, which
+    #: are all ``high|medium|low``. This alone also accepted ``critical``, which was
+    #: harmless only while ``run`` wrote nothing: once it writes, and with
+    #: ``validate_assignment`` off on the model, ``critical`` lands in the field
+    #: unchecked and the world then fails to re-validate on any serialisation
+    #: round-trip — silent corruption rather than an error. (``list_active_alarms``
+    #: keeps ``critical``/``all``; it is a query filter, not a write.)
+    priority: Literal["low", "medium", "high"]
+
+
+class SetAlarmPriority(MockTool):
+    name = "set_alarm_priority"
+    domain = DOMAIN; action = "set_alarm_priority"
+    description = "Set the priority/severity of an alarm."
+    args_model = SetAlarmPriorityArgs
+    examples = ["把这条报警设为高优先级", "make this a critical alarm", "调整报警等级"]
+
+    @staticmethod
+    def intended_entities(args: BaseModel) -> list[str]:  # pyright: ignore[reportArgumentType]
+        return [f"alarms.{args.alarm_id}.priority"]
+    @staticmethod
+    def referenced_entities(args: BaseModel) -> list[str]:  # pyright: ignore[reportArgumentType]
+        return [f"alarms.{args.alarm_id}"]
+
+    def run(self, args: SetAlarmPriorityArgs, world: MockWorld) -> ToolResult:
+        err = _need_alarm(world, args.alarm_id)
+        if err: return err
+        # This returned ok() without writing anything. ``Alarm.priority`` exists,
+        # so unlike the stub tools whose target field is simply absent from the
+        # model, this one had somewhere to write and reported a success it had not
+        # performed. In Phase 4 it was called successfully 9 times and produced a
+        # world_diff 0 times, while 8 golden cases assert ``alarms.*.priority`` —
+        # golden-022 and golden-043 exist precisely to change the priority of an
+        # *existing* alarm, and could not pass at all.
+        alarm = world.alarms[args.alarm_id]
+        alarm.priority = args.priority
+        return ok(
+            data={"alarm_id": args.alarm_id, "priority": args.priority},
+            world_diff={
+                "added_or_modified": {f"alarms.{args.alarm_id}.priority": args.priority},
+                "removed": [],
+            },
+        )
+
+
+class SetAlarmMessageArgs(BaseModel):
+    action: Literal["set_alarm_message"] = "set_alarm_message"
+    alarm_id: str
+    message: str
+
+
+class SetAlarmMessage(MockTool):
+    name = "set_alarm_message"
+    domain = DOMAIN; action = "set_alarm_message"
+    description = "Set the operator-facing message text of an alarm."
+    args_model = SetAlarmMessageArgs
+    examples = ["设置报警的提示文字", "set the alarm message to 'reactor overtemp'", "改一下报警消息内容"]
+
+    @staticmethod
+    def intended_entities(args: BaseModel) -> list[str]:  # pyright: ignore[reportArgumentType]
+        return [f"alarms.{args.alarm_id}.message"]
+    @staticmethod
+    def referenced_entities(args: BaseModel) -> list[str]:  # pyright: ignore[reportArgumentType]
+        return [f"alarms.{args.alarm_id}"]
+
+    def run(self, args: SetAlarmMessageArgs, world: MockWorld) -> ToolResult:
+        err = _need_alarm(world, args.alarm_id)
+        if err: return err
+        return ok(data={"alarm_id": args.alarm_id, "message_set": True})
+
+
+class SetAlarmOnDelayArgs(BaseModel):
+    action: Literal["set_alarm_on_delay"] = "set_alarm_on_delay"
+    alarm_id: str
+    delay_seconds: float = Field(ge=0, le=3600)
+
+
+class SetAlarmOnDelay(MockTool):
+    name = "set_alarm_on_delay"
+    domain = DOMAIN; action = "set_alarm_on_delay"
+    description = "Require the condition to persist N seconds before the alarm trips."
+    args_model = SetAlarmOnDelayArgs
+    examples = ["给报警加一个触发延时", "only trip after the condition holds 5s", "报警延时确认"]
+
+    @staticmethod
+    def intended_entities(args: BaseModel) -> list[str]:  # pyright: ignore[reportArgumentType]
+        return [f"alarms.{args.alarm_id}.on_delay"]
+    @staticmethod
+    def referenced_entities(args: BaseModel) -> list[str]:  # pyright: ignore[reportArgumentType]
+        return [f"alarms.{args.alarm_id}"]
+
+    def run(self, args: SetAlarmOnDelayArgs, world: MockWorld) -> ToolResult:
+        err = _need_alarm(world, args.alarm_id)
+        if err: return err
+        return ok(data={"alarm_id": args.alarm_id, "on_delay": args.delay_seconds})
+
+
+class CreateAlarmGroupArgs(BaseModel):
+    action: Literal["create_alarm_group"] = "create_alarm_group"
+    group_id: str
+    name: str
+
+
+class CreateAlarmGroup(MockTool):
+    name = "create_alarm_group"
+    domain = DOMAIN; action = "create_alarm_group"
+    description = "Create an alarm group for organizing and bulk-managing alarms."
+    args_model = CreateAlarmGroupArgs
+    examples = ["新建一个报警分组", "create an alarm group for Reactor 1", "把报警归类到一个组"]
+
+    @staticmethod
+    def intended_entities(args: BaseModel) -> list[str]:  # pyright: ignore[reportArgumentType]
+        return [f"alarm_groups.{args.group_id}"]
+    @staticmethod
+    def referenced_entities(args: BaseModel) -> list[str]:  # pyright: ignore[reportArgumentType]
+        return []
+
+    def run(self, args: CreateAlarmGroupArgs, world: MockWorld) -> ToolResult:
+        return ok(data={"group_id": args.group_id, "name": args.name})
+
+
+class AddAlarmToGroupArgs(BaseModel):
+    action: Literal["add_alarm_to_group"] = "add_alarm_to_group"
+    group_id: str
+    alarm_id: str
+
+
+class AddAlarmToGroup(MockTool):
+    name = "add_alarm_to_group"
+    domain = DOMAIN; action = "add_alarm_to_group"
+    description = "Add an alarm to an alarm group."
+    args_model = AddAlarmToGroupArgs
+    examples = ["把报警加到分组里", "put this alarm in the Reactor1 group", "报警归组"]
+
+    @staticmethod
+    def intended_entities(args: BaseModel) -> list[str]:  # pyright: ignore[reportArgumentType]
+        return [f"alarm_groups.{args.group_id}.members"]
+    @staticmethod
+    def referenced_entities(args: BaseModel) -> list[str]:  # pyright: ignore[reportArgumentType]
+        return [f"alarms.{args.alarm_id}"]
+
+    def run(self, args: AddAlarmToGroupArgs, world: MockWorld) -> ToolResult:
+        err = _need_alarm(world, args.alarm_id)
+        if err: return err
+        return ok(data={"group_id": args.group_id, "alarm_id": args.alarm_id})
+
+
+class TestAlarmArgs(BaseModel):
+    action: Literal["test_alarm"] = "test_alarm"
+    alarm_id: str
+
+
+class TestAlarm(MockTool):
+    name = "test_alarm"
+    domain = DOMAIN; action = "test_alarm"
+    description = "Simulate the alarm's trigger condition to verify it fires correctly."
+    args_model = TestAlarmArgs
+    examples = ["测试一下这个报警会不会触发", "test-fire this alarm", "验证报警配置对不对"]
+
+    @staticmethod
+    def intended_entities(args: BaseModel) -> list[str]:  # pyright: ignore[reportArgumentType]
+        return []
+    @staticmethod
+    def referenced_entities(args: BaseModel) -> list[str]:  # pyright: ignore[reportArgumentType]
+        return [f"alarms.{args.alarm_id}"]
+
+    def run(self, args: TestAlarmArgs, world: MockWorld) -> ToolResult:
+        err = _need_alarm(world, args.alarm_id)
+        if err: return err
+        return ok(data={"alarm_id": args.alarm_id, "would_trigger": True})
+
+
+class ListActiveAlarmsArgs(BaseModel):
+    action: Literal["list_active_alarms"] = "list_active_alarms"
+    priority: Literal["low", "medium", "high", "critical", "all"] = "all"
+
+
+class ListActiveAlarms(MockTool):
+    name = "list_active_alarms"
+    domain = DOMAIN; action = "list_active_alarms"
+    description = "List currently active (unacknowledged) alarms, optionally by priority."
+    args_model = ListActiveAlarmsArgs
+    examples = ["列出当前活动的报警", "show all critical active alarms", "现在有哪些报警在响"]
+
+    @staticmethod
+    def intended_entities(args: BaseModel) -> list[str]:  # pyright: ignore[reportArgumentType]
+        return []
+    @staticmethod
+    def referenced_entities(args: BaseModel) -> list[str]:  # pyright: ignore[reportArgumentType]
+        return []
+
+    def run(self, args: ListActiveAlarmsArgs, world: MockWorld) -> ToolResult:
+        return ok(data={"active": [], "count": 0})
+
+
+class GetAlarmHistoryArgs(BaseModel):
+    action: Literal["get_alarm_history"] = "get_alarm_history"
+    tag: str | None = None
+    last_n_hours: int = Field(default=24, ge=1, le=8760)
+
+
+class GetAlarmHistory(MockTool):
+    name = "get_alarm_history"
+    domain = DOMAIN; action = "get_alarm_history"
+    description = "Retrieve the alarm event history for analysis."
+    args_model = GetAlarmHistoryArgs
+    examples = ["查看报警历史记录", "show the alarm history for the last day", "调取报警历史"]
+
+    @staticmethod
+    def intended_entities(args: BaseModel) -> list[str]:  # pyright: ignore[reportArgumentType]
+        return []
+    @staticmethod
+    def referenced_entities(args: BaseModel) -> list[str]:  # pyright: ignore[reportArgumentType]
+        return []
+
+    def run(self, args: GetAlarmHistoryArgs, world: MockWorld) -> ToolResult:
+        return ok(data={"events": [], "count": 0})
+
+
+class SuppressAlarmArgs(BaseModel):
+    action: Literal["suppress_alarm"] = "suppress_alarm"
+    alarm_id: str
+    reason: str | None = None
+
+
+class SuppressAlarm(MockTool):
+    name = "suppress_alarm"
+    domain = DOMAIN; action = "suppress_alarm"
+    description = "Suppress an alarm from annunciation (design-time maintenance mode)."
+    args_model = SuppressAlarmArgs
+    examples = ["抑制这条报警", "suppress this nuisance alarm", "把这个报警屏蔽掉"]
+
+    @staticmethod
+    def intended_entities(args: BaseModel) -> list[str]:  # pyright: ignore[reportArgumentType]
+        return [f"alarms.{args.alarm_id}.suppressed"]
+    @staticmethod
+    def referenced_entities(args: BaseModel) -> list[str]:  # pyright: ignore[reportArgumentType]
+        return [f"alarms.{args.alarm_id}"]
+
+    def run(self, args: SuppressAlarmArgs, world: MockWorld) -> ToolResult:
+        err = _need_alarm(world, args.alarm_id)
+        if err: return err
+        a = world.alarms[args.alarm_id]; a.suppressed = True
+        return ok(data={"alarm_id": args.alarm_id, "suppressed": True},
+                  world_diff=_al_diff(args.alarm_id, a))
+
+
+class SetAlarmEnableConditionArgs(BaseModel):
+    action: Literal["set_alarm_enable_condition"] = "set_alarm_enable_condition"
+    alarm_id: str
+    condition_tag: str
+
+
+class SetAlarmEnableCondition(MockTool):
+    name = "set_alarm_enable_condition"
+    domain = DOMAIN; action = "set_alarm_enable_condition"
+    description = "Gate an alarm so it is only active when a condition tag is true (e.g. pump running)."
+    args_model = SetAlarmEnableConditionArgs
+    examples = ["设置报警的使能条件", "only enable this alarm when the pump runs", "报警按工况自动使能"]
+
+    @staticmethod
+    def intended_entities(args: BaseModel) -> list[str]:  # pyright: ignore[reportArgumentType]
+        return [f"alarms.{args.alarm_id}.enable_condition"]
+    @staticmethod
+    def referenced_entities(args: BaseModel) -> list[str]:  # pyright: ignore[reportArgumentType]
+        return [f"alarms.{args.alarm_id}"]
+
+    def run(self, args: SetAlarmEnableConditionArgs, world: MockWorld) -> ToolResult:
+        err = _need_alarm(world, args.alarm_id)
+        if err: return err
+        return ok(data={"alarm_id": args.alarm_id, "condition_tag": args.condition_tag})
+
+
+ALARM_ACTIONS.update({
+    cls.action: cls
+    for cls in (
+        SetAlarmHighLimit, SetAlarmLowLimit, SetAlarmDeadband, AcknowledgeAlarm,
+        ShelveAlarm, UnshelveAlarm, SetAlarmPriority, SetAlarmMessage, SetAlarmOnDelay,
+        CreateAlarmGroup, AddAlarmToGroup, TestAlarm, ListActiveAlarms, GetAlarmHistory,
+        SuppressAlarm, SetAlarmEnableCondition,
+    )
+})

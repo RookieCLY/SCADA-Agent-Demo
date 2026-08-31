@@ -1,0 +1,62 @@
+{
+  "id": "golden-100",
+  "query": "读取PRESS_ARCHIVE最近7天历史并导出CSV，最多10000点",
+  "domain": "history",
+  "complexity": "complex",
+  "initial_world": {
+    "points": {
+      "PRESS_ARCHIVE": {
+        "tag": "PRESS_ARCHIVE",
+        "type": "analog",
+        "unit": "MPa"
+      }
+    },
+    "histories": {
+      "PRESS_ARCHIVE": {
+        "tag": "PRESS_ARCHIVE",
+        "enabled": true,
+        "storage_mode": "periodic",
+        "sample_interval_s": 60.0,
+        "retention_days": 365
+      }
+    }
+  },
+  "expected_behavior": "success",
+  "expected_final_state_diff": {
+    "match_mode": "subset",
+    "added_or_modified": {},
+    "removed": [],
+    "unchanged_keys_must_remain": [
+      "histories.PRESS_ARCHIVE"
+    ]
+  },
+  "rubric_hints": [],
+  "expected_workflow_id": "history_query",
+  "expected_trajectory": {
+    "min_steps": 2,
+    "max_steps": 10,
+    "required_tools": [
+      "manage_history",
+      "manage_history"
+    ],
+    "required_actions": [
+      "query_history",
+      "export_history"
+    ],
+    "forbidden_tools": [
+      "batch_delete_points",
+      "delete_history",
+      "deploy_project",
+      "enable_history",
+      "promote_to_environment",
+      "purge_history",
+      "set_retention",
+      "set_sample_interval"
+    ],
+    "terminal_state": "DONE",
+    "allowed_terminal_states": [
+      "!UNKNOWN",
+      "!ASK_USER"
+    ]
+  }
+}

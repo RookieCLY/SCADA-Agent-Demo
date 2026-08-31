@@ -1,0 +1,47 @@
+{
+  "id": "golden-004",
+  "query": "在主页面上添加一个文本组件，显示'欢迎'",
+  "domain": "graphics",
+  "complexity": "simple",
+  "initial_world": {
+    "pages": {
+      "main_page": {
+        "id": "main_page",
+        "name": "主页面"
+      }
+    }
+  },
+  "expected_behavior": "success",
+  "expected_final_state_diff": {
+    "match_mode": "key_fields",
+    "added_or_modified": {
+      "pages.main_page.widgets.w_text1.type": "text",
+      "pages.main_page.widgets.w_text1.style.text": "欢迎"
+    },
+    "removed": [],
+    "unchanged_keys_must_remain": []
+  },
+  "expected_workflow_id": "graphics_layout",
+  "rubric_hints": [],
+  "expected_trajectory": {
+    "min_steps": 1,
+    "max_steps": 10,
+    "required_tools": [
+      "manage_graphics|manage_pages"
+    ],
+    "required_actions": [
+      "create_text|create_widget"
+    ],
+    "forbidden_tools": [
+      "batch_delete_points",
+      "deploy_project",
+      "promote_to_environment",
+      "purge_history"
+    ],
+    "terminal_state": "DONE",
+    "allowed_terminal_states": [
+      "!UNKNOWN",
+      "!ASK_USER"
+    ]
+  }
+}

@@ -34,6 +34,10 @@ class ErrorCode:
     ALREADY_BOUND = "ALREADY_BOUND"
     ALREADY_EXISTS = "ALREADY_EXISTS"
     BUSINESS_RULE = "BUSINESS_RULE"
+    # Refused by the runtime safety policy (§4.7 "outer cage"), *not* by the
+    # system prompt. A POLICY_DENIED call never reaches the tool handler, so
+    # no world mutation is possible regardless of what the LLM was told.
+    POLICY_DENIED = "POLICY_DENIED"
 
 
 REFERENCE_ERROR_CODES = frozenset({

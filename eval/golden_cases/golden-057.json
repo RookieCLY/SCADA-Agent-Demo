@@ -1,0 +1,60 @@
+{
+  "id": "golden-057",
+  "query": "给PT_COMP_01的报警触发写on_alarm脚本，报警时弹出高压提示",
+  "domain": "script",
+  "complexity": "medium",
+  "initial_world": {
+    "points": {
+      "PT_COMP_01": {
+        "tag": "PT_COMP_01",
+        "type": "analog",
+        "unit": "MPa"
+      }
+    },
+    "alarms": {
+      "PT_COMP_01_HH": {
+        "id": "PT_COMP_01_HH",
+        "tag": "PT_COMP_01",
+        "type": "analog",
+        "priority": "high",
+        "enabled": true
+      }
+    }
+  },
+  "expected_behavior": "success",
+  "expected_final_state_diff": {
+    "match_mode": "key_fields",
+    "added_or_modified": {
+      "scripts.pt_comp_01_hh_alarm.trigger": "on_alarm",
+      "scripts.pt_comp_01_hh_alarm.bound_tag": "PT_COMP_01",
+      "scripts.pt_comp_01_hh_alarm.enabled": true
+    },
+    "removed": [],
+    "unchanged_keys_must_remain": [
+      "alarms.PT_COMP_01_HH"
+    ]
+  },
+  "rubric_hints": [],
+  "expected_workflow_id": "script_config",
+  "expected_trajectory": {
+    "min_steps": 1,
+    "max_steps": 10,
+    "required_tools": [
+      "manage_scripts"
+    ],
+    "required_actions": [
+      "create_script"
+    ],
+    "forbidden_tools": [
+      "batch_delete_points",
+      "deploy_project",
+      "promote_to_environment",
+      "purge_history"
+    ],
+    "terminal_state": "DONE",
+    "allowed_terminal_states": [
+      "!UNKNOWN",
+      "!ASK_USER"
+    ]
+  }
+}

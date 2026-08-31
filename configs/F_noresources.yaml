@@ -1,0 +1,43 @@
+name: F_noresources
+description: |
+  Control arm for §4.5 (H5). Identical to F except `resources_separation` is
+  OFF, so the read atomics (`list_pages`, `list_widgets`, `list_points`, …)
+  stay in the Tool catalogue instead of being stripped in favour of Resources.
+
+  This arm exists because H5 was, until now, measuring a feature the model had
+  never once used: `read_resource` was described in the system prompt but never
+  emitted as a callable function schema, so `resource_reads` was 0 across 1,467
+  runs. F therefore gave up its read tools and received nothing in exchange.
+  With the schema defect fixed, F vs F_noresources finally compares
+  tool-list reduction *with* a working read path against not pulling the lever
+  at all.
+
+architecture:
+  hierarchical_tools: true
+  tool_rag:
+    enabled: true
+    top_n: 30
+    top_k: 12
+    alpha_dense: 0.6
+    use_reranker: true
+  workflow:
+    enabled: true
+    yaml_path: workflows
+  state_machine:
+    enabled: true
+  resources_separation: false
+
+model:
+  provider: mock
+  name: mock
+  temperature: 0.0
+  max_tokens: 4096
+
+trace:
+  record_llm_io: true
+
+world:
+  backend: memory
+
+repetitions: 5
+seed_base: 42

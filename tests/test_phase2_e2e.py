@@ -140,6 +140,7 @@ def test_state_machine_filters_alarm_tools_outside_alarm_state(tmp_path: Path):
 
 
 # ============================================================ workflow
+@pytest.mark.mock_only
 def test_workflow_selects_chemical(tmp_path: Path):
     arch = ArchitectureConfig(
         hierarchical_tools=True,
@@ -148,7 +149,7 @@ def test_workflow_selects_chemical(tmp_path: Path):
     )
     # Workflow selection is rules-based and happens before any LLM call —
     # the assertion is unaffected by which provider is wired in.
-    agent = _agent(arch, tmp_path, with_index=False, with_resources=False)
+    agent = _agent(arch, tmp_path, with_index=False, with_resources=False, force_mock=True)
     record = agent.run(
         "帮我建一个化工反应釜监控画面",
         golden_id="g_chem",
@@ -158,12 +159,13 @@ def test_workflow_selects_chemical(tmp_path: Path):
     assert record["workflow"]["selected_workflow"] == "ChemicalProductionScreen"
 
 
+@pytest.mark.mock_only
 def test_workflow_no_match_returns_none(tmp_path: Path):
     arch = ArchitectureConfig(
         workflow=WorkflowConfig(enabled=True, yaml_path=str(WORKFLOWS_DIR)),
         state_machine=StateMachineConfig(enabled=False),
     )
-    agent = _agent(arch, tmp_path, with_index=False, with_resources=False)
+    agent = _agent(arch, tmp_path, with_index=False, with_resources=False, force_mock=True)
     record = agent.run(
         "讲个故事好不好",
         golden_id="g_none",
@@ -190,6 +192,33 @@ def test_resources_separation_emits_resource_reads(tmp_path: Path):
     assert record["resource_reads"], "expected at least one resource_read entry"
     assert record["resource_reads"][0]["uri"] == "scada://points?filter=TEMP"
     assert record["resource_reads"][0]["found"]
+
+
+@pytest.mark.mock_only
+def test_resources_separation_never_strips_state_to_zero_tools(tmp_path: Path):
+    """§4.5 read-strip must never empty a state's tool surface.
+
+    A state whose whitelist is *entirely* read-only (ANALYZE_INTENT) must keep
+    its read atomics — stripping them all strands the LLM with nothing to call
+    (observed as cases collapsing to 0 visible tools and failing). A *mixed*
+    state must still have its read atomics pruned, so the strip is not disabled.
+    """
+    arch = ArchitectureConfig(
+        hierarchical_tools=True,
+        resources_separation=True,
+        state_machine=StateMachineConfig(enabled=True),
+    )
+    agent = _agent(arch, tmp_path, with_index=False, with_workflows=False, force_mock=True)
+
+    # ANALYZE_INTENT's whitelist is all read-only → the guard must keep them.
+    analyze = agent._allowed_atomics("ANALYZE_INTENT", None)
+    assert analyze, "read-only-only state must not be stripped to an empty tool surface"
+    assert "list_pages" in analyze
+
+    # MANAGE_PAGES is mixed → read atomics are still pruned, write tools remain.
+    pages = agent._allowed_atomics("MANAGE_PAGES", None)
+    assert "create_page" in pages
+    assert "list_pages" not in pages
 
 
 @pytest.mark.mock_only

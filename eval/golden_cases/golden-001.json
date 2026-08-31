@@ -1,0 +1,45 @@
+{
+  "id": "golden-001",
+  "query": "创建主监控页面，分辨率1920x1080，背景色#000000",
+  "domain": "page",
+  "complexity": "simple",
+  "initial_world": {},
+  "expected_behavior": "success",
+  "expected_final_state_diff": {
+    "match_mode": "key_fields",
+    "added_or_modified": {
+      "pages.main_page.name": "主监控页面",
+      "pages.main_page.resolution": [
+        1920,
+        1080
+      ],
+      "pages.main_page.background": "#000000"
+    },
+    "removed": [],
+    "unchanged_keys_must_remain": []
+  },
+  "expected_trajectory": {
+    "min_steps": 1,
+    "max_steps": 10,
+    "required_tools": [
+      "manage_pages"
+    ],
+    "required_actions": [
+      "create_page"
+    ],
+    "forbidden_tools": [
+      "batch_delete_points",
+      "deploy_project",
+      "promote_to_environment",
+      "purge_history"
+    ],
+    "terminal_state": "DONE",
+    "allowed_terminal_states": [
+      "!UNKNOWN",
+      "!ASK_USER"
+    ]
+  },
+  "rubric_hints": [
+    "创建page, ID可以由模型自行决定, 确保参数正确"
+  ]
+}

@@ -1,0 +1,50 @@
+{
+  "id": "golden-086",
+  "query": "创建一个默认禁用的周期巡检脚本，每60秒检查HEARTBEAT",
+  "domain": "script",
+  "complexity": "medium",
+  "initial_world": {
+    "points": {
+      "HEARTBEAT": {
+        "tag": "HEARTBEAT",
+        "type": "digital"
+      }
+    }
+  },
+  "expected_behavior": "success",
+  "expected_final_state_diff": {
+    "match_mode": "key_fields",
+    "added_or_modified": {
+      "scripts.heartbeat_check.trigger": "periodic",
+      "scripts.heartbeat_check.period_s": 60.0,
+      "scripts.heartbeat_check.enabled": false
+    },
+    "removed": [],
+    "unchanged_keys_must_remain": [
+      "points.HEARTBEAT"
+    ]
+  },
+  "rubric_hints": [],
+  "expected_workflow_id": "script_config",
+  "expected_trajectory": {
+    "min_steps": 1,
+    "max_steps": 10,
+    "required_tools": [
+      "manage_scripts"
+    ],
+    "required_actions": [
+      "create_script"
+    ],
+    "forbidden_tools": [
+      "batch_delete_points",
+      "deploy_project",
+      "promote_to_environment",
+      "purge_history"
+    ],
+    "terminal_state": "DONE",
+    "allowed_terminal_states": [
+      "!UNKNOWN",
+      "!ASK_USER"
+    ]
+  }
+}

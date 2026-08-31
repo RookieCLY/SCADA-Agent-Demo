@@ -1,0 +1,77 @@
+{
+  "id": "golden-077",
+  "query": "删除maintenance_page上的临时文本temp_note",
+  "domain": "graphics",
+  "complexity": "simple",
+  "initial_world": {
+    "pages": {
+      "maintenance_page": {
+        "id": "maintenance_page",
+        "name": "维护",
+        "widgets": {
+          "temp_note": {
+            "id": "temp_note",
+            "page_id": "maintenance_page",
+            "type": "text",
+            "position": [
+              0,
+              0
+            ],
+            "size": [
+              80,
+              40
+            ]
+          },
+          "keep_note": {
+            "id": "keep_note",
+            "page_id": "maintenance_page",
+            "type": "text",
+            "position": [
+              0,
+              0
+            ],
+            "size": [
+              80,
+              40
+            ]
+          }
+        }
+      }
+    }
+  },
+  "expected_behavior": "success",
+  "expected_final_state_diff": {
+    "match_mode": "subset",
+    "added_or_modified": {},
+    "removed": [
+      "pages.maintenance_page.widgets.temp_note"
+    ],
+    "unchanged_keys_must_remain": [
+      "pages.maintenance_page.widgets.keep_note"
+    ]
+  },
+  "rubric_hints": [],
+  "expected_workflow_id": "graphics_layout",
+  "expected_trajectory": {
+    "min_steps": 1,
+    "max_steps": 10,
+    "required_tools": [
+      "manage_graphics"
+    ],
+    "required_actions": [
+      "delete_widget"
+    ],
+    "forbidden_tools": [
+      "batch_delete_points",
+      "delete_page",
+      "deploy_project",
+      "promote_to_environment",
+      "purge_history"
+    ],
+    "terminal_state": "DONE",
+    "allowed_terminal_states": [
+      "!UNKNOWN",
+      "!ASK_USER"
+    ]
+  }
+}

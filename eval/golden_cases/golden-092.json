@@ -1,0 +1,57 @@
+{
+  "id": "golden-092",
+  "query": "创建冷却水系统总览：两个泵、一个冷却塔、供回水温度点和高温报警",
+  "domain": "multi",
+  "complexity": "complex",
+  "initial_world": {},
+  "expected_behavior": "success",
+  "expected_final_state_diff": {
+    "match_mode": "key_fields",
+    "added_or_modified": {
+      "pages.cooling_water_overview.name": "冷却水系统总览",
+      "pages.cooling_water_overview.widgets.pump_a.type": "pump",
+      "pages.cooling_water_overview.widgets.pump_b.type": "pump",
+      "pages.cooling_water_overview.widgets.tower.type": "cooling_tower",
+      "points.CW_SUPPLY_TEMP.type": "analog",
+      "points.CW_RETURN_TEMP.type": "analog",
+      "alarms.CW_RETURN_TEMP_H.tag": "CW_RETURN_TEMP"
+    },
+    "removed": [],
+    "unchanged_keys_must_remain": []
+  },
+  "rubric_hints": [],
+  "expected_workflow_id": "pump_station_screen",
+  "expected_trajectory": {
+    "min_steps": 5,
+    "max_steps": 34,
+    "required_tools": [
+      "manage_pages",
+      "manage_graphics|manage_pages",
+      "manage_graphics|manage_pages",
+      "manage_pages",
+      "manage_points",
+      "manage_points",
+      "manage_alarms"
+    ],
+    "required_actions": [
+      "create_page",
+      "create_pump|create_widget",
+      "create_pump|create_widget",
+      "create_widget",
+      "create_point",
+      "create_point",
+      "create_analog_alarm"
+    ],
+    "forbidden_tools": [
+      "batch_delete_points",
+      "deploy_project",
+      "promote_to_environment",
+      "purge_history"
+    ],
+    "terminal_state": "DONE",
+    "allowed_terminal_states": [
+      "!UNKNOWN",
+      "!ASK_USER"
+    ]
+  }
+}

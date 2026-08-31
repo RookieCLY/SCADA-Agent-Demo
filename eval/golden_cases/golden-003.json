@@ -1,0 +1,48 @@
+{
+  "id": "golden-003",
+  "query": "给PT101配置高限报警，阈值2.0，中等优先级",
+  "domain": "alarm",
+  "complexity": "simple",
+  "initial_world": {
+    "points": {
+      "PT101": {
+        "tag": "PT101",
+        "type": "analog"
+      }
+    }
+  },
+  "expected_behavior": "success",
+  "expected_final_state_diff": {
+    "match_mode": "key_fields",
+    "added_or_modified": {
+      "alarms.alarm_PT101_hi.tag": "PT101",
+      "alarms.alarm_PT101_hi.high_limit": 2.0,
+      "alarms.alarm_PT101_hi.priority": "medium"
+    },
+    "removed": [],
+    "unchanged_keys_must_remain": []
+  },
+  "expected_trajectory": {
+    "min_steps": 1,
+    "max_steps": 10,
+    "required_tools": [
+      "manage_alarms"
+    ],
+    "required_actions": [
+      "create_analog_alarm"
+    ],
+    "forbidden_tools": [
+      "batch_delete_points",
+      "deploy_project",
+      "promote_to_environment",
+      "purge_history"
+    ],
+    "terminal_state": "DONE",
+    "allowed_terminal_states": [
+      "!UNKNOWN",
+      "!ASK_USER"
+    ]
+  },
+  "expected_workflow_id": "alarm_config",
+  "rubric_hints": []
+}

@@ -28,11 +28,21 @@ from agent.config import ArchitectureConfig
 from tools import (
     deployment,
     manage_alarms,
+    manage_communication,
+    manage_databases,
+    manage_devices,
     manage_graphics,
     manage_history,
+    manage_notifications,
     manage_pages,
     manage_points,
+    manage_recipes,
+    manage_reports,
+    manage_schedules,
     manage_scripts,
+    manage_security,
+    manage_trends,
+    manage_users,
 )
 from tools._base import MockTool
 
@@ -75,6 +85,22 @@ class ToolRegistry:
         actions: dict[str, type[MockTool]],
         description: str = "",
     ) -> None:
+        from typing import Annotated, Union
+
+        from pydantic import Field
+        args_models = [cls.args_model for cls in actions.values()]
+        if len(args_models) > 1:
+            # Subscript form rather than ``Union.__getitem__(...)``: on Python
+            # 3.14 ``Union`` is ``types.UnionType`` and its ``__getitem__`` is a
+            # descriptor that rejects a bare tuple. ``Union[tuple(...)]`` builds
+            # the identical type on 3.11–3.14. (ruff UP007 must not "simplify"
+            # this to ``Annotated[tuple(...)]`` — that is not a valid type.)
+            union_model = Annotated[Union[tuple(args_models)], Field(discriminator="action")]  # noqa: UP007
+        elif len(args_models) == 1:
+            union_model = args_models[0]
+        else:
+            union_model = None
+
         bundle: dict[str, ToolMeta] = {}
         for action_name, cls in actions.items():
             inst = cls()
@@ -180,7 +206,7 @@ class ToolRegistry:
             if name not in self._reverse:
                 raise RuntimeError(f"reverse-lookup missing entry for atomic {name!r}")
         # 2. every (domain, action) referenced by reverse-lookup must exist
-        for atomic_name, (d, a) in self._reverse.items():
+        for _atomic_name, (d, a) in self._reverse.items():
             if d not in self._domains:
                 raise RuntimeError(f"reverse-lookup references unknown domain {d!r}")
             if a not in self._domains[d].actions:
@@ -238,51 +264,166 @@ DEFAULT_GENERATED_EXAMPLES = Path("indices/generated_examples.json")
 
 
 # ============================================================ default registry
-def build_default_registry() -> ToolRegistry:
-    """Construct the canonical registry covering all 7 domains (Phase 2)."""
+def build_default_registry(tool_count: int | None = None) -> ToolRegistry:
+    """Construct the canonical registry covering the registered domains, restricted by tool_count."""
+    # ── dynamic tool expansion to target_count total tools ──────────────────────────
+    from typing import Literal
+
+    from pydantic import BaseModel
+    
+    # 1. Define core and extra domains with their action definitions
+    core_domains = {
+        "manage_alarms": (manage_alarms.ManageAlarmsArgs, dict(manage_alarms.ALARM_ACTIONS), "Create / update / enable / disable / delete SCADA alarms."),
+        "manage_points": (manage_points.ManagePointsArgs, dict(manage_points.POINT_ACTIONS), "Create / update / delete / list SCADA points (tags)."),
+        "manage_pages": (manage_pages.ManagePagesArgs, dict(manage_pages.PAGE_ACTIONS), "HMI page & widget management, including point↔widget binding."),
+        "manage_graphics": (manage_graphics.ManageGraphicsArgs, dict(manage_graphics.GRAPHICS_ACTIONS), "Graphical primitives, layouts, grouping, styling."),
+        "manage_history": (manage_history.ManageHistoryArgs, dict(manage_history.HISTORY_ACTIONS), "Historian config + synthetic historical-window queries."),
+        "manage_scripts": (manage_scripts.ManageScriptsArgs, dict(manage_scripts.SCRIPT_ACTIONS), "User script CRUD (on_change / on_alarm / periodic / on_event)."),
+        "deployment": (deployment.DeploymentArgs, dict(deployment.DEPLOYMENT_ACTIONS), "Project validation, deployment, rollback, status."),
+    }
+
+    extra_domains = {
+        "manage_devices": (manage_devices.ManageDevicesArgs, dict(manage_devices.DEVICE_ACTIONS), "Device catalog: create, update, delete, configure params, status queries."),
+        "manage_trends": (manage_trends.ManageTrendsArgs, dict(manage_trends.TREND_ACTIONS), "Trend curves: create groups, add pens, configure axes, sampling, scroll-back."),
+        "manage_recipes": (manage_recipes.ManageRecipesArgs, dict(manage_recipes.RECIPE_ACTIONS), "Batch recipes: steps, parameters, validation, activation, cloning."),
+        "manage_users": (manage_users.ManageUsersArgs, dict(manage_users.USER_ACTIONS), "User accounts: CRUD, role assignment, permissions, session policy."),
+        "manage_communication": (manage_communication.ManageCommunicationArgs, dict(manage_communication.COMM_ACTIONS), "Communication drivers: configure, start/stop polling, test, reset, stats."),
+        "manage_reports": (manage_reports.ManageReportsArgs, dict(manage_reports.REPORT_ACTIONS), "Report templates: sections, scheduling, generation, format, export."),
+        "manage_schedules": (manage_schedules.ManageSchedulesArgs, dict(manage_schedules.SCHEDULE_ACTIONS), "Scheduled jobs: triggers (cron/interval/event), actions, status."),
+        "manage_security": (manage_security.ManageSecurityArgs, dict(manage_security.SECURITY_ACTIONS), "Security: audit log, compliance checks, password policy, backup/restore."),
+        "manage_databases": (manage_databases.ManageDatabasesArgs, dict(manage_databases.DATABASE_ACTIONS), "External databases: connections, table creation, SQL queries, retention."),
+        "manage_notifications": (manage_notifications.ManageNotificationsArgs, dict(manage_notifications.NOTIFICATION_ACTIONS), "Alarm notifications: rules, escalation, channel config, testing."),
+    }
+
+    target_count = tool_count if tool_count is not None else 500
+    
+    # Initialize domain_actions with copy of core domain actions
+    domain_actions = {
+        dname: dict(actions) for dname, (_, actions, _) in core_domains.items()
+    }
+    
+    # Collect extra actions list deterministically
+    extra_actions_list = []
+    for dname, (_, actions_dict, _) in extra_domains.items():
+        for aname, acls in actions_dict.items():
+            extra_actions_list.append((dname, aname, acls))
+
+    # Core-domain actions are always fully included, so the number of *extra*
+    # + synthesized-filler tools is measured against the real core count — not
+    # a hardcoded constant. (The core domains now ship ~120 hand-written tools,
+    # so the old literal 39 over-counted the free slots and blew past
+    # target_count once the tool library grew.)
+    core_count = sum(len(actions) for _, (_, actions, _) in core_domains.items())
+
+    # Calculate how many extra tools we can add
+    if target_count > core_count:
+        remaining_slots = target_count - core_count
+        num_extra_to_add = min(remaining_slots, len(extra_actions_list))
+        
+        # Add selected extra tools
+        for dname, aname, acls in extra_actions_list[:num_extra_to_add]:
+            domain_actions.setdefault(dname, {})[aname] = acls
+            
+        remaining_slots -= num_extra_to_add
+        
+        # If we still have slots, dynamically generate dynamic tools
+        if remaining_slots > 0:
+            prefixes = [
+                "get", "set", "update", "delete", "create", "verify", "test", "sync", 
+                "reset", "clear", "export", "import", "configure", "optimize", "check", 
+                "enable", "disable", "list", "search", "audit", "monitor", "analyze", 
+                "force", "bypass", "override", "lock", "unlock", "archive", "restore", "validate"
+            ]
+            nouns = [
+                "limit", "threshold", "buffer", "cache", "status", "config", "parameter", "setting", 
+                "profile", "policy", "log", "history", "record", "event", "alert", "channel", 
+                "connection", "port", "interface", "module", "sensor", "actuator", "valve", "pump", 
+                "motor", "tank", "vessel", "zone", "area", "group", "user", "role", 
+                "session", "token", "key", "certificate", "backup", "restore", "script", "trigger", 
+                "schedule", "report", "template", "recipe", "batch", "formula", "step", "phase", 
+                "transition", "state", "layout", "widget", "view", "screen", "panel", "driver", 
+                "protocol", "gateway", "broker", "endpoint", "topic", "tag", "metadata", "schema", "validation"
+            ]
+            
+            existing_names = set()
+            for actions_dict in domain_actions.values():
+                existing_names.update(actions_dict.keys())
+                
+            generated_names = []
+            seen = set()
+            for p in prefixes:
+                for n in nouns:
+                    name = f"{p}_{n}"
+                    if name not in existing_names and name not in seen:
+                        seen.add(name)
+                        generated_names.append(name)
+                        if len(generated_names) >= remaining_slots:
+                            break
+                if len(generated_names) >= remaining_slots:
+                    break
+                    
+            domains_list = list(domain_actions.keys())
+            for i, action_name in enumerate(generated_names):
+                domain = domains_list[i % len(domains_list)]
+                desc = f"Dynamic {action_name}"
+                
+                # Args class
+                args_class_name = f"Dynamic{action_name.title().replace('_', '')}Args"
+                args_model = type(
+                    args_class_name,
+                    (BaseModel,),
+                    {
+                        "__annotations__": {"action": Literal[action_name]},
+                        "action": action_name,
+                    }
+                )
+                
+                # MockTool class
+                tool_class_name = f"Dynamic{action_name.title().replace('_', '')}Tool"
+                
+                @staticmethod
+                def intended_entities(args: BaseModel) -> list[str]:
+                    return []
+                    
+                @staticmethod
+                def referenced_entities(args: BaseModel) -> list[str]:
+                    return []
+                    
+                def run(self, args: Any, world: Any) -> Any:
+                    from tools._base import ok
+                    return ok()
+                    
+                tool_class = type(
+                    tool_class_name,
+                    (MockTool,),
+                    {
+                        "name": action_name,
+                        "domain": domain,
+                        "action": action_name,
+                        "description": desc,
+                        "args_model": args_model,
+                        "examples": [],
+                        "required_state": None,
+                        "intended_entities": intended_entities,
+                        "referenced_entities": referenced_entities,
+                        "run": run,
+                    }
+                )
+                
+                domain_actions[domain][action_name] = tool_class
+
+    # 2. Register all populated domains
     reg = ToolRegistry()
-    reg.register_domain(
-        domain="manage_alarms",
-        union_model=manage_alarms.ManageAlarmsArgs,
-        actions=manage_alarms.ALARM_ACTIONS,
-        description="Create / update / enable / disable / delete SCADA alarms.",
-    )
-    reg.register_domain(
-        domain="manage_points",
-        union_model=manage_points.ManagePointsArgs,
-        actions=manage_points.POINT_ACTIONS,
-        description="Create / update / delete / list SCADA points (tags).",
-    )
-    reg.register_domain(
-        domain="manage_pages",
-        union_model=manage_pages.ManagePagesArgs,
-        actions=manage_pages.PAGE_ACTIONS,
-        description="HMI page & widget management, including point↔widget binding.",
-    )
-    reg.register_domain(
-        domain="manage_graphics",
-        union_model=manage_graphics.ManageGraphicsArgs,
-        actions=manage_graphics.GRAPHICS_ACTIONS,
-        description="Graphical primitives, layouts, grouping, styling.",
-    )
-    reg.register_domain(
-        domain="manage_history",
-        union_model=manage_history.ManageHistoryArgs,
-        actions=manage_history.HISTORY_ACTIONS,
-        description="Historian config + synthetic historical-window queries.",
-    )
-    reg.register_domain(
-        domain="manage_scripts",
-        union_model=manage_scripts.ManageScriptsArgs,
-        actions=manage_scripts.SCRIPT_ACTIONS,
-        description="User script CRUD (on_change / on_alarm / periodic / on_event).",
-    )
-    reg.register_domain(
-        domain="deployment",
-        union_model=deployment.DeploymentArgs,
-        actions=deployment.DEPLOYMENT_ACTIONS,
-        description="Project validation, deployment, rollback, status.",
-    )
+    all_all_domains = {**core_domains, **extra_domains}
+    for dname, actions_dict in domain_actions.items():
+        args_model, _, desc = all_all_domains[dname]
+        reg.register_domain(
+            domain=dname,
+            union_model=args_model,
+            actions=actions_dict,
+            description=desc,
+        )
+        
     reg.selfcheck()
     if DEFAULT_GENERATED_EXAMPLES.is_file():
         reg.merge_generated_examples(DEFAULT_GENERATED_EXAMPLES)

@@ -1,0 +1,47 @@
+{
+  "id": "golden-005",
+  "query": "对PT101开启历史记录，变化存储模式",
+  "domain": "history",
+  "complexity": "simple",
+  "initial_world": {
+    "points": {
+      "PT101": {
+        "tag": "PT101",
+        "type": "analog"
+      }
+    }
+  },
+  "expected_behavior": "success",
+  "expected_final_state_diff": {
+    "match_mode": "subset",
+    "added_or_modified": {
+      "histories.PT101.storage_mode": "on_change",
+      "histories.PT101.enabled": true
+    },
+    "removed": [],
+    "unchanged_keys_must_remain": []
+  },
+  "expected_workflow_id": "history_query",
+  "rubric_hints": [],
+  "expected_trajectory": {
+    "min_steps": 1,
+    "max_steps": 10,
+    "required_tools": [
+      "manage_history"
+    ],
+    "required_actions": [
+      "enable_history"
+    ],
+    "forbidden_tools": [
+      "batch_delete_points",
+      "deploy_project",
+      "promote_to_environment",
+      "purge_history"
+    ],
+    "terminal_state": "DONE",
+    "allowed_terminal_states": [
+      "!UNKNOWN",
+      "!ASK_USER"
+    ]
+  }
+}

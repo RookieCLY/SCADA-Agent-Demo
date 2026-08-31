@@ -8,11 +8,15 @@ A ``Tracer`` instance corresponds to a single experiment *run* (one
 ``config × model × seed`` tuple). Inside the run, every query opens a
 ``TraceContext`` that accumulates tool / LLM / resource events and flushes
 exactly one JSONL line on close.
+
+Thread safety: pass ``write_lock=threading.Lock()`` to serialise writes across
+multiple tracer instances that share the same output files.
 """
 from __future__ import annotations
 
 import json
 import os
+import threading
 import time
 import uuid
 from contextlib import contextmanager
@@ -60,6 +64,8 @@ class LLMCallRecord:
     output_tokens: int
     latency_ms: float
     stop_reason: str
+    text: str | None = None
+    reasoning: str | None = None
 
 
 @dataclass
@@ -80,8 +86,10 @@ class TraceContext:
         domain: str = "unknown",
         rep_index: int = 0,
         seed: int = 42,
+        record_llm_io: bool = False,
     ) -> None:
         self.tracer = tracer
+        self.record_llm_io = record_llm_io
         self.trace_id = _new_trace_id()
         self.golden_id = golden_id
         self.query_text = query_text
@@ -108,6 +116,18 @@ class TraceContext:
         # Phase-2 architecture metadata (populated by orchestrator)
         self.rag_summary: dict[str, Any] = {"enabled": False}
         self.workflow_summary: dict[str, Any] = {"enabled": False, "selected_workflow": None}
+        # §4.7 runtime safety cage — per-run denial log (see agent/policy.py)
+        self.policy_summary: dict[str, Any] = {"enabled": False}
+        # Plan-and-Execute — plan size and every compiler rejection, so a
+        # shortened plan can never be mistaken for a well-planned one.
+        self.plan_summary: dict[str, Any] = {"enabled": False}
+        # ReAct turn structure — per-run reasoning/dedupe stats (agent/react.py)
+        self.react_summary: dict[str, Any] = {"enabled": False}
+        # Multi-Agent crew — Specialist assignments, Critic retries, Blackboard
+        # (agent/multi_agent.py). Auditable decomposition, not narration.
+        self.crew_summary: dict[str, Any] = {"enabled": False}
+        # Combined-mode arbitration: which path actually ran and why.
+        self.loop_summary: dict[str, Any] = {"path": "interleaved"}
 
     # ---------- state events
     def enter_state(self, name: str) -> None:
@@ -120,7 +140,15 @@ class TraceContext:
             self.states[-1].exited_at = _utc_iso()
 
     # ---------- llm event
-    def log_llm(self, rec: LLMCallRecord) -> None:
+    def log_llm(
+        self,
+        rec: LLMCallRecord,
+        text: str | None = None,
+        reasoning: str | None = None,
+    ) -> None:
+        if self.record_llm_io:
+            rec.text = text
+            rec.reasoning = reasoning
         self.llm_calls.append(rec)
 
     # ---------- tool event
@@ -180,6 +208,11 @@ class TraceContext:
             "llm_calls": [asdict(c) for c in self.llm_calls],
             "rag": self.rag_summary,
             "workflow": self.workflow_summary,
+            "policy": self.policy_summary,
+            "plan": self.plan_summary,
+            "react": self.react_summary,
+            "crew": self.crew_summary,
+            "loop": self.loop_summary,
             "totals": {
                 "input_tokens": total_input,
                 "output_tokens": total_output,
@@ -203,15 +236,19 @@ class Tracer:
         code_commit: str = "",
         dataset_version: str = "dev",
         run_id: str | None = None,
+        record_llm_io: bool = False,
+        write_lock: threading.Lock | None = None,
     ) -> None:
         self.config_name = config_name
         self.model_name = model_name
+        self.record_llm_io = record_llm_io
         self.config_hash = config_hash
         self.code_commit = code_commit
         self.dataset_version = dataset_version
         self.run_id = run_id or _new_trace_id()[:8]
+        self._write_lock = write_lock
 
-        root = Path(results_root) / config_name / model_name / self.run_id
+        root = Path(results_root) / self.run_id
         root.mkdir(parents=True, exist_ok=True)
         self.run_dir = root
         self.traces_path = root / "traces.jsonl"
@@ -267,6 +304,7 @@ class Tracer:
             domain=domain,
             rep_index=rep_index,
             seed=seed,
+            record_llm_io=self.record_llm_io,
         )
         try:
             yield ctx
@@ -278,8 +316,14 @@ class Tracer:
                 )
 
     def _write(self, record: dict[str, Any]) -> None:
-        with self.traces_path.open("a", encoding="utf-8") as f:
-            f.write(json.dumps(record, ensure_ascii=False, default=str) + "\n")
+        if self._write_lock is not None:
+            self._write_lock.acquire()
+        try:
+            with self.traces_path.open("a", encoding="utf-8") as f:
+                f.write(json.dumps(record, ensure_ascii=False, default=str) + "\n")
+        finally:
+            if self._write_lock is not None:
+                self._write_lock.release()
         if self._langfuse:  # pragma: no cover
             try:
                 self._langfuse.trace(

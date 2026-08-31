@@ -1,0 +1,102 @@
+{
+  "id": "golden-088",
+  "query": "把TEMP_SHARED同时绑定到overview的温度文本和detail的温度趋势入口",
+  "domain": "graphics",
+  "complexity": "complex",
+  "initial_world": {
+    "pages": {
+      "overview": {
+        "id": "overview",
+        "name": "总览",
+        "widgets": {
+          "temp_text": {
+            "id": "temp_text",
+            "page_id": "overview",
+            "type": "text",
+            "position": [
+              0,
+              0
+            ],
+            "size": [
+              80,
+              40
+            ],
+            "expected_binding_types": {
+              "value": [
+                "analog"
+              ]
+            }
+          }
+        }
+      },
+      "detail": {
+        "id": "detail",
+        "name": "详情",
+        "widgets": {
+          "temp_trend": {
+            "id": "temp_trend",
+            "page_id": "detail",
+            "type": "trend",
+            "position": [
+              0,
+              0
+            ],
+            "size": [
+              80,
+              40
+            ],
+            "expected_binding_types": {
+              "value": [
+                "analog"
+              ]
+            }
+          }
+        }
+      }
+    },
+    "points": {
+      "TEMP_SHARED": {
+        "tag": "TEMP_SHARED",
+        "type": "analog",
+        "unit": "°C"
+      }
+    }
+  },
+  "expected_behavior": "success",
+  "expected_final_state_diff": {
+    "match_mode": "subset",
+    "added_or_modified": {
+      "pages.overview.widgets.temp_text.bindings.value": "TEMP_SHARED",
+      "pages.detail.widgets.temp_trend.bindings.value": "TEMP_SHARED"
+    },
+    "removed": [],
+    "unchanged_keys_must_remain": [
+      "points.TEMP_SHARED"
+    ]
+  },
+  "rubric_hints": [],
+  "expected_workflow_id": "point_binding",
+  "expected_trajectory": {
+    "min_steps": 1,
+    "max_steps": 14,
+    "required_tools": [
+      "manage_pages",
+      "manage_pages"
+    ],
+    "required_actions": [
+      "bind_point",
+      "bind_point"
+    ],
+    "forbidden_tools": [
+      "batch_delete_points",
+      "deploy_project",
+      "promote_to_environment",
+      "purge_history"
+    ],
+    "terminal_state": "DONE",
+    "allowed_terminal_states": [
+      "!UNKNOWN",
+      "!ASK_USER"
+    ]
+  }
+}

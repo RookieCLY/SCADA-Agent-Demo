@@ -1,0 +1,20 @@
+{
+  "prefix": "phase4_v1",
+  "results": [
+    {
+      "run_id": "phase4_v1_E_sm",
+      "status": "exit-1",
+      "exit_code": 1,
+      "elapsed_s": 5761.2,
+      "cmd": "C:\\Users\\5004\\OneDrive - University of Illinois - Urbana\\桌面\\Code\\202605\\Current_Demo\\.venv\\Scripts\\python.exe -m eval.runner --config configs/E_with_state_machine.yaml --all --reps 5 --provider xiaomi-mimo --run-id phase4_v1_E_sm -w 3 --results-root results/phase4_v1 --model mimo-v2.5-pro --resume --max-reruns 10"
+    },
+    {
+      "run_id": "phase4_v1_F_full",
+      "status": "exit-1",
+      "exit_code": 1,
+      "elapsed_s": 8587.2,
+      "cmd": "C:\\Users\\5004\\OneDrive - University of Illinois - Urbana\\桌面\\Code\\202605\\Current_Demo\\.venv\\Scripts\\python.exe -m eval.runner --config configs/F_full_four_in_one.yaml --all --reps 5 --provider xiaomi-mimo --run-id phase4_v1_F_full -w 3 --results-root results/phase4_v1 --model mimo-v2.5-pro --resume --max-reruns 10"
+    }
+  ],
+  "elapsed_s": 14348.4
+}

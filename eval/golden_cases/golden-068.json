@@ -1,0 +1,47 @@
+{
+  "id": "golden-068",
+  "query": "先校验再下装staging部署，部署记录叫deploy_staging",
+  "domain": "multi",
+  "complexity": "medium",
+  "initial_world": {
+    "pages": {
+      "deploy_page": {
+        "id": "deploy_page",
+        "name": "部署页",
+        "widgets": {}
+      }
+    }
+  },
+  "expected_behavior": "success",
+  "expected_final_state_diff": {
+    "match_mode": "subset",
+    "added_or_modified": {
+      "deployments.deploy_staging.status": "deployed"
+    },
+    "removed": [],
+    "unchanged_keys_must_remain": []
+  },
+  "rubric_hints": [],
+  "expected_workflow_id": "deployment_check",
+  "expected_trajectory": {
+    "min_steps": 2,
+    "max_steps": 12,
+    "required_tools": [
+      "deployment",
+      "deployment"
+    ],
+    "required_actions": [
+      "validate_project",
+      "deploy_project"
+    ],
+    "forbidden_tools": [
+      "batch_delete_points",
+      "purge_history"
+    ],
+    "terminal_state": "DONE",
+    "allowed_terminal_states": [
+      "!UNKNOWN",
+      "!ASK_USER"
+    ]
+  }
+}

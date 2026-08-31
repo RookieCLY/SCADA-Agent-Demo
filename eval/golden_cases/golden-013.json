@@ -1,0 +1,47 @@
+{
+  "id": "golden-013",
+  "query": "建两个页面，一个叫报警汇总，一个叫报表，都用黑底，顺便把报表页大小设成4K",
+  "domain": "page",
+  "complexity": "medium",
+  "initial_world": {},
+  "expected_behavior": "success",
+  "expected_final_state_diff": {
+    "match_mode": "key_fields",
+    "added_or_modified": {
+      "pages.alarm_sum.name": "报警汇总",
+      "pages.alarm_sum.background": "#000000",
+      "pages.report.name": "报表",
+      "pages.report.background": "#000000",
+      "pages.report.resolution": [
+        3840,
+        2160
+      ]
+    },
+    "removed": [],
+    "unchanged_keys_must_remain": []
+  },
+  "rubric_hints": [],
+  "expected_trajectory": {
+    "min_steps": 1,
+    "max_steps": 14,
+    "required_tools": [
+      "manage_pages",
+      "manage_pages"
+    ],
+    "required_actions": [
+      "create_page",
+      "create_page"
+    ],
+    "forbidden_tools": [
+      "batch_delete_points",
+      "deploy_project",
+      "promote_to_environment",
+      "purge_history"
+    ],
+    "terminal_state": "DONE",
+    "allowed_terminal_states": [
+      "!UNKNOWN",
+      "!ASK_USER"
+    ]
+  }
+}

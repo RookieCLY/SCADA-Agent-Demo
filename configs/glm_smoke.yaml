@@ -1,0 +1,30 @@
+name: glm_smoke
+description: |
+  Smoke-test config for the GLM real LLM. Uses the flat tool surface
+  with the state machine OFF so that the model can directly emit any atomic
+  tool call without state-transition orchestration.
+
+architecture:
+  hierarchical_tools: false
+  tool_rag:
+    enabled: false
+  workflow:
+    enabled: false
+  state_machine:
+    enabled: false
+  resources_separation: false
+
+model:
+  provider: glm
+  name: glm-4-flash
+  temperature: 0.0
+  max_tokens: 1024
+
+trace:
+  record_llm_io: true
+
+world:
+  backend: memory
+
+repetitions: 1
+seed_base: 42

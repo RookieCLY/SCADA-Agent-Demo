@@ -1,0 +1,58 @@
+{
+  "id": "golden-099",
+  "query": "给pump_panel增加维护模式横幅，仅当MAINT_MODE为1时显示",
+  "domain": "graphics",
+  "complexity": "medium",
+  "initial_world": {
+    "pages": {
+      "pump_panel": {
+        "id": "pump_panel",
+        "name": "泵面板",
+        "widgets": {}
+      }
+    },
+    "points": {
+      "MAINT_MODE": {
+        "tag": "MAINT_MODE",
+        "type": "digital"
+      }
+    }
+  },
+  "expected_behavior": "success",
+  "expected_final_state_diff": {
+    "match_mode": "key_fields",
+    "added_or_modified": {
+      "pages.pump_panel.widgets.maint_banner.type": "text",
+      "pages.pump_panel.widgets.maint_banner.bindings.visible": "MAINT_MODE"
+    },
+    "removed": [],
+    "unchanged_keys_must_remain": [
+      "points.MAINT_MODE"
+    ]
+  },
+  "rubric_hints": [],
+  "expected_workflow_id": "graphics_layout",
+  "expected_trajectory": {
+    "min_steps": 2,
+    "max_steps": 12,
+    "required_tools": [
+      "manage_graphics|manage_pages",
+      "manage_pages"
+    ],
+    "required_actions": [
+      "create_text|create_widget",
+      "bind_point"
+    ],
+    "forbidden_tools": [
+      "batch_delete_points",
+      "deploy_project",
+      "promote_to_environment",
+      "purge_history"
+    ],
+    "terminal_state": "DONE",
+    "allowed_terminal_states": [
+      "!UNKNOWN",
+      "!ASK_USER"
+    ]
+  }
+}

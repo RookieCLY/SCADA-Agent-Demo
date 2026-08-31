@@ -1,0 +1,50 @@
+{
+  "id": "golden-102",
+  "query": "在画面 p1 上画一个储罐图元，widget_id 用 tk1，位置 100,200",
+  "domain": "graphics",
+  "complexity": "simple",
+  "initial_world": {
+    "pages": {
+      "p1": {
+        "id": "p1",
+        "name": "main"
+      }
+    }
+  },
+  "expected_behavior": "success",
+  "expected_final_state_diff": {
+    "match_mode": "key_fields",
+    "added_or_modified": {
+      "pages.p1.widgets.tk1.type": "tank"
+    },
+    "removed": [],
+    "unchanged_keys_must_remain": []
+  },
+  "expected_trajectory": {
+    "min_steps": 1,
+    "max_steps": 10,
+    "required_tools": [
+      "manage_graphics|manage_pages"
+    ],
+    "required_actions": [
+      "create_tank|create_widget"
+    ],
+    "forbidden_tools": [
+      "batch_delete_points",
+      "deploy_project",
+      "promote_to_environment",
+      "purge_history"
+    ],
+    "terminal_state": "DONE",
+    "allowed_terminal_states": [
+      "!UNKNOWN",
+      "!ASK_USER"
+    ]
+  },
+  "expected_error_code": null,
+  "expected_workflow_id": null,
+  "expected_alternative": null,
+  "rubric_hints": [
+    "应调用 manage_graphics.create_tank 完成任务，终态 DONE"
+  ]
+}

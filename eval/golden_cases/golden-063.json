@@ -1,0 +1,73 @@
+{
+  "id": "golden-063",
+  "query": "把模拟量PT_COMP_01绑定到pump_panel的run_lamp状态属性",
+  "domain": "graphics",
+  "complexity": "medium",
+  "initial_world": {
+    "pages": {
+      "pump_panel": {
+        "id": "pump_panel",
+        "name": "泵面板",
+        "widgets": {
+          "run_lamp": {
+            "id": "run_lamp",
+            "page_id": "pump_panel",
+            "type": "indicator",
+            "position": [
+              0,
+              0
+            ],
+            "size": [
+              80,
+              40
+            ],
+            "expected_binding_types": {
+              "status": [
+                "digital"
+              ]
+            }
+          }
+        }
+      }
+    },
+    "points": {
+      "PT_COMP_01": {
+        "tag": "PT_COMP_01",
+        "type": "analog",
+        "unit": "MPa"
+      }
+    }
+  },
+  "expected_behavior": "fail_or_clarify",
+  "expected_final_state_diff": {
+    "match_mode": "strict",
+    "added_or_modified": {},
+    "removed": [],
+    "unchanged_keys_must_remain": [
+      "pages.pump_panel.widgets.run_lamp"
+    ]
+  },
+  "rubric_hints": [],
+  "expected_workflow_id": "point_binding",
+  "expected_error_code": "BINDING_TYPE_MISMATCH",
+  "expected_alternative": "应说明绑定类型不匹配或要求选择数字量点位",
+  "expected_trajectory": {
+    "min_steps": 0,
+    "max_steps": 8,
+    "required_tools": [],
+    "required_actions": [],
+    "forbidden_tools": [
+      "batch_delete_points",
+      "create_point",
+      "deploy_project",
+      "promote_to_environment",
+      "purge_history",
+      "set_point_type",
+      "update_point"
+    ],
+    "terminal_state": "DONE",
+    "allowed_terminal_states": [
+      "!UNKNOWN"
+    ]
+  }
+}
